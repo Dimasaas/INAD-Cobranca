@@ -3,6 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="INAD — Painel de Cobrança: gerencie inadimplência, importe relatórios em PDF, envie cobranças pelo WhatsApp e acompanhe KPIs de recuperação.">
+  <meta name="robots" content="noindex, nofollow">
   <title>INAD — Painel de Cobrança</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -444,9 +446,19 @@ async function updateReportDropdown() {
     reports.forEach((rep, idx) => {
       const option = document.createElement('option');
       option.value = rep.id;
-      const dateObj = new Date(rep.imported_at);
-      const formattedDate = dateObj.toLocaleDateString('pt-BR') + ' ' + dateObj.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'});
-      option.textContent = `${rep.report_name} (${formattedDate})`;
+      // Usa a data real de emissão do PDF (report_date) como referência primária
+      let displayDate = rep.report_date || rep.imported_at;
+      try {
+        // report_date vem como YYYY-MM-DD — formata manualmente para evitar erro de fuso horário
+        if (rep.report_date && /^\d{4}-\d{2}-\d{2}$/.test(rep.report_date)) {
+          const [y, m, d] = rep.report_date.split('-');
+          displayDate = `${d}/${m}/${y}`;
+        } else {
+          const dateObj = new Date(rep.imported_at);
+          displayDate = dateObj.toLocaleDateString('pt-BR');
+        }
+      } catch (_) {}
+      option.textContent = `${rep.report_name} (${displayDate})`;
       if (idx === 0) option.selected = true;
       select.appendChild(option);
     });
@@ -499,9 +511,18 @@ async function loadKPIs() {
       [...evolution].reverse().forEach(rep => {
         const tr = document.createElement('tr');
         const reportDetails = cachedList.find(r => r.id === rep.report_id);
-        const rawImported = reportDetails ? reportDetails.imported_at : new Date().toISOString();
-        const dateObj = new Date(rawImported);
-        const formattedDate = dateObj.toLocaleDateString('pt-BR') + ' ' + dateObj.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'});
+        
+        // Prefere report_date (data real do PDF), fallback para imported_at
+        let formattedDate = '—';
+        const rDate = rep.report_date || (reportDetails && reportDetails.report_date);
+        const iDate = reportDetails ? reportDetails.imported_at : null;
+        
+        if (rDate && /^\d{4}-\d{2}-\d{2}$/.test(rDate)) {
+          const [y, m, d] = rDate.split('-');
+          formattedDate = `${d}/${m}/${y}`;
+        } else if (iDate) {
+          formattedDate = new Date(iDate).toLocaleDateString('pt-BR');
+        }
         
         tr.innerHTML = `
           <td><strong>#${rep.report_id}</strong></td>
@@ -529,8 +550,9 @@ function drawEvolutionChart(evolution) {
     return;
   }
   
-  const width = container.clientWidth || 500;
-  const height = 220;
+  // clientWidth retorna 0 quando o container está oculto (aba fechada) — usa fallback
+  const width   = container.clientWidth > 0 ? container.clientWidth : 560;
+  const height  = 220;
   const padding = 40;
   
   const maxVal = Math.max(...evolution.map(d => d.clients), 10);
@@ -539,7 +561,13 @@ function drawEvolutionChart(evolution) {
   const points = evolution.map((d, i) => {
     const x = padding + (i / (evolution.length - 1)) * (width - padding * 2);
     const y = height - padding - ((d.clients - minVal) / (maxVal - minVal)) * (height - padding * 2);
-    return { x, y, name: d.report_name, value: d.clients };
+    // Formata a data do PDF (YYYY-MM-DD → DD/MM/YY) como rótulo do eixo X
+    let label = d.report_name;
+    if (d.report_date && /^\d{4}-\d{2}-\d{2}$/.test(d.report_date)) {
+      const [yr, mo, dy] = d.report_date.split('-');
+      label = `${dy}/${mo}/${yr.slice(2)}`;
+    }
+    return { x, y, name: label, value: d.clients };
   });
   
   let pathD = `M ${points[0].x} ${points[0].y}`;

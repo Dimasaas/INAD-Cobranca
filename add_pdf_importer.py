@@ -1,35 +1,74 @@
+"""
+add_pdf_importer.py — Compilador do painel INAD
+
+Lê inad_template.html e gera inad_whatsapp.html injetando os dados de
+clientes do arquivo clients_data.json no placeholder CLIENTS_JSON_PLACEHOLDER.
+
+Se clients_data.json não existir, gera o HTML com uma base vazia ({}).
+Isso garante que o build do CI/CD no GitHub Actions funcione corretamente.
+
+Uso:
+  python3 add_pdf_importer.py
+"""
+
 import json
-import os
+import sys
+from pathlib import Path
 
-# Load the current clients data
-if not os.path.exists("clients_data.json"):
-    print("Error: clients_data.json not found!")
-    exit(1)
+BASE_DIR     = Path(__file__).parent.resolve()
+CLIENTS_FILE = BASE_DIR / "clients_data.json"
+TEMPLATE     = BASE_DIR / "inad_template.html"
+OUTPUT       = BASE_DIR / "inad_whatsapp.html"
 
-with open("clients_data.json", "r", encoding="utf-8") as f:
-    clients = json.load(f)
+PLACEHOLDER  = "CLIENTS_JSON_PLACEHOLDER"
 
-# Fix any leftover bad values in phone/cel
-bad_cel_values = {"E-mail:", "351"}
-for name, c in clients.items():
-    if c.get("cel", "") in bad_cel_values:
-        c["cel"] = ""
+# Valores inválidos conhecidos de telefone no legado
+BAD_CEL_VALUES = {"E-mail:", "351", "0", "-"}
 
-clients_js = json.dumps(clients, ensure_ascii=False, separators=(',', ':'))
 
-# Read the HTML template
-if not os.path.exists("inad_template.html"):
-    print("Error: inad_template.html not found! Run from the correct directory.")
-    exit(1)
+def load_clients() -> dict:
+    """Carrega clients_data.json. Retorna {} se o arquivo não existir."""
+    if not CLIENTS_FILE.exists():
+        print(f"[AVISO] {CLIENTS_FILE.name} não encontrado. Gerando HTML com base vazia.")
+        return {}
 
-with open("inad_template.html", "r", encoding="utf-8") as f:
-    html_template = f.read()
+    with CLIENTS_FILE.open("r", encoding="utf-8") as f:
+        clients = json.load(f)
 
-# Replace the CLIENTS_JSON_PLACEHOLDER in the HTML
-html_out = html_template.replace("CLIENTS_JSON_PLACEHOLDER", clients_js)
+    # Limpa valores de telefone inválidos
+    for c_data in clients.values():
+        if c_data.get("cel", "") in BAD_CEL_VALUES:
+            c_data["cel"] = ""
 
-# Write the final inad_whatsapp.html
-with open("inad_whatsapp.html", "w", encoding="utf-8") as f:
-    f.write(html_out)
+    return clients
 
-print(f"Successfully generated inad_whatsapp.html with client-side PDF parser! Size: {len(html_out):,} bytes")
+
+def main() -> None:
+    if not TEMPLATE.exists():
+        print(f"[ERRO] Template não encontrado: {TEMPLATE}")
+        print("       Execute este script a partir da pasta raiz do projeto.")
+        sys.exit(1)
+
+    clients    = load_clients()
+    clients_js = json.dumps(clients, ensure_ascii=False, separators=(",", ":"))
+
+    html_template = TEMPLATE.read_text(encoding="utf-8")
+
+    if PLACEHOLDER not in html_template:
+        print(f"[ERRO] Placeholder '{PLACEHOLDER}' não encontrado em {TEMPLATE.name}.")
+        sys.exit(1)
+
+    html_out = html_template.replace(PLACEHOLDER, clients_js)
+    OUTPUT.write_text(html_out, encoding="utf-8")
+
+    size_bytes = len(html_out.encode("utf-8"))
+    size_kb    = size_bytes / 1024
+    n_clients  = len(clients)
+
+    print(f"[OK] {OUTPUT.name} gerado com sucesso!")
+    print(f"     Tamanho  : {size_bytes:,} bytes ({size_kb:.1f} KB)")
+    print(f"     Clientes : {n_clients} clientes embutidos no HTML")
+
+
+if __name__ == "__main__":
+    main()
