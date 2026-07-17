@@ -26,3 +26,5 @@ inad_whatsapp.html
 pdf_text.txt
 ocr_extracted.txt
 *.pdf
+inad_database.db
+*.db

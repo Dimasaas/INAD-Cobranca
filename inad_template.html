@@ -148,6 +148,43 @@
       .search-wrap{order:3;max-width:100%;width:100%}
       .top-actions{width:100%;justify-content:space-between;margin-left:0;}
     }
+
+    /* TABS */
+    .tabs { display:flex; gap:6px; margin: 0 16px; border: 1px solid var(--border); padding: 3px; border-radius: 10px; background: var(--bg2); }
+    .tab-btn { padding: 6px 16px; border-radius: 8px; border: none; background: transparent; color: var(--text2); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px; transition: all .15s; }
+    .tab-btn:hover { color: var(--text); }
+    .tab-btn.active { background: var(--card); border: 1px solid var(--border); color: var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,.2); }
+
+    /* REPORT SELECTOR */
+    .report-select { background: var(--bg3); border: 1px solid var(--border); border-radius: 20px; padding: 4px 12px; color: var(--text2); font-family: inherit; font-size: 12px; outline: none; cursor: pointer; font-weight: 500; }
+    .report-select:focus { border-color: var(--accent); }
+
+    /* KPI DASHBOARD */
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px; }
+    .kpi-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--r); padding: 18px 20px; box-shadow: var(--sh); position: relative; overflow: hidden; }
+    .kpi-card::after { content: ''; position: absolute; top: 0; left: 0; width: 4px; height: 100%; background: linear-gradient(180deg, var(--accent), var(--accent2)); }
+    .kpi-card-title { font-size: 12px; font-weight: 600; color: var(--text3); text-transform: uppercase; letter-spacing: .5px; margin-bottom: 6px; }
+    .kpi-card-value { font-size: 32px; font-weight: 800; color: var(--text); line-height: 1.1; margin-bottom: 6px; background: linear-gradient(90deg, #fff, var(--text2)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .kpi-card-desc { font-size: 11px; color: var(--text3); line-height: 1.4; }
+    
+    .kpi-charts-row { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 24px; }
+    @media (max-width: 900px) { .kpi-charts-row { grid-template-columns: 1fr; } }
+    .kpi-chart-box { background: var(--card); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; box-shadow: var(--sh); }
+    .kpi-chart-box h3 { font-size: 14px; font-weight: 700; color: var(--text2); margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+    .chart-container { height: 260px; position: relative; width: 100%; display: flex; align-items: center; justify-content: center; }
+
+    /* KPI REPORTS TABLE */
+    .kpi-reports-section { background: var(--card); border: 1px solid var(--border); border-radius: var(--r); padding: 20px; box-shadow: var(--sh); margin-bottom: 40px; }
+    .kpi-reports-section h3 { font-size: 14px; font-weight: 700; color: var(--text2); margin-bottom: 16px; }
+    .kpi-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 13px; }
+    .kpi-table th, .kpi-table td { padding: 10px 14px; border-bottom: 1px solid var(--border); }
+    .kpi-table th { font-weight: 600; color: var(--text3); font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+    .kpi-table td { color: var(--text2); }
+    .kpi-table tr:hover td { background: rgba(255,255,255,.01); color: var(--text); }
+    .kpi-btn-action { background: transparent; border: 1px solid var(--border); padding: 4px 10px; border-radius: 6px; color: var(--text2); font-family: inherit; font-size: 11px; font-weight: 600; cursor: pointer; transition: all .15s; }
+    .kpi-btn-action:hover { border-color: var(--accent); color: var(--accent); background: rgba(79,141,255,.05); }
+    .kpi-btn-del { border-color: rgba(239,68,68,.3); color: var(--red); }
+    .kpi-btn-del:hover { border-color: var(--red); color: var(--red); background: rgba(239,68,68,.05); }
   </style>
 </head>
 <body>
@@ -178,6 +215,11 @@
     <input id="search" type="text" placeholder="Buscar cliente, quadra, lote…" autocomplete="off">
   </div>
   
+  <div class="tabs">
+    <button class="tab-btn active" id="tab-cobranca" onclick="switchTab('cobranca')">💬 Cobrança</button>
+    <button class="tab-btn" id="tab-kpi" onclick="switchTab('kpi')">📈 Indicadores (KPIs)</button>
+  </div>
+  
   <div class="top-actions">
     <button class="btn btn-import" onclick="document.getElementById('pdf-input').click()">
       📂 Importar PDF
@@ -202,17 +244,381 @@
   <button class="fb" onclick="sf('multi',this)">Múltiplos Imóveis</button>
   <div class="fsep"></div>
   <button class="fb" onclick="sf('noph',this)">Sem Telefone</button>
+  <div class="fsep" id="report-select-sep" style="display:none;"></div>
+  <select id="report-select" onchange="changeReport(this.value)" class="report-select" style="display:none;">
+    <option value="latest">Relatório Atual</option>
+  </select>
 </div>
 
-<div class="wrap">
+<div class="wrap" id="cobranca-screen">
   <div class="info" id="info"></div>
   <div class="grid" id="grid"></div>
+</div>
+
+<div class="kpi-screen" id="kpi-screen" style="display:none; padding: 22px 24px;">
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-card-title">Taxa de Recuperação Geral</div>
+      <div class="kpi-card-value" id="kpi-recovery-rate">—</div>
+      <div class="kpi-card-desc">Porcentagem de inadimplentes recuperados (retirados das listas de atraso).</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-card-title">Eficácia das Cobranças (Lift)</div>
+      <div class="kpi-card-value" id="kpi-lift-rate">—</div>
+      <div class="kpi-card-desc">Contatados que pagaram vs. Não contatados que pagaram (efetividade do WhatsApp).</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-card-title">Total de Vendas Cobradas</div>
+      <div class="kpi-card-value" id="kpi-total-contacted">—</div>
+      <div class="kpi-card-desc">Histórico de cobranças disparadas por toda a equipe.</div>
+    </div>
+  </div>
+
+  <div class="kpi-charts-row">
+    <div class="kpi-chart-box">
+      <h3>📈 Evolução da Inadimplência</h3>
+      <div id="chart-evolution" class="chart-container">
+        <p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar o gráfico. Importe mais de um relatório.</p>
+      </div>
+    </div>
+    <div class="kpi-chart-box">
+      <h3>📊 Comparativo de Conversão (Recuperação)</h3>
+      <div id="chart-comparison" class="chart-container">
+        <p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar o gráfico. Importe mais de um relatório.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="kpi-reports-section">
+    <h3>Relatórios Históricos Salvos</h3>
+    <table class="kpi-table">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Identificação do Relatório</th>
+          <th>Importado em</th>
+          <th>Clientes Inadimplentes</th>
+          <th>Parcelas em Atraso</th>
+        </tr>
+      </thead>
+      <tbody id="kpi-reports-tbody">
+        <tr>
+          <td colspan="5" style="text-align:center; padding: 20px 0; color:var(--text3);">Nenhum relatório importado.</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <script>
 // ─── DATA LOADING ────────────────────────────────────────────────────────
 const EMBEDDED_DATA = CLIENTS_JSON_PLACEHOLDER;
-let DATA = JSON.parse(localStorage.getItem('inad_clients_db')) || EMBEDDED_DATA;
+let DATA = {};
+let sent = new Set();
+let isServerActive = false;
+
+async function initApp() {
+  if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+    try {
+      const clientsRes = await fetch('/api/clients');
+      const clientsData = await clientsRes.json();
+      
+      const sentRes = await fetch('/api/sent');
+      const sentList = await sentRes.json();
+      
+      if (clientsData && typeof clientsData === 'object') {
+        DATA = Object.keys(clientsData).length > 0 ? clientsData : EMBEDDED_DATA;
+        isServerActive = true;
+        console.log("Banco de dados sincronizado com o servidor.");
+        
+        // Show report selector elements
+        document.getElementById('report-select-sep').style.display = 'block';
+        document.getElementById('report-select').style.display = 'block';
+        
+        await updateReportDropdown();
+        await loadKPIs();
+      } else {
+        DATA = EMBEDDED_DATA;
+      }
+      
+      if (Array.isArray(sentList)) {
+        sent = new Set(sentList);
+      }
+    } catch (e) {
+      console.warn("Falha ao comunicar com a API do servidor, usando armazenamento local:", e);
+      loadLocalData();
+    }
+  } else {
+    loadLocalData();
+  }
+  
+  migrateSentData();
+  renderAll();
+}
+
+function loadLocalData() {
+  DATA = JSON.parse(localStorage.getItem('inad_clients_db')) || EMBEDDED_DATA;
+  sent = new Set(JSON.parse(localStorage.getItem('inad_sent') || '[]'));
+  isServerActive = false;
+  document.getElementById('report-select-sep').style.display = 'none';
+  document.getElementById('report-select').style.display = 'none';
+}
+
+function switchTab(tab) {
+  const cobrancaScreen = document.getElementById('cobranca-screen');
+  const kpiScreen = document.getElementById('kpi-screen');
+  const filtersBar = document.querySelector('.filters');
+  const searchWrap = document.querySelector('.search-wrap');
+  
+  document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+  
+  if (tab === 'cobranca') {
+    document.getElementById('tab-cobranca').classList.add('active');
+    cobrancaScreen.style.display = 'block';
+    kpiScreen.style.display = 'none';
+    filtersBar.style.display = 'flex';
+    searchWrap.style.visibility = 'visible';
+    renderAll();
+  } else if (tab === 'kpi') {
+    document.getElementById('tab-kpi').classList.add('active');
+    cobrancaScreen.style.display = 'none';
+    kpiScreen.style.display = 'block';
+    filtersBar.style.display = 'none';
+    searchWrap.style.visibility = 'hidden';
+    loadKPIs();
+  }
+}
+
+async function changeReport(reportId) {
+  if (reportId === 'latest') return;
+  
+  const overlay = document.getElementById('loading-overlay');
+  const loadingText = document.getElementById('loading-text');
+  const pBar = document.getElementById('progress-bar');
+  const pSub = document.getElementById('loading-sub');
+  
+  overlay.style.display = 'flex';
+  pBar.style.width = '30%';
+  loadingText.textContent = "Carregando relatório...";
+  pSub.textContent = "Buscando dados no servidor...";
+  
+  try {
+    const res = await fetch(`/api/reports/${reportId}`);
+    const clientsData = await res.json();
+    pBar.style.width = '70%';
+    
+    if (clientsData && typeof clientsData === 'object') {
+      DATA = clientsData;
+    }
+    
+    pBar.style.width = '100%';
+    await new Promise(resolve => setTimeout(resolve, 200));
+    overlay.style.display = 'none';
+    renderAll();
+  } catch (e) {
+    overlay.style.display = 'none';
+    alert("Erro ao carregar relatório selecionado: " + e.message);
+  }
+}
+
+let reportsListCache = null;
+async function updateReportsCache() {
+  try {
+    const res = await fetch('/api/reports');
+    reportsListCache = await res.json();
+  } catch(e){}
+}
+
+async function updateReportDropdown() {
+  try {
+    await updateReportsCache();
+    const reports = reportsListCache || [];
+    const select = document.getElementById('report-select');
+    select.innerHTML = "";
+    
+    if (reports.length === 0) {
+      select.innerHTML = '<option value="latest">Sem relatórios</option>';
+      return;
+    }
+    
+    reports.forEach((rep, idx) => {
+      const option = document.createElement('option');
+      option.value = rep.id;
+      const dateObj = new Date(rep.imported_at);
+      const formattedDate = dateObj.toLocaleDateString('pt-BR') + ' ' + dateObj.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'});
+      option.textContent = `${rep.report_name} (${formattedDate})`;
+      if (idx === 0) option.selected = true;
+      select.appendChild(option);
+    });
+  } catch (e) {
+    console.error("Erro ao carregar dropdown de relatórios:", e);
+  }
+}
+
+async function loadKPIs() {
+  if (!isServerActive) return;
+  try {
+    const res = await fetch('/api/kpis');
+    const kpiData = await res.json();
+    
+    const transitions = kpiData.transitions || [];
+    const evolution = kpiData.evolution || [];
+    
+    let totalRecoveryRate = "—";
+    let totalLift = "—";
+    
+    if (transitions.length > 0) {
+      const sumRecovery = transitions.reduce((acc, curr) => acc + curr.total_recovery_rate, 0);
+      totalRecoveryRate = (sumRecovery / transitions.length).toFixed(1) + "%";
+      
+      const avgContacted = transitions.reduce((acc, curr) => acc + curr.contacted_rate, 0) / transitions.length;
+      const avgUncontacted = transitions.reduce((acc, curr) => acc + curr.uncontacted_rate, 0) / transitions.length;
+      const lift = avgContacted - avgUncontacted;
+      totalLift = (lift >= 0 ? "+" : "") + lift.toFixed(1) + "%";
+    } else if (evolution.length > 0) {
+      totalRecoveryRate = "Aguardando";
+      totalLift = "Próximo Mês";
+    }
+    
+    document.getElementById('kpi-recovery-rate').textContent = totalRecoveryRate;
+    document.getElementById('kpi-lift-rate').textContent = totalLift;
+    
+    const sentRes = await fetch('/api/actions/sent');
+    const sentList = await sentRes.json();
+    document.getElementById('kpi-total-contacted').textContent = sentList.length;
+    
+    const tbody = document.getElementById('kpi-reports-tbody');
+    tbody.innerHTML = "";
+    
+    if (evolution.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:var(--text3);">Nenhum relatório importado.</td></tr>';
+    } else {
+      await updateReportsCache();
+      const cachedList = reportsListCache || [];
+      
+      [...evolution].reverse().forEach(rep => {
+        const tr = document.createElement('tr');
+        const reportDetails = cachedList.find(r => r.id === rep.report_id);
+        const rawImported = reportDetails ? reportDetails.imported_at : new Date().toISOString();
+        const dateObj = new Date(rawImported);
+        const formattedDate = dateObj.toLocaleDateString('pt-BR') + ' ' + dateObj.toLocaleTimeString('pt-BR', {hour: '2-digit', minute:'2-digit'});
+        
+        tr.innerHTML = `
+          <td><strong>#${rep.report_id}</strong></td>
+          <td>${rep.report_name}</td>
+          <td>${formattedDate}</td>
+          <td>${rep.clients} clientes</td>
+          <td><span class="chip" style="background:var(--red-bg); color:var(--red); border-color:rgba(239,68,68,.2);">${rep.parcels} parcelas</span></td>
+        `;
+        tbody.appendChild(tr);
+      });
+    }
+    
+    drawEvolutionChart(evolution);
+    drawComparisonChart(transitions);
+    
+  } catch (e) {
+    console.error("Erro ao carregar dados do dashboard de KPIs:", e);
+  }
+}
+
+function drawEvolutionChart(evolution) {
+  const container = document.getElementById('chart-evolution');
+  if (evolution.length < 2) {
+    container.innerHTML = '<p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar a linha do tempo. Importe pelo menos dois relatórios.</p>';
+    return;
+  }
+  
+  const width = container.clientWidth || 500;
+  const height = 220;
+  const padding = 40;
+  
+  const maxVal = Math.max(...evolution.map(d => d.clients), 10);
+  const minVal = 0;
+  
+  const points = evolution.map((d, i) => {
+    const x = padding + (i / (evolution.length - 1)) * (width - padding * 2);
+    const y = height - padding - ((d.clients - minVal) / (maxVal - minVal)) * (height - padding * 2);
+    return { x, y, name: d.report_name, value: d.clients };
+  });
+  
+  let pathD = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 1; i < points.length; i++) {
+    pathD += ` L ${points[i].x} ${points[i].y}`;
+  }
+  
+  let gridLines = '';
+  const step = Math.max(Math.round(maxVal / 4), 1);
+  for (let val = 0; val <= maxVal; val += step) {
+    const y = height - padding - ((val - minVal) / (maxVal - minVal)) * (height - padding * 2);
+    gridLines += `<line x1="${padding}" y1="${y}" x2="${width - padding}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3,3" />`;
+    gridLines += `<text x="${padding - 10}" y="${y + 4}" fill="var(--text3)" font-size="10" text-anchor="end">${val}</text>`;
+  }
+  
+  let labels = '';
+  let circles = '';
+  points.forEach(p => {
+    labels += `<text x="${p.x}" y="${height - 15}" fill="var(--text2)" font-size="9" text-anchor="middle">${p.name}</text>`;
+    circles += `<circle cx="${p.x}" cy="${p.y}" r="5" fill="var(--accent)" stroke="var(--card)" stroke-width="2" />`;
+    circles += `<text x="${p.x}" y="${p.y - 10}" fill="var(--text)" font-size="10" font-weight="700" text-anchor="middle">${p.value}</text>`;
+  });
+  
+  const svg = `
+    <svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow:visible;">
+      ${gridLines}
+      <path d="${pathD}" fill="none" stroke="url(#line-grad)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      ${circles}
+      ${labels}
+      <defs>
+        <linearGradient id="line-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="var(--accent)" />
+          <stop offset="100%" stop-color="var(--accent2)" />
+        </linearGradient>
+      </defs>
+    </svg>
+  `;
+  container.innerHTML = svg;
+}
+
+function drawComparisonChart(transitions) {
+  const container = document.getElementById('chart-comparison');
+  if (transitions.length === 0) {
+    container.innerHTML = '<p style="color:var(--text3); font-size:12px;">Aguardando transição de relatórios para cruzar conversões de cobrança.</p>';
+    return;
+  }
+  
+  const trans = transitions[transitions.length - 1];
+  const rateContacted = trans.contacted_rate;
+  const rateUncontacted = trans.uncontacted_rate;
+  
+  const html = `
+    <div style="width:100%; max-width:400px; display:flex; flex-direction:column; gap:16px;">
+      <div style="font-size:11px; text-align:center; color:var(--text3); margin-bottom:-4px;">Comparação em: ${trans.from_report} ➔ ${trans.to_report}</div>
+      <div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-weight:600; font-size:12px;">
+          <span>Clientes Cobrados (WhatsApp)</span>
+          <span style="color:var(--green)">${rateContacted}% recuperados</span>
+        </div>
+        <div style="width:100%; height:12px; background:var(--border); border-radius:6px; overflow:hidden;">
+          <div style="width:${rateContacted}%; height:100%; background:linear-gradient(90deg, var(--green), #4ade80); border-radius:6px;"></div>
+        </div>
+        <div style="font-size:10px; color:var(--text3); margin-top:2px;">Sucesso de cobrança: ${trans.contacted_recovered} de ${trans.contacted_total} clientes regularizados</div>
+      </div>
+      
+      <div>
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-weight:600; font-size:12px;">
+          <span>Clientes Não Cobrados (Orgânico)</span>
+          <span style="color:var(--text2)">${rateUncontacted}% recuperados</span>
+        </div>
+        <div style="width:100%; height:12px; background:var(--border); border-radius:6px; overflow:hidden;">
+          <div style="width:${rateUncontacted}%; height:100%; background:linear-gradient(90deg, var(--accent), var(--accent2)); border-radius:6px;"></div>
+        </div>
+        <div style="font-size:10px; color:var(--text3); margin-top:2px;">Recuperação passiva: ${trans.uncontacted_recovered} de ${trans.uncontacted_total} clientes regularizados</div>
+      </div>
+    </div>
+  `;
+  container.innerHTML = html;
+}
 
 const FN=['NAYUME','NAYARA','MARIA','TEREZA','SIRLENE','STEFANNY','ALESSANDRA',
   'NATHALIA','ZELMA','RAIANE','LILIAN','SILVIA','SIRLEIDE','ELZA','ROSANGELA',
@@ -292,7 +698,7 @@ function buildMsg(c){
   return L.join('\n');
 }
 
-let sent=new Set(JSON.parse(localStorage.getItem('inad_sent')||'[]'));
+// sent is initialized in initApp()
 let curF='all', curQ='';
 
 function sid(name){return name.replace(/[^a-z0-9]/gi,'_')}
@@ -393,17 +799,89 @@ function doCopy(id,btn){
   });
 }
 function markSent(name, id){
-  sent.add(name);save();
+  sent.add(name);
+  save();
   document.getElementById('card-'+id)?.classList.add('sent');
   document.getElementById('dn-'+id)?.classList.add('on');
   document.getElementById('st-sent').textContent=sent.size;
+  
+  if (isServerActive) {
+    fetch('/api/actions/sent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ venda_id: id, client_name: name })
+    }).catch(e => console.error("Erro ao registrar log de envio no servidor:", e));
+  }
 }
 function toggleSent(name,id){
-  if(sent.has(name)){sent.delete(name);document.getElementById('card-'+id)?.classList.remove('sent');document.getElementById('dn-'+id)?.classList.remove('on');}
-  else{sent.add(name);document.getElementById('card-'+id)?.classList.add('sent');document.getElementById('dn-'+id)?.classList.add('on');}
-  save();document.getElementById('st-sent').textContent=sent.size;
+  if(sent.has(name)){
+    sent.delete(name);
+    document.getElementById('card-'+id)?.classList.remove('sent');
+    document.getElementById('dn-'+id)?.classList.remove('on');
+    save();
+  } else {
+    sent.add(name);
+    document.getElementById('card-'+id)?.classList.add('sent');
+    document.getElementById('dn-'+id)?.classList.add('on');
+    save();
+    
+    if (isServerActive) {
+      fetch('/api/actions/sent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ venda_id: id, client_name: name })
+      }).catch(e => console.error("Erro ao registrar log de envio no servidor:", e));
+    }
+  }
+  document.getElementById('st-sent').textContent=sent.size;
 }
-function save(){localStorage.setItem('inad_sent',JSON.stringify([...sent]));}
+function save(){
+  saveSent();
+}
+
+async function saveClients(parsedClients, reportName, reportDate) {
+  DATA = parsedClients;
+  if (isServerActive) {
+    try {
+      const res = await fetch('/api/reports', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          report_name: reportName || "Relatório Avulso",
+          report_date: reportDate,
+          clients: parsedClients
+        })
+      });
+      if (!res.ok) throw new Error(res.statusText);
+      
+      await updateReportDropdown();
+      await loadKPIs();
+    } catch (e) {
+      console.error("Erro ao salvar clientes no servidor:", e);
+      alert("Aviso: Falha ao salvar no servidor. Os dados foram atualizados na tela, mas podem não ter sido persistidos no disco do servidor.");
+    }
+  } else {
+    localStorage.setItem('inad_clients_db', JSON.stringify(parsedClients));
+  }
+}
+
+async function saveSent() {
+  const list = [...sent];
+  if (isServerActive) {
+    try {
+      const res = await fetch('/api/sent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(list)
+      });
+      if (!res.ok) throw new Error(res.statusText);
+    } catch (e) {
+      console.error("Erro ao salvar status de envio no servidor:", e);
+    }
+  } else {
+    localStorage.setItem('inad_sent', JSON.stringify(list));
+  }
+}
 function sf(f,btn){curF=f;document.querySelectorAll('.fb').forEach(b=>b.classList.remove('on'));btn.classList.add('on');renderAll();}
 let t;document.getElementById('search').addEventListener('input',e=>{clearTimeout(t);t=setTimeout(()=>{curQ=e.target.value.trim();renderAll();},200);});
 
@@ -446,7 +924,7 @@ function migrateSentData(){
     console.error("Migration error:",e);
   }
 }
-migrateSentData();
+// migrateSentData() is called inside initApp()
 
 // ─── CLIENT-SIDE PDF PARSING & IMPORT ────────────────────────────────────
 async function handlePDFUpload(event) {
@@ -482,11 +960,26 @@ async function handlePDFUpload(event) {
         const parsedClients = parseLayoutText(text);
         
         pBar.style.width = '95%';
-        pSub.textContent = "Salvando dados localmente...";
+        pSub.textContent = "Salvando dados...";
         
-        // Save to localStorage
-        localStorage.setItem('inad_clients_db', JSON.stringify(parsedClients));
-        DATA = parsedClients;
+        const extractedDate = extractReportDate(text);
+        let suggestedName = "Relatório " + new Date().toLocaleDateString('pt-BR');
+        if (extractedDate) {
+          const parts = extractedDate.split('-');
+          suggestedName = `Relatório de ${parts[2]}/${parts[1]}/${parts[0]}`;
+        }
+        
+        let reportName = "";
+        if (isServerActive) {
+          reportName = prompt("Digite uma identificação para este relatório (ex: Julho/2026):", suggestedName);
+          if (reportName === null) {
+            overlay.style.display = 'none';
+            return;
+          }
+        }
+        
+        // Save to server/localStorage
+        await saveClients(parsedClients, reportName, extractedDate);
         
         // Reset search and filters
         document.getElementById('search').value = "";
@@ -578,6 +1071,24 @@ async function extractTextFromPDF(pdfData, loadingText, pBar, pSub) {
     fullText += `=== PAGE ${i} ===\n` + pageText + '\n';
   }
   return fullText;
+}
+
+function extractReportDate(text) {
+  const regex = /(segunda-feira|terça-feira|quarta-feira|quinta-feira|sexta-feira|sábado|domingo),\s+(\d{1,2})\s+de\s+(janeiro|fevereiro|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s+de\s+(\d{4})/i;
+  const match = text.match(regex);
+  if (match) {
+    const day = match[2].padStart(2, '0');
+    const monthName = match[3].toLowerCase();
+    const year = match[4];
+    const months = {
+      'janeiro':'01', 'fevereiro':'02', 'março':'03', 'abril':'04',
+      'maio':'05', 'junho':'06', 'julho':'07', 'agosto':'08',
+      'setembro':'09', 'outubro':'10', 'novembro':'11', 'dezembro':'12'
+    };
+    const month = months[monthName] || '01';
+    return `${year}-${month}-${day}`;
+  }
+  return null;
 }
 
 function parseLayoutText(text) {
@@ -795,7 +1306,7 @@ window.addEventListener('drop', async e => {
 });
 
 // Render initially
-renderAll();
+initApp();
 </script>
 </body>
 </html>
