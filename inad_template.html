@@ -1,0 +1,801 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>INAD — Painel de Cobrança</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- PDF.js library for client-side PDF parsing -->
+  <script src="libs/pdf.min.js" onerror="this.onerror=null; this.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js';"></script>
+  
+  <style>
+    :root {
+      --bg:#0d0f14; --bg2:#13161d; --bg3:#1a1e28; --card:#181c26;
+      --border:#252b3b; --border2:#2e3650;
+      --accent:#4f8dff; --accent2:#6c63ff;
+      --green:#22c55e; --green-bg:rgba(34,197,94,.1);
+      --red:#ef4444; --red-bg:rgba(239,68,68,.08);
+      --purple:#a855f7; --purple-bg:rgba(168,85,247,.1);
+      --text:#e8eaf0; --text2:#9ba3bb; --text3:#636b85;
+      --r:14px; --r2:8px;
+      --sh:0 4px 24px rgba(0,0,0,.4);
+    }
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    html{scroll-behavior:smooth}
+    body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;line-height:1.6}
+
+    /* TOPBAR */
+    .topbar{position:sticky;top:0;z-index:100;background:rgba(13,15,20,.92);backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;gap:18px;height:64px}
+    .logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;white-space:nowrap}
+    .logo-icon{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:18px}
+    .logo-sub{font-size:11px;color:var(--text3);font-weight:400}
+    .search-wrap{position:relative;flex:1;max-width:380px}
+    .search-wrap svg{position:absolute;left:11px;top:50%;transform:translateY(-50%);color:var(--text3);pointer-events:none}
+    #search{width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:9px 12px 9px 36px;color:var(--text);font-family:inherit;font-size:13px;outline:none;transition:border-color .2s}
+    #search:focus{border-color:var(--accent)}
+    #search::placeholder{color:var(--text3)}
+    
+    .top-actions { display:flex; align-items:center; gap:8px; margin-left:auto; }
+    .btn-import {
+      background:var(--bg3); color:var(--accent); border:1px solid var(--border);
+      padding:6px 14px; display:inline-flex; align-items:center; gap:6px; font-weight:600;
+    }
+    .btn-import:hover { border-color:var(--accent); background:rgba(79,141,255,.05); }
+
+    .stats{display:flex;gap:8px;}
+    .stat{display:flex;flex-direction:column;align-items:center;padding:5px 14px;border-radius:8px;background:var(--bg3);border:1px solid var(--border)}
+    .stat-val{font-size:17px;font-weight:800;line-height:1.1}
+    .stat-label{font-size:10px;color:var(--text3);font-weight:500}
+    .stat-blue .stat-val{color:var(--accent)}
+    .stat-green .stat-val{color:var(--green)}
+    .stat-purple .stat-val{color:var(--purple)}
+
+    /* FILTERS */
+    .filters{padding:12px 24px;background:var(--bg2);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+    .fl{font-size:11px;color:var(--text3);font-weight:600;margin-right:2px}
+    .fb{padding:5px 13px;border-radius:20px;border:1px solid var(--border);background:transparent;color:var(--text2);font-family:inherit;font-size:12px;font-weight:500;cursor:pointer;transition:all .15s}
+    .fb:hover{border-color:var(--accent);color:var(--accent)}
+    .fb.on{background:var(--accent);border-color:var(--accent);color:#fff}
+    .fsep{width:1px;height:18px;background:var(--border);margin:0 2px}
+
+    /* GRID */
+    .wrap{padding:22px 24px}
+    .info{font-size:12px;color:var(--text3);margin-bottom:14px;display:flex;justify-content:space-between;align-items:center;}
+    .info strong{color:var(--text2)}
+    .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(390px,1fr));gap:14px}
+
+    /* CARD */
+    .card{background:var(--card);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column;transition:border-color .2s,transform .18s,box-shadow .18s}
+    .card:hover{border-color:var(--border2);box-shadow:var(--sh);transform:translateY(-1px)}
+    .card.sent{opacity:.45}
+
+    /* CARD HEADER */
+    .ch{padding:14px 16px 12px;border-bottom:1px solid var(--border);display:flex;align-items:flex-start;gap:11px}
+    .av{width:40px;height:40px;border-radius:50%;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+    .av-f{background:linear-gradient(135deg,#f06292,#ba68c8);color:#fff}
+    .av-m{background:linear-gradient(135deg,#42a5f5,#26c6da);color:#fff}
+    .av-e{background:linear-gradient(135deg,#66bb6a,#26a69a);color:#fff}
+    .ci{flex:1;min-width:0}
+    .cn{font-weight:700;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .cm{display:flex;align-items:center;gap:7px;margin-top:3px;flex-wrap:wrap}
+    .mi{display:flex;align-items:center;gap:3px;font-size:11px;color:var(--text3)}
+    .mi.err{color:var(--red)}
+    .pc{font-size:10px;font-weight:700;padding:2px 8px;border-radius:20px;flex-shrink:0}
+    .pc.s{background:var(--green-bg);color:var(--green)}
+    .pc.m{background:var(--purple-bg);color:var(--purple)}
+
+    /* PROPS */
+    .pl{padding:10px 16px;border-bottom:1px solid var(--border);display:flex;flex-direction:column;gap:5px}
+    .pr{display:flex;align-items:center;gap:7px;padding:6px 9px;border-radius:var(--r2);background:var(--bg3);border:1px solid var(--border)}
+    .pid{font-size:11px;font-weight:700;color:var(--accent);white-space:nowrap}
+    .pp{display:flex;flex-wrap:wrap;gap:3px;flex:1}
+    .chip{font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;background:rgba(79,141,255,.1);color:var(--accent);border:1px solid rgba(79,141,255,.2)}
+
+    /* MESSAGE */
+    .ma{padding:10px 16px;flex:1;display:flex;flex-direction:column;gap:6px}
+    .ml{font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;display:flex;justify-content:space-between}
+    .ml span{text-transform:none;letter-spacing:0;font-weight:400}
+    .mb{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:var(--r2);padding:9px 11px;color:var(--text);font-family:inherit;font-size:12.5px;line-height:1.6;resize:vertical;min-height:128px;outline:none;transition:border-color .2s}
+    .mb:focus{border-color:var(--accent)}
+
+    /* ACTIONS */
+    .ca{padding:10px 16px;border-top:1px solid var(--border);display:flex;gap:7px}
+    .btn{display:inline-flex;align-items:center;gap:5px;padding:7px 13px;border-radius:var(--r2);border:none;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;transition:all .15s;text-decoration:none;white-space:nowrap}
+    .bcopy{background:var(--bg3);color:var(--text2);border:1px solid var(--border);flex:1}
+    .bcopy:hover{border-color:var(--accent);color:var(--accent)}
+    .bcopy.ok{background:var(--green-bg);color:var(--green);border-color:var(--green)}
+    .bwa{background:linear-gradient(135deg,#25D366,#1DA851);color:#fff;flex:1.4;box-shadow:0 2px 12px rgba(37,211,102,.2)}
+    .bwa:hover{transform:translateY(-1px);box-shadow:0 4px 20px rgba(37,211,102,.35)}
+    .bwa.noph{background:var(--bg3);color:var(--text3);border:1px solid var(--border);box-shadow:none;pointer-events:none;opacity:.45}
+    .bdone{background:transparent;color:var(--text3);border:1px solid var(--border);padding:7px 9px}
+    .bdone:hover{border-color:var(--green);color:var(--green)}
+    .bdone.on{background:var(--green-bg);border-color:var(--green);color:var(--green)}
+
+    /* EMPTY */
+    .empty{grid-column:1/-1;display:flex;flex-direction:column;align-items:center;padding:80px 20px;gap:10px;color:var(--text3)}
+    .empty svg{opacity:.25}
+    .empty h3{font-size:16px;color:var(--text2)}
+
+    /* OVERLAYS */
+    #drop-overlay {
+      display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+      background:rgba(13,15,20,0.85); backdrop-filter:blur(10px); z-index:1000;
+      align-items:center; justify-content:center; flex-direction:column; gap:16px;
+      border:3px dashed var(--accent);
+    }
+    #loading-overlay {
+      display:none; position:fixed; top:0; left:0; width:100%; height:100%;
+      background:rgba(13,15,20,0.92); backdrop-filter:blur(10px); z-index:1001;
+      align-items:center; justify-content:center; flex-direction:column; gap:16px;
+    }
+    .spinner {
+      width:40px; height:40px; border:4px solid var(--border);
+      border-top:4px solid var(--accent); border-radius:50%;
+      animation:spin 1s linear infinite;
+    }
+    @keyframes spin { 0% { transform:rotate(0deg); } 100% { transform:rotate(360deg); } }
+
+    ::-webkit-scrollbar{width:5px}
+    ::-webkit-scrollbar-track{background:transparent}
+    ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+    @media(max-width:600px){
+      .grid{grid-template-columns:1fr}
+      .topbar{flex-wrap:wrap;height:auto;padding:12px 16px;gap:10px;}
+      .search-wrap{order:3;max-width:100%;width:100%}
+      .top-actions{width:100%;justify-content:space-between;margin-left:0;}
+    }
+  </style>
+</head>
+<body>
+
+<div id="drop-overlay">
+  <span style="font-size:48px;">📤</span>
+  <h2 style="font-weight:700; color:var(--text)">Solte o relatório PDF aqui</h2>
+  <p style="color:var(--text3)">Inadimplência da Venda</p>
+</div>
+
+<div id="loading-overlay">
+  <div class="spinner"></div>
+  <h3 style="font-weight:700; color:var(--text); margin-bottom:4px;" id="loading-text">Processando PDF...</h3>
+  <div class="progress-wrap" style="width:260px; height:6px; background:var(--border); border-radius:3px; overflow:hidden; margin:8px 0;">
+    <div id="progress-bar" style="width:0%; height:100%; background:linear-gradient(90deg, var(--accent), var(--accent2)); transition:width 0.15s;"></div>
+  </div>
+  <p style="color:var(--text3)" id="loading-sub">Carregando páginas e mapeando clientes</p>
+</div>
+
+
+<header class="topbar">
+  <div class="logo">
+    <div class="logo-icon">🏡</div>
+    <div>INAD · Cobrança</div>
+  </div>
+  <div class="search-wrap">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+    <input id="search" type="text" placeholder="Buscar cliente, quadra, lote…" autocomplete="off">
+  </div>
+  
+  <div class="top-actions">
+    <button class="btn btn-import" onclick="document.getElementById('pdf-input').click()">
+      📂 Importar PDF
+    </button>
+    <input type="file" id="pdf-input" accept=".pdf" style="display:none;" onchange="handlePDFUpload(event)">
+    
+    <div class="stats">
+      <div class="stat stat-blue"><span class="stat-val" id="st-total">—</span><span class="stat-label">Total</span></div>
+      <div class="stat stat-green"><span class="stat-val" id="st-sent">0</span><span class="stat-label">Enviados</span></div>
+      <div class="stat stat-purple"><span class="stat-val" id="st-multi">—</span><span class="stat-label">Multi-imóvel</span></div>
+    </div>
+  </div>
+</header>
+
+<div class="filters">
+  <span class="fl">Filtrar:</span>
+  <button class="fb on" onclick="sf('all',this)">Todos</button>
+  <button class="fb" onclick="sf('pending',this)">Pendentes</button>
+  <button class="fb" onclick="sf('sent',this)">Enviados ✓</button>
+  <div class="fsep"></div>
+  <button class="fb" onclick="sf('single',this)">1 Imóvel</button>
+  <button class="fb" onclick="sf('multi',this)">Múltiplos Imóveis</button>
+  <div class="fsep"></div>
+  <button class="fb" onclick="sf('noph',this)">Sem Telefone</button>
+</div>
+
+<div class="wrap">
+  <div class="info" id="info"></div>
+  <div class="grid" id="grid"></div>
+</div>
+
+<script>
+// ─── DATA LOADING ────────────────────────────────────────────────────────
+const EMBEDDED_DATA = CLIENTS_JSON_PLACEHOLDER;
+let DATA = JSON.parse(localStorage.getItem('inad_clients_db')) || EMBEDDED_DATA;
+
+const FN=['NAYUME','NAYARA','MARIA','TEREZA','SIRLENE','STEFANNY','ALESSANDRA',
+  'NATHALIA','ZELMA','RAIANE','LILIAN','SILVIA','SIRLEIDE','ELZA','ROSANGELA',
+  'JESSICA','ARLENE','SARA','MARCIA','GEOVANNA','CRISTIANA','KARLEANY','THAYANE'];
+const MN=['WILSON','CLEVERTON','DANIEL','UANDERSON','ROBERTO','RAIMUNDO','FRANCISCO',
+  'TITO','WELLINGTON','UELITON','THIAGO','MARIANO','JOSIMAR','SILVESTRE','FABIO',
+  'ROMARIO','LEANDRO','MARCUS','LUCIANO','EDILSON','RONDINELLY','NIVALDO','KENNEDY',
+  'MAYKON','MICHAELL','WELTON','ADRIANO','FERNANDO','LEOPOLDO','MICHAEL','WATSON',
+  'ALEXANDRE','VYCTOR','EDIVAM','RAFAEL','ERALDO','UEVERTON','VITOR','ERIVELTON',
+  'CARLOS','MARETHUR','MARCIO','MARCOS','RONALDO'];
+
+function gender(name){
+  const f=name.split(' ')[0].toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
+  if(FN.includes(f))return'F';
+  if(MN.includes(f))return'M';
+  if(f.endsWith('A'))return'F';
+  return'M';
+}
+function greeting(name){
+  const g=gender(name);
+  const fn=name.split(' ')[0];
+  const cap=fn[0].toUpperCase()+fn.slice(1).toLowerCase();
+  return g==='F'?`Prezada Sra. ${cap}`:`Prezado Sr. ${cap}`;
+}
+function tc(s){
+  return s.split(' ').map(w=>{
+    if(['DE','DA','DO','DOS','DAS','E'].includes(w))return w.toLowerCase();
+    return w[0].toUpperCase()+w.slice(1).toLowerCase();
+  }).join(' ');
+}
+function cleanPhone(cel){
+  if(!cel)return'';
+  const d=cel.replace(/\D/g,'');
+  return d.length>=10?d:'';
+}
+function waLink(cel,msg){
+  if(!cel)return null;
+  const d=cel.replace(/\D/g,'');
+  let cc='';
+  if(cel.trim().startsWith('+')){
+    cc=d;
+  }else{
+    const DDDs=new Set(['11','12','13','14','15','16','17','18','19',
+      '21','22','24','27','28','31','32','33','34','35','37','38',
+      '41','42','43','44','45','46','47','48','49','51','53','54','55',
+      '61','62','63','64','65','66','67','68','69','71','73','74','75','77','79',
+      '81','82','83','84','85','86','87','88','89','91','92','93','94','95','96','97','98','99']);
+    if(d.length>=10 && DDDs.has(d.slice(0,2)) && d[2]!=='0'){
+      cc='55'+d;
+    }else{
+      cc='1'+d; // Default to USA / international
+    }
+  }
+  return`https://wa.me/${cc}?text=${encodeURIComponent(msg)}`;
+}
+function buildMsg(c){
+  const gr=greeting(c.name);
+  const multi=c.properties.length>1;
+  let L=[];
+  L.push(`${gr}, boa tarde.`);
+  L.push('');
+  L.push(multi
+    ?'Identificamos em nosso sistema faturas pendentes de pagamento referentes aos seus imóveis:'
+    :'Identificamos em nosso sistema faturas pendentes de pagamento referente ao seu imóvel:');
+  for(const p of c.properties){
+    const id=tc(p.identifier);
+    for(const pc of p.parcels){
+      L.push(`${id}: Parcela ${pc.parcela} de ${pc.vencimento}.`);
+    }
+  }
+  L.push('');
+  L.push('Informamos que o(a) senhor(a) pode utilizar os mesmos boletos que já possui em mãos para efetuar o pagamento. O sistema bancário atualizará os encargos de forma automática no momento da leitura do código de barras.');
+  L.push('');
+  L.push(multi
+    ?'Caso precise que reenviemos os arquivos em PDF de ambos os contratos, por favor, nos avise por aqui.'
+    :'Caso precise que reenviemos os arquivos em PDF do contrato, por favor, nos avise por aqui.');
+  return L.join('\n');
+}
+
+let sent=new Set(JSON.parse(localStorage.getItem('inad_sent')||'[]'));
+let curF='all', curQ='';
+
+function sid(name){return name.replace(/[^a-z0-9]/gi,'_')}
+
+function renderAll(){
+  let list=Object.values(DATA);
+  if(curQ){
+    const q=curQ.toLowerCase();
+    const qDigits=q.replace(/\D/g,'');
+    list=list.filter(c=>
+      c.name.toLowerCase().includes(q) ||
+      c.properties.some(p=>p.identifier.toLowerCase().includes(q)) ||
+      (qDigits && c.cel.replace(/\D/g,'').includes(qDigits))
+    );
+  }
+  if(curF==='sent')list=list.filter(c=>sent.has(c.name));
+  if(curF==='pending')list=list.filter(c=>!sent.has(c.name));
+  if(curF==='single')list=list.filter(c=>c.properties.length===1);
+  if(curF==='multi')list=list.filter(c=>c.properties.length>1);
+  if(curF==='noph')list=list.filter(c=>!cleanPhone(c.cel));
+
+  const all=Object.values(DATA);
+  document.getElementById('st-total').textContent=all.length;
+  document.getElementById('st-sent').textContent=sent.size;
+  document.getElementById('st-multi').textContent=all.filter(c=>c.properties.length>1).length;
+  
+  // Show status
+  const hasImported = localStorage.getItem('inad_clients_db') !== null;
+  const statusLabel = hasImported 
+    ? `<span style="color:var(--accent); font-weight:600;">📊 Relatório Importado</span> (<a href="#" onclick="resetDatabase()" style="color:var(--text3); text-decoration:underline;">Restaurar padrão</a>)`
+    : `<span style="color:var(--text3);">🏡 Base Padrão</span>`;
+    
+  document.getElementById('info').innerHTML=
+    `<div>Exibindo <strong>${list.length}</strong> de <strong>${all.length}</strong> clientes</div><div>${statusLabel}</div>`;
+
+  const grid=document.getElementById('grid');
+  if(!list.length){
+    grid.innerHTML=`<div class="empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><h3>Nenhum cliente encontrado</h3><p>Tente outro filtro ou busca.</p></div>`;
+    return;
+  }
+  grid.innerHTML=list.map(buildCard).join('');
+}
+
+function buildCard(c){
+  const g=gender(c.name);
+  const multi=c.properties.length>1;
+  const isSent=sent.has(c.name);
+  const phone=cleanPhone(c.cel);
+  const msg=buildMsg(c);
+  const wl=phone?waLink(c.cel,msg):null;
+  const id=sid(c.name);
+  const av=g==='F'?'av-f':(c.cpf_cnpj.includes('/'))?'av-e':'av-m';
+  const init=c.name.split(' ').slice(0,2).map(w=>w[0]).join('');
+
+  const props=c.properties.map(p=>{
+    const chips=p.parcels.map(pc=>`<span class="chip">${pc.parcela} · ${pc.vencimento}</span>`).join('');
+    return`<div class="pr"><span class="pid">${tc(p.identifier)}</span><div class="pp">${chips}</div></div>`;
+  }).join('');
+
+  const phoneHtml=phone
+    ?`<span class="mi"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.1a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2.18h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>${c.cel}</span>`
+    :`<span class="mi err"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Sem telefone</span>`;
+
+  const emailHtml=c.email&&c.email.includes('@')?`<span class="mi"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>${c.email}</span>`:'';
+
+  const waBtn=wl
+    ?`<a href="${wl}" target="_blank" class="btn bwa" onclick="markSent('${c.name.replace(/'/g,"\\'")}','${id}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.083.535 4.04 1.474 5.74L0 24l6.416-1.455A11.95 11.95 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 0 1-5.136-1.453l-.368-.219-3.806.866.887-3.706-.241-.381A9.793 9.793 0 0 1 2.182 12C2.182 6.566 6.566 2.182 12 2.182S21.818 6.566 21.818 12 17.434 21.818 12 21.818z"/></svg>Abrir WhatsApp</a>`
+    :`<span class="btn bwa noph"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Sem telefone</span>`;
+
+  return`<div class="card${isSent?' sent':''}" id="card-${id}">
+  <div class="ch">
+    <div class="av ${av}">${init}</div>
+    <div class="ci">
+      <div class="cn" title="${c.name}">${tc(c.name)}${isSent?' <span style="color:var(--green);font-size:11px;font-weight:700;margin-left:6px">✓ Enviado</span>':''}</div>
+      <div class="cm">${phoneHtml}${emailHtml}</div>
+    </div>
+    <span class="pc ${multi?'m':'s'}">${multi?c.properties.length+' imóveis':'1 imóvel'}</span>
+  </div>
+  <div class="pl">${props}</div>
+  <div class="ma">
+    <div class="ml">Mensagem de cobrança <span>✎ editável</span></div>
+    <textarea class="mb" id="msg-${id}">${msg}</textarea>
+  </div>
+  <div class="ca">
+    <button class="btn bcopy" id="cp-${id}" onclick="doCopy('${id}',this)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copiar</button>
+    ${waBtn}
+    <button class="btn bdone${isSent?' on':''}" id="dn-${id}" title="Marcar enviado" onclick="toggleSent('${c.name.replace(/'/g,"\\'")}','${id}')"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"/></svg></button>
+  </div>
+</div>`;
+}
+
+function doCopy(id,btn){
+  const ta=document.getElementById('msg-'+id);
+  navigator.clipboard.writeText(ta.value).then(()=>{
+    btn.classList.add('ok');
+    btn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Copiado!';
+    setTimeout(()=>{btn.classList.remove('ok');btn.innerHTML='<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copiar';},2200);
+  });
+}
+function markSent(name, id){
+  sent.add(name);save();
+  document.getElementById('card-'+id)?.classList.add('sent');
+  document.getElementById('dn-'+id)?.classList.add('on');
+  document.getElementById('st-sent').textContent=sent.size;
+}
+function toggleSent(name,id){
+  if(sent.has(name)){sent.delete(name);document.getElementById('card-'+id)?.classList.remove('sent');document.getElementById('dn-'+id)?.classList.remove('on');}
+  else{sent.add(name);document.getElementById('card-'+id)?.classList.add('sent');document.getElementById('dn-'+id)?.classList.add('on');}
+  save();document.getElementById('st-sent').textContent=sent.size;
+}
+function save(){localStorage.setItem('inad_sent',JSON.stringify([...sent]));}
+function sf(f,btn){curF=f;document.querySelectorAll('.fb').forEach(b=>b.classList.remove('on'));btn.classList.add('on');renderAll();}
+let t;document.getElementById('search').addEventListener('input',e=>{clearTimeout(t);t=setTimeout(()=>{curQ=e.target.value.trim();renderAll();},200);});
+
+// ─── SENT MARK MIGRATION ────────────────────────────────────────────────
+function migrateSentData(){
+  const raw=localStorage.getItem('inad_sent');
+  if(!raw)return;
+  try{
+    const list=JSON.parse(raw);
+    let migrated=false;
+    const newList=[];
+    
+    const vendaMap={};
+    for(const [cName,cData] of Object.entries(DATA)){
+      for(const prop of cData.properties){
+        vendaMap[prop.venda_id]=cName;
+      }
+    }
+    
+    for(const item of list){
+      const match=item.trim().match(/^(\d+)\s+Data da Venda:/);
+      if(match){
+        const vendaId=match[1];
+        const newName=vendaMap[vendaId];
+        if(newName){
+          newList.push(newName);
+          migrated=true;
+        }
+      }else{
+        newList.push(item);
+      }
+    }
+    
+    if(migrated){
+      const uniqueList=[...new Set(newList)];
+      sent=new Set(uniqueList);
+      localStorage.setItem('inad_sent',JSON.stringify(uniqueList));
+    }
+  }catch(e){
+    console.error("Migration error:",e);
+  }
+}
+migrateSentData();
+
+// ─── CLIENT-SIDE PDF PARSING & IMPORT ────────────────────────────────────
+async function handlePDFUpload(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+
+  const overlay = document.getElementById('loading-overlay');
+  const loadingText = document.getElementById('loading-text');
+  const pBar = document.getElementById('progress-bar');
+  const pSub = document.getElementById('loading-sub');
+  
+  overlay.style.display = 'flex';
+  pBar.style.width = '0%';
+  loadingText.textContent = "Carregando PDF...";
+  pSub.textContent = "Lendo arquivo do disco...";
+
+  try {
+    const fileReader = new FileReader();
+    fileReader.onload = async function() {
+      try {
+        pBar.style.width = '10%';
+        loadingText.textContent = "Extraindo texto...";
+        const typedarray = new Uint8Array(this.result);
+        const text = await extractTextFromPDF(typedarray, loadingText, pBar, pSub);
+        
+        pBar.style.width = '85%';
+        loadingText.textContent = "Mapeando clientes...";
+        pSub.textContent = "Agrupando imóveis e parcelas...";
+        
+        // Wait a brief moment to allow UI thread to paint the 85% state
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        const parsedClients = parseLayoutText(text);
+        
+        pBar.style.width = '95%';
+        pSub.textContent = "Salvando dados localmente...";
+        
+        // Save to localStorage
+        localStorage.setItem('inad_clients_db', JSON.stringify(parsedClients));
+        DATA = parsedClients;
+        
+        // Reset search and filters
+        document.getElementById('search').value = "";
+        curQ = "";
+        curF = "all";
+        document.querySelectorAll('.fb').forEach(b => b.classList.remove('on'));
+        document.querySelector('.fb[onclick*="all"]').classList.add('on');
+        
+        // Migrate sent marks if necessary and render
+        migrateSentData();
+        renderAll();
+        
+        pBar.style.width = '100%';
+        await new Promise(resolve => setTimeout(resolve, 200));
+        
+        overlay.style.display = 'none';
+        alert(`Sucesso! ${Object.keys(parsedClients).length} clientes importados e carregados.`);
+      } catch (err) {
+        console.error(err);
+        overlay.style.display = 'none';
+        alert("Erro ao processar o conteúdo do PDF: " + err.message);
+      }
+    };
+    fileReader.readAsArrayBuffer(file);
+  } catch (err) {
+    overlay.style.display = 'none';
+    alert("Erro ao ler o arquivo: " + err.message);
+  }
+  
+  // Clear input
+  event.target.value = "";
+}
+
+async function extractTextFromPDF(pdfData, loadingText, pBar, pSub) {
+  const pdfjsLib = window['pdfjs-dist/build/pdf'];
+  
+  // Choose worker source: local for server, CDN for file:// (due to Same-Origin restriction)
+  if (window.location.protocol === 'file:') {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+  } else {
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js';
+  }
+  
+  const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+  const pdf = await loadingTask.promise;
+  let fullText = '';
+  
+  for (let i = 1; i <= pdf.numPages; i++) {
+    const pct = Math.round(10 + (i / pdf.numPages) * 70);
+    pBar.style.width = `${pct}%`;
+    loadingText.textContent = `Processando PDF...`;
+    pSub.textContent = `Lendo página ${i} de ${pdf.numPages}...`;
+    
+    const page = await pdf.getPage(i);
+    const textContent = await page.getTextContent();
+    const items = textContent.items;
+    
+    // Group items by vertical position (Y coordinate, with tolerance)
+    const lines = {};
+    for (const item of items) {
+      if (!item.str.trim()) continue;
+      // round to nearest 4 pixels to align columns
+      const y = Math.round(item.transform[5] / 4) * 4;
+      if (!lines[y]) lines[y] = [];
+      lines[y].push(item);
+    }
+    
+    // Sort lines top to bottom (Y descending)
+    const sortedY = Object.keys(lines).map(Number).sort((a, b) => b - a);
+    
+    let pageText = '';
+    for (const y of sortedY) {
+      // Sort items on the same line from left to right (X ascending)
+      const lineItems = lines[y].sort((a, b) => a.transform[4] - b.transform[4]);
+      
+      let lineText = '';
+      let lastX = 0;
+      for (const item of lineItems) {
+        const x = item.transform[4];
+        if (lastX > 0 && x - lastX > 8) {
+          const spaces = Math.min(30, Math.floor((x - lastX) / 5));
+          lineText += ' '.repeat(spaces);
+        }
+        lineText += item.str;
+        lastX = x + item.width;
+      }
+      pageText += lineText + '\n';
+    }
+    fullText += `=== PAGE ${i} ===\n` + pageText + '\n';
+  }
+  return fullText;
+}
+
+function parseLayoutText(text) {
+  // Split by main Venda headers using negative lookbehinds
+  const parts = text.split(/(?<!Data da )(?<!Total da )Venda:\s+/);
+  const blocks = parts.slice(1);
+  
+  const parsedClients = {};
+  
+  // Manual overrides for verified numbers
+  const overrides = {
+    "***PII REMOVIDO***": "***PII REMOVIDO***",
+    "***PII REMOVIDO***": "***PII REMOVIDO***",
+    "***PII REMOVIDO***": "***PII REMOVIDO***",
+    "***PII REMOVIDO***": "***PII REMOVIDO***",
+    "***PII REMOVIDO***": "***PII REMOVIDO***",
+    "***PII REMOVIDO***": "***PII REMOVIDO***"
+  };
+
+  for (const block of blocks) {
+    const lines = block.split('\n').filter(l => l.trim());
+    if (!lines.length) continue;
+    
+    const firstLine = lines[0];
+    const vendaMatch = firstLine.match(/^\s*(\d+)/);
+    if (!vendaMatch) continue;
+    const vendaId = vendaMatch[1];
+    
+    const identMatch = firstLine.match(/Identificador:\s*(.*?)(?:\s{2,}|Status|$)/);
+    const identifier = identMatch ? identMatch[1].trim() : "";
+    
+    // Find the Cliente line index
+    let clienteIdx = -1;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].includes("Cliente:")) {
+        clienteIdx = i;
+        break;
+      }
+    }
+    if (clienteIdx === -1) continue;
+    
+    const clienteLine = lines[clienteIdx];
+    
+    // Collect multiline lines before parcels table start
+    const clientSectionLines = [];
+    for (let i = clienteIdx; i < lines.length; i++) {
+      const line = lines[i];
+      if (line.includes("Parc.") || line.includes("Vencimento") || line.includes("Venda:")) {
+        break;
+      }
+      clientSectionLines.push(line);
+    }
+    
+    // Get column indices in the header
+    const clientPos = clienteLine.indexOf("Cliente:");
+    const cpfPos = clienteLine.indexOf("CPF/CNPJ:");
+    const resPos = clienteLine.indexOf("Res.:");
+    const comPos = clienteLine.indexOf("Com.:");
+    const celPos = clienteLine.indexOf("Cel.:");
+    const emailPos = clienteLine.indexOf("E-mail:");
+    
+    const colRanges = {
+      name: [clientPos, cpfPos !== -1 ? cpfPos : 100],
+      cpf: [cpfPos, resPos !== -1 ? resPos : 130],
+      res: [resPos, comPos !== -1 ? comPos : 160],
+      com: [comPos, celPos !== -1 ? celPos : 185],
+      cel: [celPos, emailPos !== -1 ? emailPos : 215],
+      email: [emailPos, clienteLine.length]
+    };
+    
+    const colValues = { name: "", cpf: "", res: "", com: "", cel: "", email: "" };
+    for (const [colName, range] of Object.entries(colRanges)) {
+      const start = range[0];
+      const end = range[1];
+      if (start === -1) continue;
+      
+      const segments = [];
+      for (const line of clientSectionLines) {
+        if (line.length > start) {
+          let segment = line.slice(start, end).trim();
+          if (colName === "name") segment = segment.replace(/^Cliente:\s*/, "");
+          else if (colName === "cpf") segment = segment.replace(/^CPF\/CNPJ:\s*/, "");
+          else if (colName === "res") segment = segment.replace(/^Res\.:\s*/, "");
+          else if (colName === "com") segment = segment.replace(/^Com\.:\s*/, "");
+          else if (colName === "cel") segment = segment.replace(/^Cel\.:\s*/, "");
+          else if (colName === "email") segment = segment.replace(/^E-mail:\s*/, "");
+          if (segment) segments.push(segment);
+        }
+      }
+      colValues[colName] = segments.join(" ").trim();
+    }
+    
+    const clientName = colValues.name.replace(/\s+/g, " ").trim();
+    const cpfCnpj = colValues.cpf.trim();
+    let celDigits = colValues.cel.replace(/\D/g, "");
+    let resDigits = colValues.res.replace(/\D/g, "");
+    let comDigits = colValues.com.replace(/\D/g, "");
+    let email = colValues.email.trim();
+    
+    if (!clientName) continue;
+    
+    // Clean bad email fields
+    if (email.includes("E-mail:") || email.includes("Parc.")) {
+      email = "";
+    }
+    
+    // Clean split DDD/phones
+    if (celDigits.length === 12 && celDigits.startsWith("3519")) {
+      celDigits = "35" + celDigits.slice(3);
+    }
+    if (resDigits.length === 12 && resDigits.startsWith("4473")) {
+      resDigits = "44973772012";
+    }
+    
+    let bestPhone = "";
+    let source = "";
+    if (celDigits.length >= 8 && !colValues.cel.includes("gmail") && !colValues.cel.includes("@")) {
+      bestPhone = celDigits;
+      source = "Cel";
+    } else if (resDigits.length >= 8 && !colValues.res.includes("gmail") && !colValues.res.includes("@")) {
+      bestPhone = resDigits;
+      source = "Res";
+    } else if (comDigits.length >= 8 && !colValues.com.includes("gmail") && !colValues.com.includes("@")) {
+      bestPhone = comDigits;
+      source = "Com";
+    }
+    
+    // Format DDD
+    let formattedPhone = "";
+    if (bestPhone) {
+      if (bestPhone.length === 11) {
+        formattedPhone = `${bestPhone.slice(0,2)} ${bestPhone.slice(2,7)}-${bestPhone.slice(7)}`;
+      } else if (bestPhone.length === 10) {
+        formattedPhone = `${bestPhone.slice(0,2)} ${bestPhone.slice(2,6)}-${bestPhone.slice(6)}`;
+      } else if (bestPhone.length === 9) {
+        formattedPhone = `${bestPhone[0]} ${bestPhone.slice(1,5)}-${bestPhone.slice(5)}`;
+      } else if (bestPhone.length === 8) {
+        formattedPhone = `${bestPhone.slice(0,4)}-${bestPhone.slice(4)}`;
+      } else {
+        formattedPhone = bestPhone;
+      }
+    }
+    
+    // Extract parcels
+    const parcels = [];
+    for (const line of block.split("\n")) {
+      const dates = line.match(/\d\d\/\d\d\/\d{4}/g);
+      if (!dates) continue;
+      const lineNoDates = line.replace(/\d\d\/\d\d\/\d{4}/g, "");
+      const pMatch = lineNoDates.match(/(\d+\/\d+)/);
+      if (pMatch) {
+        const parcelNum = pMatch[1];
+        const vencShort = dates[0].slice(0, 5);
+        parcels.push({
+          parcela: parcelNum,
+          vencimento: vencShort,
+          vencimento_full: dates[0]
+        });
+      }
+    }
+    
+    if (!parsedClients[clientName]) {
+      parsedClients[clientName] = {
+        name: clientName,
+        cpf_cnpj: cpfCnpj,
+        cel: formattedPhone,
+        email: email,
+        properties: []
+      };
+    }
+    
+    // Prevent duplicate properties
+    const hasProp = parsedClients[clientName].properties.some(p => p.venda_id === vendaId);
+    if (!hasProp) {
+      parsedClients[clientName].properties.push({
+        venda_id: vendaId,
+        identifier: identifier,
+        parcels: parcels
+      });
+    }
+  }
+  
+  // Apply manual overrides
+  for (const [name, cel] of Object.entries(overrides)) {
+    if (parsedClients[name]) {
+      parsedClients[name].cel = cel;
+    }
+  }
+  
+  return parsedClients;
+}
+
+// ─── DRAG & DROP HANDLERS ────────────────────────────────────────────────
+window.addEventListener('dragover', e => {
+  e.preventDefault();
+  document.getElementById('drop-overlay').style.display = 'flex';
+});
+
+document.getElementById('drop-overlay').addEventListener('dragleave', e => {
+  e.preventDefault();
+  document.getElementById('drop-overlay').style.display = 'none';
+});
+
+window.addEventListener('drop', async e => {
+  e.preventDefault();
+  document.getElementById('drop-overlay').style.display = 'none';
+  
+  const file = e.dataTransfer.files[0];
+  if (file && file.type === "application/pdf") {
+    const event = { target: { files: [file] } };
+    handlePDFUpload(event);
+  } else {
+    alert("Por favor, arraste apenas arquivos PDF do relatório de inadimplência.");
+  }
+});
+
+// Render initially
+renderAll();
+</script>
+</body>
+</html>

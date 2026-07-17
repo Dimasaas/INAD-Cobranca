@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Gemini AI Chrome Copilot</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="logo-area">
+        <span class="logo-icon">✦</span>
+        <h1>Gemini Copilot</h1>
+      </div>
+      <div id="api-status" class="status-badge status-missing">Sem Chave API</div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button class="tab-btn active" id="btn-tab-doc">Leitor de Docs</button>
+      <button class="tab-btn" id="btn-tab-auto">Automação</button>
+      <button class="tab-btn" id="btn-tab-settings">Configurações</button>
+    </nav>
+
+    <!-- Main Content Panels -->
+    <main class="panel-content">
+      
+      <!-- Panel: Document Reader -->
+      <section id="panel-doc" class="panel-section active">
+        <div class="input-group">
+          <label>Análise da Página ou Documento</label>
+          <div class="action-buttons-row">
+            <button id="btn-read-page" class="btn-secondary">
+              <span class="btn-icon">📄</span> Ler Aba Atual
+            </button>
+          </div>
+          
+          <div class="divider">ou faça upload</div>
+          
+          <div id="drop-zone" class="file-drop-zone">
+            <span class="drop-icon">📤</span>
+            <span class="drop-text">Arraste um PDF ou arquivo de texto</span>
+            <span class="drop-subtext">Ou clique para selecionar</span>
+            <input type="file" id="file-input" accept=".txt,.pdf,.docx,.json,.csv" style="display: none;">
+          </div>
+          <div id="file-info" class="file-info-box" style="display: none;">
+            <span class="file-name" id="selected-file-name">arquivo.pdf</span>
+            <button id="btn-remove-file" class="btn-icon-only">✕</button>
+          </div>
+        </div>
+
+        <div class="input-group">
+          <label>Instrução / Pergunta</label>
+          <div class="chips-container">
+            <button class="chip-btn" data-prompt="Resuma este documento em tópicos principais.">📋 Resumir</button>
+            <button class="chip-btn" data-prompt="Extraia os principais pontos de ação ou tarefas.">✅ Tarefas</button>
+            <button class="chip-btn" data-prompt="Traduza o conteúdo essencial para o Português.">🌐 Traduzir</button>
+          </div>
+          <textarea id="doc-prompt" placeholder="Ex: Do que se trata este texto? Qual o valor total citado?"></textarea>
+        </div>
+
+        <button id="btn-run-doc" class="btn-primary">Analisar com Gemini</button>
+      </section>
+
+      <!-- Panel: Automation -->
+      <section id="panel-auto" class="panel-section">
+        <div class="input-group">
+          <label>O que você deseja automatizar na página atual?</label>
+          <textarea id="auto-prompt" placeholder="Ex: Extraia todos os e-mails e telefones desta página numa tabela. Or: Clique em todos os checkboxes e depois clique no botão salvar."></textarea>
+        </div>
+
+        <div class="action-buttons-row">
+          <button id="btn-run-auto" class="btn-primary">Gerar & Executar Automação</button>
+        </div>
+
+        <div class="console-group">
+          <div class="console-header">
+            <span>Console de Automação</span>
+            <button id="btn-clear-console" class="btn-text-only">Limpar</button>
+          </div>
+          <div id="console-logs" class="console-box">
+            <div class="log-line log-system">Pronto para iniciar. Insira seu comando acima.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Panel: Settings -->
+      <section id="panel-settings" class="panel-section">
+        <div class="input-group">
+          <label for="input-api-key">Gemini API Key (Google AI Studio)</label>
+          <div class="password-wrapper">
+            <input type="password" id="input-api-key" placeholder="Insira sua AI_KEY do AI Studio">
+            <button id="btn-toggle-key" class="btn-icon-only">👁️</button>
+          </div>
+          <small class="help-text">
+            Sua chave é salva apenas localmente no armazenamento seguro do seu Chrome. 
+            <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer">Obter chave grátis aqui</a>.
+          </small>
+        </div>
+
+        <div class="input-group">
+          <label for="select-model">Modelo de I.A.</label>
+          <select id="select-model">
+            <option value="gemini-1.5-flash" selected>Gemini 1.5 Flash (Ultrarrápido & Recomendado)</option>
+            <option value="gemini-1.5-pro">Gemini 1.5 Pro (Raciocínio Avançado)</option>
+          </select>
+        </div>
+
+        <button id="btn-save-settings" class="btn-primary">Salvar Configurações</button>
+      </section>
+
+      <!-- Output Display Section -->
+      <section class="output-container" id="output-area" style="display: none;">
+        <div class="output-header">
+          <span>Resposta do Gemini</span>
+          <button id="btn-copy-output" class="btn-copy">Copiar</button>
+        </div>
+        <div id="output-content" class="output-content-box"></div>
+      </section>
+
+    </main>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,28 @@
+# PyInstaller
+build/
+dist/
+*.spec
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+.env
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Campos Verdes / Client sensitive data (Do NOT commit to Git)
+clients.json
+clients_data.json
+clients_data_full.json
+inad_whatsapp.html
+pdf_text.txt
+ocr_extracted.txt
+*.pdf

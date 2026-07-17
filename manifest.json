@@ -1,0 +1,17 @@
+{
+  "manifest_version": 3,
+  "name": "Gemini AI Chrome Copilot",
+  "version": "1.0.0",
+  "description": "Automatize tarefas no Chrome e leia documentos usando a inteligência do Gemini (100% Cloud).",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage"
+  ],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+}

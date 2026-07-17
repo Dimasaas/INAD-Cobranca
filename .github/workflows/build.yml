@@ -1,0 +1,64 @@
+name: Build Executables on Release
+
+on:
+  push:
+    tags:
+      - 'v*' # Runs whenever a tag starting with 'v' is pushed, e.g., v1.0.0
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build executable for ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            artifact_name: INAD_Cobranca.exe
+            pyinstaller_cmd: pyinstaller --onefile --add-data "inad_whatsapp.html;." --add-data "libs/*;libs" --name INAD_Cobranca run.py
+          - os: macos-latest
+            artifact_name: INAD_Cobranca
+            pyinstaller_cmd: pyinstaller --onefile --add-data "inad_whatsapp.html:." --add-data "libs/*:libs" --name INAD_Cobranca run.py
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+
+      - name: Generate blank HTML database
+        run: |
+          python -c "import json; json.dump({}, open('clients_data.json', 'w'))"
+          python add_pdf_importer.py
+
+      - name: Build with PyInstaller
+        run: ${{ matrix.pyinstaller_cmd }}
+
+      - name: Package Windows Artifact
+        if: matrix.os == 'windows-latest'
+        run: |
+          compress-archive -Path dist/INAD_Cobranca.exe, README.md, inad_whatsapp.html, libs -DestinationPath INAD_Cobranca-Windows.zip
+
+      - name: Package macOS Artifact
+        if: matrix.os == 'macos-latest'
+        run: |
+          zip -r INAD_Cobranca-macOS.zip dist/INAD_Cobranca README.md inad_whatsapp.html libs
+
+      - name: Upload Release Assets
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            INAD_Cobranca-Windows.zip
+            INAD_Cobranca-macOS.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
