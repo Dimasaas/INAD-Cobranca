@@ -97,6 +97,10 @@ def init_db():
             client_name TEXT    NOT NULL,
             sent_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS kpi_exclusions (
+            client_name TEXT    PRIMARY KEY
+        );
     """)
 
     # Migração: adiciona coluna report_date se não existir (banco legado)
@@ -234,7 +238,7 @@ def get_kpis_data(report_ids=None):
     all_reports = [{"id": r[0], "name": r[1], "report_date": r[2], "imported_at": r[3]}
                    for r in all_report_rows]
 
-    # Uma única query GROUP BY para stats de todos os relatórios
+    # Uma única query GROUP BY para stats de todos os relatórios (filtrando excluídos)
     all_stats_rows = cursor.execute("""
         SELECT c.report_id,
                COUNT(DISTINCT c.id)   AS clients,
@@ -243,6 +247,7 @@ def get_kpis_data(report_ids=None):
         FROM   clients   c
         LEFT JOIN properties p  ON p.client_id   = c.id
         LEFT JOIN parcels    pa ON pa.property_id = p.id
+        WHERE  c.name NOT IN (SELECT client_name FROM kpi_exclusions)
         GROUP  BY c.report_id
     """).fetchall()
     all_stats_map = {r[0]: {"clients": r[1], "properties": r[2], "parcels": r[3]}
@@ -283,18 +288,22 @@ def get_kpis_data(report_ids=None):
     active_report_ids = [r["id"] for r in reports]
     evolution = [e for e in all_evolution if e["report_id"] in active_report_ids]
 
-    # Busca todos os clientes dos relatórios filtrados
+    # Busca todos os clientes dos relatórios filtrados (filtrando excluídos)
     if report_ids is not None:
         if report_ids:
             placeholders = ",".join("?" for _ in report_ids)
             client_rows = cursor.execute(
-                f"SELECT report_id, name FROM clients WHERE report_id IN ({placeholders})",
+                f"SELECT report_id, name FROM clients WHERE report_id IN ({placeholders}) "
+                f"AND name NOT IN (SELECT client_name FROM kpi_exclusions)",
                 report_ids
             ).fetchall()
         else:
             client_rows = []
     else:
-        client_rows = cursor.execute("SELECT report_id, name FROM clients").fetchall()
+        client_rows = cursor.execute("""
+            SELECT report_id, name FROM clients 
+            WHERE name NOT IN (SELECT client_name FROM kpi_exclusions)
+        """).fetchall()
 
     client_sets = {}
     for row in client_rows:
@@ -312,7 +321,8 @@ def get_kpis_data(report_ids=None):
         contacted_names = {
             row[0] for row in cursor.execute(
                 "SELECT DISTINCT client_name FROM action_logs "
-                "WHERE sent_at BETWEEN ? AND ?",
+                "WHERE sent_at BETWEEN ? AND ? "
+                "AND client_name NOT IN (SELECT client_name FROM kpi_exclusions)",
                 (r_cur["report_date"]  + " 00:00:00",
                  r_next["report_date"] + " 23:59:59"),
             )
@@ -435,6 +445,11 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     pass
             _json_response(self, get_kpis_data(report_ids))
 
+        elif path == "/api/kpis/exclusions":
+            cursor = get_conn().cursor()
+            rows = cursor.execute("SELECT client_name FROM kpi_exclusions").fetchall()
+            _json_response(self, [r[0] for r in rows])
+
         elif path == "/api/health":
             _json_response(self, {"status": "ok", "port": PORT,
                                    "platform": platform.system(),
@@ -499,6 +514,27 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                             "INSERT INTO action_logs (venda_id, client_name) VALUES (?,?)",
                             (vid, name),
                         )
+                conn.commit()
+                _json_response(self, {"status": "success"})
+            except Exception as exc:
+                _json_response(self, {"error": str(exc)}, 500)
+
+        elif path == "/api/kpis/exclusions":
+            try:
+                conn = get_conn()
+                cursor = conn.cursor()
+                client_name = payload.get("client_name")
+                exclude = payload.get("exclude", True)
+
+                if not client_name:
+                    _json_response(self, {"error": "Nome do cliente ausente"}, 400)
+                    return
+
+                if exclude:
+                    cursor.execute("INSERT OR IGNORE INTO kpi_exclusions (client_name) VALUES (?)", (client_name,))
+                else:
+                    cursor.execute("DELETE FROM kpi_exclusions WHERE client_name = ?", (client_name,))
+
                 conn.commit()
                 _json_response(self, {"status": "success"})
             except Exception as exc:

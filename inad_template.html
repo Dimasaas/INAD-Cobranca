@@ -187,6 +187,50 @@
     .kpi-btn-action:hover { border-color: var(--accent); color: var(--accent); background: rgba(79,141,255,.05); }
     .kpi-btn-del { border-color: rgba(239,68,68,.3); color: var(--red); }
     .kpi-btn-del:hover { border-color: var(--red); color: var(--red); background: rgba(239,68,68,.05); }
+
+    /* ESTILOS DE EXCLUSÃO DE CLIENTES DOS KPIS */
+    .btn-exclude-kpi {
+      background: rgba(255,255,255,0.03);
+      border: 1px solid var(--border);
+      color: var(--text2);
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 20px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all .15s;
+      margin-left: 6px;
+    }
+    .btn-exclude-kpi:hover {
+      border-color: var(--red);
+      color: var(--red);
+      background: rgba(239,68,68,.05);
+    }
+    .btn-exclude-kpi.excluded {
+      background: var(--red-bg);
+      color: var(--red);
+      border-color: rgba(239,68,68,.2);
+    }
+    .btn-exclude-kpi.excluded:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(79,141,255,.05);
+    }
+    .card.excluded-card {
+      border-color: rgba(239,68,68,.18);
+      box-shadow: none;
+    }
+    .card.excluded-card .av {
+      filter: grayscale(85%) opacity(70%);
+    }
+    .card.excluded-card .cn {
+      color: var(--text2);
+      text-decoration: line-through;
+    }
   </style>
 </head>
 <body>
@@ -332,6 +376,7 @@ let isServerActive = false;
 // Controle de seleção de relatórios nos KPIs
 let selectedReportIds = new Set();
 let isFirstKPILoad = true;
+let excludedClients = new Set();
 
 async function initApp() {
   if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
@@ -341,6 +386,17 @@ async function initApp() {
       
       const sentRes = await fetch('/api/sent');
       const sentList = await sentRes.json();
+      
+      // Carrega a lista de exclusões do KPI do servidor
+      try {
+        const exclRes = await fetch('/api/kpis/exclusions');
+        const exclList = await exclRes.json();
+        if (Array.isArray(exclList)) {
+          excludedClients = new Set(exclList);
+        }
+      } catch (exErr) {
+        console.warn("Falha ao buscar exclusões de KPI:", exErr);
+      }
       
       if (clientsData && typeof clientsData === 'object') {
         DATA = Object.keys(clientsData).length > 0 ? clientsData : EMBEDDED_DATA;
@@ -375,6 +431,7 @@ async function initApp() {
 function loadLocalData() {
   DATA = JSON.parse(localStorage.getItem('inad_clients_db')) || EMBEDDED_DATA;
   sent = new Set(JSON.parse(localStorage.getItem('inad_sent') || '[]'));
+  excludedClients = new Set(JSON.parse(localStorage.getItem('inad_kpi_exclusions') || '[]'));
   isServerActive = false;
   document.getElementById('report-select-sep').style.display = 'none';
   document.getElementById('report-select').style.display = 'none';
@@ -894,6 +951,7 @@ function buildCard(c){
   const g=gender(c.name);
   const multi=c.properties.length>1;
   const isSent=sent.has(c.name);
+  const isExcluded=excludedClients.has(c.name);
   const phone=cleanPhone(c.cel);
   const msg=buildMsg(c);
   const wl=phone?waLink(c.cel,msg):null;
@@ -916,14 +974,25 @@ function buildCard(c){
     ?`<a href="${wl}" target="_blank" class="btn bwa" onclick="markSent('${c.name.replace(/'/g,"\\'")}','${id}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.083.535 4.04 1.474 5.74L0 24l6.416-1.455A11.95 11.95 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 0 1-5.136-1.453l-.368-.219-3.806.866.887-3.706-.241-.381A9.793 9.793 0 0 1 2.182 12C2.182 6.566 6.566 2.182 12 2.182S21.818 6.566 21.818 12 17.434 21.818 12 21.818z"/></svg>Abrir WhatsApp</a>`
     :`<span class="btn bwa noph"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Sem telefone</span>`;
 
-  return`<div class="card${isSent?' sent':''}" id="card-${id}">
+  const excludeBtn = `
+    <button class="btn-exclude-kpi${isExcluded ? ' excluded' : ''}" 
+            onclick="toggleClientExclusion('${c.name.replace(/'/g, "\\'")}')" 
+            title="${isExcluded ? 'Incluir este cliente nos KPIs' : 'Ignorar este cliente nos KPIs'}">
+      ${isExcluded ? '🚫 Ignorado' : '👁️ Ativo'}
+    </button>
+  `;
+
+  return`<div class="card${isSent?' sent':''}${isExcluded?' excluded-card':''}" id="card-${id}">
   <div class="ch">
     <div class="av ${av}">${init}</div>
     <div class="ci">
-      <div class="cn" title="${c.name}">${tc(c.name)}${isSent?' <span style="color:var(--green);font-size:11px;font-weight:700;margin-left:6px">✓ Enviado</span>':''}</div>
+      <div class="cn" title="${c.name}">${tc(c.name)}${isSent?' <span style="color:var(--green);font-size:11px;font-weight:700;margin-left:6px">✓</span>':''}</div>
       <div class="cm">${phoneHtml}${emailHtml}</div>
     </div>
-    <span class="pc ${multi?'m':'s'}">${multi?c.properties.length+' imóveis':'1 imóvel'}</span>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <span class="pc ${multi?'m':'s'}">${multi?c.properties.length+' imóveis':'1 imóvel'}</span>
+      ${excludeBtn}
+    </div>
   </div>
   <div class="pl">${props}</div>
   <div class="ma">
@@ -1469,6 +1538,52 @@ window.addEventListener('drop', async e => {
     alert("Por favor, arraste apenas arquivos PDF do relatório de inadimplência.");
   }
 });
+
+// ─── EXCLUSÃO DE CLIENTE DOS KPIS ──────────────────────────────────────────
+async function toggleClientExclusion(clientName) {
+  const shouldExclude = !excludedClients.has(clientName);
+  
+  if (isServerActive) {
+    try {
+      const res = await fetch('/api/kpis/exclusions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ client_name: clientName, exclude: shouldExclude })
+      });
+      const result = await res.json();
+      if (result.status !== 'success') {
+        alert("Erro ao salvar exclusão do KPI: " + result.error);
+        return;
+      }
+    } catch (e) {
+      alert("Erro de rede ao salvar exclusão do KPI: " + e.message);
+      return;
+    }
+  } else {
+    // Fallback localstorage
+    localStorage.setItem('inad_kpi_exclusions', JSON.stringify(Array.from(excludedClients)));
+  }
+
+  // Atualiza estado em memória
+  if (shouldExclude) {
+    excludedClients.add(clientName);
+  } else {
+    excludedClients.delete(clientName);
+  }
+  
+  // Salva no localStorage local também como segurança
+  if (!isServerActive) {
+    localStorage.setItem('inad_kpi_exclusions', JSON.stringify(Array.from(excludedClients)));
+  }
+
+  // Re-renderiza a lista de clientes
+  renderAll();
+  
+  // Recarrega KPIs em segundo plano se o servidor estiver ativo
+  if (isServerActive) {
+    loadKPIs();
+  }
+}
 
 // Render initially
 initApp();
