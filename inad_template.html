@@ -304,19 +304,19 @@
 <div class="kpi-screen" id="kpi-screen" style="display:none; padding: 22px 24px;">
   <div class="kpi-grid">
     <div class="kpi-card">
-      <div class="kpi-card-title">Taxa de Recuperação Geral</div>
+      <div class="kpi-card-title">Taxa de Recuperação Média</div>
       <div class="kpi-card-value" id="kpi-recovery-rate">—</div>
-      <div class="kpi-card-desc">Porcentagem de inadimplentes recuperados (retirados das listas de atraso).</div>
+      <div class="kpi-card-desc">Média de clientes que saíram da lista de inadimplência entre relatórios consecutivos.</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-card-title">Eficácia das Cobranças (Lift)</div>
-      <div class="kpi-card-value" id="kpi-lift-rate">—</div>
-      <div class="kpi-card-desc">Contatados que pagaram vs. Não contatados que pagaram (efetividade do WhatsApp).</div>
+      <div class="kpi-card-title">Clientes em Atraso (Atual)</div>
+      <div class="kpi-card-value" id="kpi-active-clients">—</div>
+      <div class="kpi-card-desc">Total de clientes devedores ativos no último relatório selecionado.</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-card-title">Total de Vendas Cobradas</div>
-      <div class="kpi-card-value" id="kpi-total-contacted">—</div>
-      <div class="kpi-card-desc">Histórico de cobranças disparadas por toda a equipe.</div>
+      <div class="kpi-card-title">Parcelas em Atraso (Atual)</div>
+      <div class="kpi-card-value" id="kpi-active-parcels">—</div>
+      <div class="kpi-card-desc">Total de parcelas vencidas no último relatório selecionado.</div>
     </div>
   </div>
 
@@ -328,7 +328,7 @@
       </div>
     </div>
     <div class="kpi-chart-box">
-      <h3>📊 Comparativo de Conversão (Recuperação)</h3>
+      <h3>📊 Histórico de Recuperação por Período</h3>
       <div id="chart-comparison" class="chart-container">
         <p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar o gráfico. Importe mais de um relatório.</p>
       </div>
@@ -571,27 +571,26 @@ async function loadKPIs() {
     }
     
     let totalRecoveryRate = "—";
-    let totalLift = "—";
     
     if (transitions.length > 0) {
-      const sumRecovery = transitions.reduce((acc, curr) => acc + curr.total_recovery_rate, 0);
+      const sumRecovery = transitions.reduce((acc, curr) => acc + curr.recovery_rate, 0);
       totalRecoveryRate = (sumRecovery / transitions.length).toFixed(1) + "%";
-      
-      const avgContacted = transitions.reduce((acc, curr) => acc + curr.contacted_rate, 0) / transitions.length;
-      const avgUncontacted = transitions.reduce((acc, curr) => acc + curr.uncontacted_rate, 0) / transitions.length;
-      const lift = avgContacted - avgUncontacted;
-      totalLift = (lift >= 0 ? "+" : "") + lift.toFixed(1) + "%";
     } else if (evolution.length > 0) {
       totalRecoveryRate = "Aguardando";
-      totalLift = "Próximo Mês";
+    }
+    
+    // Pega as estatísticas do relatório selecionado mais recente para mostrar como "Atual"
+    let latestClients = "—";
+    let latestParcels = "—";
+    if (evolution.length > 0) {
+      const latest = evolution[evolution.length - 1];
+      latestClients = latest.clients;
+      latestParcels = latest.parcels;
     }
     
     document.getElementById('kpi-recovery-rate').textContent = totalRecoveryRate;
-    document.getElementById('kpi-lift-rate').textContent = totalLift;
-    
-    const sentRes = await fetch('/api/actions/sent');
-    const sentList = await sentRes.json();
-    document.getElementById('kpi-total-contacted').textContent = sentList.length;
+    document.getElementById('kpi-active-clients').textContent = latestClients;
+    document.getElementById('kpi-active-parcels').textContent = latestParcels;
     
     const tbody = document.getElementById('kpi-reports-tbody');
     tbody.innerHTML = "";
@@ -792,37 +791,29 @@ function drawComparisonChart(transitions) {
     return;
   }
   
-  const trans = transitions[transitions.length - 1];
-  const rateContacted = trans.contacted_rate;
-  const rateUncontacted = trans.uncontacted_rate;
+  let barsHtml = '';
+  transitions.forEach(trans => {
+    barsHtml += `
+      <div style="margin-bottom: 16px;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-weight:600; font-size:12px;">
+          <span style="color:var(--text2)">${trans.from_report} ➔ ${trans.to_report}</span>
+          <span style="color:var(--green)">${trans.recovery_rate}% regularizados</span>
+        </div>
+        <div style="width:100%; height:12px; background:var(--border); border-radius:6px; overflow:hidden;">
+          <div style="width:${trans.recovery_rate}%; height:100%; background:linear-gradient(90deg, var(--green), #4ade80); border-radius:6px;"></div>
+        </div>
+        <div style="font-size:10px; color:var(--text3); margin-top:2px;">
+          ${trans.recovered_clients} de ${trans.total_clients} clientes regularizados (saíram da lista de atrasos)
+        </div>
+      </div>
+    `;
+  });
   
-  const html = `
-    <div style="width:100%; max-width:400px; display:flex; flex-direction:column; gap:16px;">
-      <div style="font-size:11px; text-align:center; color:var(--text3); margin-bottom:-4px;">Comparação em: ${trans.from_report} ➔ ${trans.to_report}</div>
-      <div>
-        <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-weight:600; font-size:12px;">
-          <span>Clientes Cobrados (WhatsApp)</span>
-          <span style="color:var(--green)">${rateContacted}% recuperados</span>
-        </div>
-        <div style="width:100%; height:12px; background:var(--border); border-radius:6px; overflow:hidden;">
-          <div style="width:${rateContacted}%; height:100%; background:linear-gradient(90deg, var(--green), #4ade80); border-radius:6px;"></div>
-        </div>
-        <div style="font-size:10px; color:var(--text3); margin-top:2px;">Sucesso de cobrança: ${trans.contacted_recovered} de ${trans.contacted_total} clientes regularizados</div>
-      </div>
-      
-      <div>
-        <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-weight:600; font-size:12px;">
-          <span>Clientes Não Cobrados (Orgânico)</span>
-          <span style="color:var(--text2)">${rateUncontacted}% recuperados</span>
-        </div>
-        <div style="width:100%; height:12px; background:var(--border); border-radius:6px; overflow:hidden;">
-          <div style="width:${rateUncontacted}%; height:100%; background:linear-gradient(90deg, var(--accent), var(--accent2)); border-radius:6px;"></div>
-        </div>
-        <div style="font-size:10px; color:var(--text3); margin-top:2px;">Recuperação passiva: ${trans.uncontacted_recovered} de ${trans.uncontacted_total} clientes regularizados</div>
-      </div>
+  container.innerHTML = `
+    <div style="width:100%; display:flex; flex-direction:column; overflow-y:auto; max-height:220px; padding-right:6px;">
+      ${barsHtml}
     </div>
   `;
-  container.innerHTML = html;
 }
 
 const FN=['NAYUME','NAYARA','MARIA','TEREZA','SIRLENE','STEFANNY','ALESSANDRA',

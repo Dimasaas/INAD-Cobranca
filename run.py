@@ -318,35 +318,15 @@ def get_kpis_data(report_ids=None):
         if not clients_cur:
             continue
 
-        contacted_names = {
-            row[0] for row in cursor.execute(
-                "SELECT DISTINCT client_name FROM action_logs "
-                "WHERE sent_at BETWEEN ? AND ? "
-                "AND client_name NOT IN (SELECT client_name FROM kpi_exclusions)",
-                (r_cur["report_date"]  + " 00:00:00",
-                 r_next["report_date"] + " 23:59:59"),
-            )
-        }
-
-        contacted    = clients_cur & contacted_names
-        uncontacted  = clients_cur - contacted
-        recovered_all         = clients_cur  - clients_next
-        recovered_contacted   = contacted    - clients_next
-        recovered_uncontacted = uncontacted  - clients_next
-
-        r_c = len(recovered_contacted)  / len(contacted)   if contacted   else 0.0
-        r_u = len(recovered_uncontacted) / len(uncontacted) if uncontacted else 0.0
+        recovered = clients_cur - clients_next
+        recovery_rate = round(len(recovered) / len(clients_cur) * 100, 1)
 
         transitions.append({
-            "from_report":           r_cur["name"],
-            "to_report":             r_next["name"],
-            "contacted_total":       len(contacted),
-            "contacted_recovered":   len(recovered_contacted),
-            "contacted_rate":        round(r_c * 100, 1),
-            "uncontacted_total":     len(uncontacted),
-            "uncontacted_recovered": len(recovered_uncontacted),
-            "uncontacted_rate":      round(r_u * 100, 1),
-            "total_recovery_rate":   round(len(recovered_all) / len(clients_cur) * 100, 1),
+            "from_report":       r_cur["name"],
+            "to_report":         r_next["name"],
+            "total_clients":     len(clients_cur),
+            "recovered_clients": len(recovered),
+            "recovery_rate":     recovery_rate,
         })
 
     return {
