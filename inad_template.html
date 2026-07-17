@@ -488,20 +488,30 @@ async function loadKPIs() {
     await updateReportsCache();
     const cachedList = reportsListCache || [];
     
-    // Inicialização da seleção na primeira carga
-    if (isFirstKPILoad && cachedList.length > 0) {
-      selectedReportIds = new Set(cachedList.map(r => r.id));
-      isFirstKPILoad = false;
-    }
-    
-    // 2. Busca KPIs enviando os IDs selecionados como query parameter
-    const reportsParam = selectedReportIds.size > 0 ? Array.from(selectedReportIds).join(',') : '';
+    // 2. Busca KPIs. Se for a primeira carga, buscamos todos para identificar duplicados.
+    const reportsParam = (!isFirstKPILoad && selectedReportIds.size > 0) ? Array.from(selectedReportIds).join(',') : '';
     const res = await fetch(`/api/kpis?reports=${reportsParam}`);
     const kpiData = await res.json();
     
     const transitions = kpiData.transitions || [];
     const evolution = kpiData.evolution || [];
     const all_evolution = kpiData.all_evolution || [];
+    
+    // Inicialização da seleção na primeira carga (desmarca duplicados automaticamente)
+    if (isFirstKPILoad && all_evolution.length > 0) {
+      selectedReportIds = new Set(
+        all_evolution
+          .filter(e => !e.is_duplicate)
+          .map(e => e.report_id)
+      );
+      isFirstKPILoad = false;
+      
+      // Se houver algum duplicado desmarcado, recarrega para recalcular gráficos e médias
+      const hasDuplicates = all_evolution.some(e => e.is_duplicate);
+      if (hasDuplicates) {
+        return loadKPIs();
+      }
+    }
     
     let totalRecoveryRate = "—";
     let totalLift = "—";
@@ -549,13 +559,23 @@ async function loadKPIs() {
         }
         
         const isChecked = selectedReportIds.has(rep.report_id);
+        const isDuplicate = rep.is_duplicate;
+        
+        // Esmaece visualmente o texto se for duplicado para sinalizar
+        if (isDuplicate) {
+          tr.style.opacity = '0.65';
+        }
+        
+        const duplicateBadge = isDuplicate 
+          ? `<span class="chip" style="background:var(--purple-bg); color:var(--purple); border-color:rgba(168,85,247,.2); margin-left:8px;">Duplicado (Ignorado)</span>`
+          : '';
         
         tr.innerHTML = `
           <td style="text-align: center;">
             <input type="checkbox" class="report-checkbox" data-id="${rep.report_id}" ${isChecked ? 'checked' : ''} onchange="toggleReportSelection(${rep.report_id}, this.checked)" style="cursor:pointer; width:15px; height:15px;">
           </td>
           <td><strong>#${rep.report_id}</strong></td>
-          <td>${rep.report_name}</td>
+          <td>${rep.report_name} ${duplicateBadge}</td>
           <td>${formattedDate}</td>
           <td>${rep.clients} clientes</td>
           <td><span class="chip" style="background:var(--red-bg); color:var(--red); border-color:rgba(239,68,68,.2);">${rep.parcels} parcelas</span></td>

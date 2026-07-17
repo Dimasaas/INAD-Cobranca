@@ -223,7 +223,6 @@ def get_kpis_data(report_ids=None):
     Otimizado: usa GROUP BY em vez de N queries separadas por relatório.
     """
     cursor = get_conn().cursor()
-
     # Relatórios ordenados pela data real do PDF (Todos)
     all_report_rows = cursor.execute("""
         SELECT id, report_name,
@@ -249,11 +248,20 @@ def get_kpis_data(report_ids=None):
     all_stats_map = {r[0]: {"clients": r[1], "properties": r[2], "parcels": r[3]}
                      for r in all_stats_rows}
 
+    # Identifica o ID do relatório mais recente para cada data real (Deduplicação Global)
+    rdate_to_latest_id = {}
+    for r in all_reports:
+        # Sobrescreve mantendo sempre o maior ID (mais recente) para aquela data real
+        rdate_to_latest_id[r["report_date"]] = r["id"]
+
+    active_ids_global = set(rdate_to_latest_id.values())
+
     all_evolution = [
         {
             "report_id":   r["id"],
             "report_name": r["name"],
             "report_date": r["report_date"],
+            "is_duplicate": r["id"] not in active_ids_global,
             **all_stats_map.get(r["id"], {"clients": 0, "properties": 0, "parcels": 0}),
         }
         for r in all_reports
@@ -261,11 +269,19 @@ def get_kpis_data(report_ids=None):
 
     # Aplica o filtro de IDs selecionados, se fornecido
     if report_ids is not None:
-        reports = [r for r in all_reports if r["id"] in report_ids]
-        evolution = [e for e in all_evolution if e["report_id"] in report_ids]
+        selected_reports = [r for r in all_reports if r["id"] in report_ids]
     else:
-        reports = all_reports
-        evolution = all_evolution
+        # Por padrão, apenas relatórios não-duplicados são considerados nos KPIs ativos
+        selected_reports = [r for r in all_reports if r["id"] in active_ids_global]
+
+    # Deduplica os relatórios selecionados na data real (segurança adicional)
+    selected_deduped = {}
+    for r in selected_reports:
+        selected_deduped[r["report_date"]] = r
+    
+    reports = sorted(selected_deduped.values(), key=lambda x: (x["report_date"], x["id"]))
+    active_report_ids = [r["id"] for r in reports]
+    evolution = [e for e in all_evolution if e["report_id"] in active_report_ids]
 
     # Busca todos os clientes dos relatórios filtrados
     if report_ids is not None:
