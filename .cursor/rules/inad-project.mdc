@@ -1,0 +1,32 @@
+---
+description: Contexto e convenções do projeto INAD — Painel de Cobrança
+alwaysApply: true
+---
+
+# INAD — Painel de Cobrança
+
+Antes de alterar código neste repositório, leia `AI_CONTEXT.md` na raiz do projeto.
+
+## Arquivos críticos
+
+- **UI:** editar `inad_template.html` → regenerar com `python3 add_pdf_importer.py`
+- **Nunca editar** `inad_whatsapp.html` manualmente (é artefato gerado)
+- **Backend:** `run.py` (servidor HTTP + SQLite + API REST)
+- **Contexto ao vivo:** `GET /api/context` quando o servidor estiver rodando
+
+## Regras obrigatórias
+
+1. SQLite via biblioteca padrão `sqlite3` — sem ORMs ou drivers externos
+2. Preservar fallback `localStorage` para protocolo `file://`
+3. Nunca commitar `.db`, dados de clientes ou PDFs
+4. Manter aliases de API: `/api/sent` ↔ `/api/actions/sent`
+5. Alterações mínimas e focadas — seguir convenções existentes
+
+## Estrutura de dados
+
+`reports` → `clients` → `properties` → `parcels` + `action_logs` + `kpi_exclusions`
+
+## KPIs
+
+- Relatórios com mesma `report_date` são deduplicados (`is_duplicate`)
+- Clientes em `kpi_exclusions` são ignorados nos cálculos

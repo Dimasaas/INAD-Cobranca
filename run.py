@@ -111,6 +111,34 @@ def init_db():
 
     conn.commit()
     _migrate_legacy_files(cursor, conn)
+    _apply_kpi_exclusions_seed(cursor, conn)
+
+
+def _apply_kpi_exclusions_seed(cursor, conn):
+    """Carrega exclusões padrão de kpi_exclusions.json (versionado no Git)."""
+    seed_path = os.path.join(DIRECTORY, "kpi_exclusions.json")
+    if not os.path.exists(seed_path):
+        return
+    try:
+        with open(seed_path, "r", encoding="utf-8") as f:
+            names = json.load(f)
+        if not isinstance(names, list):
+            return
+        added = 0
+        for name in names:
+            if not isinstance(name, str) or not name.strip():
+                continue
+            cursor.execute(
+                "INSERT OR IGNORE INTO kpi_exclusions (client_name) VALUES (?)",
+                (name.strip(),),
+            )
+            if cursor.rowcount:
+                added += 1
+        if added:
+            conn.commit()
+            print(f"[KPI] {added} exclusão(ões) aplicada(s) de kpi_exclusions.json.")
+    except Exception as exc:
+        print(f"[KPI] Erro ao carregar kpi_exclusions.json: {exc}")
 
 
 def _migrate_legacy_files(cursor, conn):
@@ -336,6 +364,123 @@ def get_kpis_data(report_ids=None):
     }
 
 
+# ─── CONTEXTO PARA I.A. ───────────────────────────────────────────────────────
+
+def get_system_context():
+    """
+    Retorna contexto estruturado do projeto para IAs, extensões e integrações.
+    Consumido via GET /api/context — complementa o AI_CONTEXT.md em markdown.
+    """
+    cursor = get_conn().cursor()
+    report_count = cursor.execute("SELECT COUNT(*) FROM reports").fetchone()[0]
+    client_count = cursor.execute("SELECT COUNT(DISTINCT name) FROM clients").fetchone()[0]
+    sent_count   = cursor.execute(
+        "SELECT COUNT(DISTINCT client_name) FROM action_logs"
+    ).fetchone()[0]
+    excluded_count = cursor.execute("SELECT COUNT(*) FROM kpi_exclusions").fetchone()[0]
+
+    ai_context_path = os.path.join(DIRECTORY, "AI_CONTEXT.md")
+    ai_context_md = ""
+    if os.path.exists(ai_context_path):
+        try:
+            with open(ai_context_path, "r", encoding="utf-8") as f:
+                ai_context_md = f.read()
+        except OSError:
+            pass
+
+    return {
+        "project": {
+            "name": "INAD — Painel de Cobrança",
+            "purpose": (
+                "Painel local para importar PDFs de inadimplência, "
+                "gerar mensagens de cobrança via WhatsApp e acompanhar KPIs de recuperação."
+            ),
+            "documentation_file": "AI_CONTEXT.md",
+            "entry_point": "run.py",
+            "frontend_template": "inad_template.html",
+            "frontend_compiled": "inad_whatsapp.html",
+            "compiler": "add_pdf_importer.py",
+            "database_file": "inad_database.db",
+        },
+        "architecture": {
+            "pattern": "Servidor HTTP Python + SPA HTML/JS + SQLite local",
+            "data_flow": [
+                "PDF importado no navegador → parsing client-side (pdf.js + regex)",
+                "Dados extraídos → POST /api/reports → SQLite",
+                "WhatsApp aberto → POST /api/actions/sent → action_logs",
+                "Fallback file:// → localStorage (sem servidor)",
+            ],
+            "compile_step": (
+                "Após editar inad_template.html, executar: python3 add_pdf_importer.py"
+            ),
+        },
+        "database_schema": {
+            "reports": "Relatórios históricos importados (report_name, report_date)",
+            "clients": "Clientes inadimplentes por relatório (name, cpf_cnpj, cel, email)",
+            "properties": "Imóveis do cliente (venda_id, identifier)",
+            "parcels": "Parcelas em atraso (parcela, vencimento, vencimento_full)",
+            "action_logs": "Histórico de disparos WhatsApp (venda_id, client_name, sent_at)",
+            "kpi_exclusions": "Clientes excluídos manualmente dos cálculos de KPI",
+        },
+        "api_endpoints": {
+            "GET /api/context": "Este payload — contexto completo para IAs",
+            "GET /api/health": "Status do servidor (porta, plataforma, Python)",
+            "GET /api/reports": "Lista todos os relatórios importados",
+            "GET /api/reports/<id>": "Árvore clientes/imóveis/parcelas de um relatório",
+            "DELETE /api/reports/<id>": "Exclui relatório e dados relacionados (CASCADE)",
+            "GET /api/clients": "Clientes do relatório mais recente",
+            "GET /api/clients/all": "Lista única de nomes de clientes (todos os relatórios)",
+            "POST /api/reports": "Importa novo relatório {report_name, report_date, clients}",
+            "POST /api/clients": "Alias de POST /api/reports",
+            "GET /api/sent": "Nomes de clientes que já receberam WhatsApp",
+            "GET /api/actions/sent": "Alias de GET /api/sent",
+            "POST /api/actions/sent": "Registra envio {venda_id, client_name} ou lista de nomes",
+            "POST /api/sent": "Alias de POST /api/actions/sent",
+            "GET /api/kpis": "KPIs de evolução e transições (?reports=1,2,3 opcional)",
+            "GET /api/kpis/exclusions": "Clientes excluídos dos KPIs",
+            "POST /api/kpis/exclusions": "Inclui/exclui cliente {client_name, exclude: bool}",
+        },
+        "business_rules": {
+            "kpi_deduplication": (
+                "Relatórios com a mesma report_date são deduplicados; "
+                "mantém-se apenas o ID mais recente (is_duplicate=true nos demais)."
+            ),
+            "kpi_exclusions": (
+                "Clientes em kpi_exclusions são ignorados em todos os cálculos de KPI."
+            ),
+            "recovery_rate": (
+                "Taxa = clientes em R_n que NÃO aparecem em R_{n+1} / total em R_n × 100"
+            ),
+            "offline_fallback": (
+                "Se aberto via file://, dados vão para localStorage "
+                "(inad_clients_db, inad_sent, inad_kpi_exclusions)."
+            ),
+            "privacy": (
+                "Nunca commitar .db, .json com dados reais ou PDFs — ver .gitignore."
+            ),
+            "frontend_edit_rule": (
+                "Editar apenas inad_template.html; regenerar inad_whatsapp.html via add_pdf_importer.py."
+            ),
+        },
+        "live_stats": {
+            "reports": report_count,
+            "unique_clients": client_count,
+            "clients_contacted": sent_count,
+            "kpi_excluded_clients": excluded_count,
+            "port": PORT,
+            "platform": platform.system(),
+        },
+        "ai_guidelines": [
+            "Leia AI_CONTEXT.md antes de alterações significativas.",
+            "Edite inad_template.html, nunca inad_whatsapp.html diretamente.",
+            "Use sqlite3 nativo — sem ORMs ou drivers externos de banco.",
+            "Preserve fallback localStorage para protocolo file://.",
+            "Mantenha endpoints REST retrocompatíveis (/api/sent ↔ /api/actions/sent).",
+        ],
+        "markdown": ai_context_md,
+    }
+
+
 # ─── HANDLER HTTP ─────────────────────────────────────────────────────────────
 
 def _json_response(handler, data, status=200):
@@ -405,6 +550,11 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             ).fetchone()
             _json_response(self, get_clients_for_report(row[0]) if row else {})
 
+        elif path == "/api/clients/all":
+            cursor = get_conn().cursor()
+            rows = cursor.execute("SELECT DISTINCT name FROM clients ORDER BY name").fetchall()
+            _json_response(self, [r[0] for r in rows])
+
         elif path in ("/api/sent", "/api/actions/sent"):
             cursor = get_conn().cursor()
             names  = [r[0] for r in cursor.execute(
@@ -434,6 +584,10 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             _json_response(self, {"status": "ok", "port": PORT,
                                    "platform": platform.system(),
                                    "python": platform.python_version()})
+
+        elif path == "/api/context":
+            _json_response(self, get_system_context())
+
         else:
             super().do_GET()
 

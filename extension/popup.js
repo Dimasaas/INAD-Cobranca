@@ -3,6 +3,7 @@ let activeTabId = null;
 let extractedPageText = "";
 let uploadedFileText = "";
 let uploadedFileName = "";
+let inadContext = null; // Contexto estruturado do painel INAD (GET /api/context)
 
 // DOM Elements
 const apiStatusBadge = document.getElementById('api-status');
@@ -189,6 +190,45 @@ function formatBytes(bytes, decimals = 2) {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
 }
 
+// Detecta se a aba ativa é o painel INAD e busca contexto estruturado da API
+async function fetchINADContext(tabUrl) {
+  if (!tabUrl) return null;
+  try {
+    const url = new URL(tabUrl);
+    const isLocal = url.hostname === 'localhost' || url.hostname === '127.0.0.1';
+    const isINAD = url.pathname.includes('inad_whatsapp') || url.pathname.includes('inad_template');
+    if (!isLocal || !isINAD) return null;
+
+    const contextUrl = `${url.origin}/api/context`;
+    const res = await fetch(contextUrl);
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+function buildINADContextBlock(ctx) {
+  if (!ctx) return "";
+  const stats = ctx.live_stats || {};
+  const endpoints = Object.keys(ctx.api_endpoints || {}).slice(0, 12).join(", ");
+  return `
+=== CONTEXTO DO SISTEMA INAD (Painel de Cobrança) ===
+Projeto: ${ctx.project?.name || "INAD"}
+Propósito: ${ctx.project?.purpose || ""}
+Relatórios no banco: ${stats.reports ?? "—"} | Clientes únicos: ${stats.unique_clients ?? "—"} | Contatados: ${stats.clients_contacted ?? "—"}
+
+Regras de negócio:
+${(ctx.business_rules ? Object.entries(ctx.business_rules).map(([k, v]) => `- ${k}: ${v}`).join("\n") : "")}
+
+Endpoints principais: ${endpoints}
+
+Diretrizes para I.A.:
+${(ctx.ai_guidelines || []).map(g => `- ${g}`).join("\n")}
+=== FIM DO CONTEXTO INAD ===
+`;
+}
+
 // General Actions Configuration
 function setupActions() {
   // Toggle password visibility
@@ -256,7 +296,7 @@ function setupActions() {
       }
 
       // Request text from content script
-      chrome.tabs.sendMessage(tab.id, { action: "GET_TEXT" }, (response) => {
+      chrome.tabs.sendMessage(tab.id, { action: "GET_TEXT" }, async (response) => {
         btnReadPage.disabled = false;
         btnReadPage.innerHTML = `<span class="btn-icon">📄</span> Ler Aba Atual`;
 
@@ -267,11 +307,14 @@ function setupActions() {
 
         if (response && response.text) {
           extractedPageText = response.text;
-          uploadedFileText = ""; // Clear file upload if we read page
+          uploadedFileText = "";
           fileInfoBox.style.display = 'none';
           dropZone.style.display = 'flex';
+
+          inadContext = await fetchINADContext(tab.url);
+          const ctxNote = inadContext ? " Contexto INAD carregado da API." : "";
           
-          alert(`Conteúdo da aba "${tab.title.substring(0, 30)}..." carregado com sucesso (${formatBytes(extractedPageText.length * 2)})!`);
+          alert(`Conteúdo da aba "${tab.title.substring(0, 30)}..." carregado com sucesso (${formatBytes(extractedPageText.length * 2)})!${ctxNote}`);
         } else {
           alert("A página retornou um texto vazio.");
         }
@@ -309,7 +352,8 @@ function setupActions() {
 
     try {
       const model = modelSelect.value;
-      const responseText = await callGeminiAPI(key, model, textToAnalyze, instruction);
+      const contextBlock = buildINADContextBlock(inadContext);
+      const responseText = await callGeminiAPI(key, model, textToAnalyze, instruction, contextBlock);
       
       outputContent.textContent = responseText;
       outputArea.style.display = 'block';
@@ -360,10 +404,14 @@ function setupActions() {
       } catch(e) {}
 
       const pageStructure = await getPageStructure(tab.id);
+
+      // Contexto INAD quando a aba é o painel de cobrança
+      inadContext = await fetchINADContext(tab.url);
+      const contextBlock = buildINADContextBlock(inadContext);
       
       logToConsole("Solicitando código de automação ao Gemini...", "info");
       const model = modelSelect.value;
-      const generatedCode = await callGeminiForAutomation(key, model, pageStructure, instruction);
+      const generatedCode = await callGeminiForAutomation(key, model, pageStructure, instruction, contextBlock);
       
       logToConsole("Código JavaScript gerado com sucesso pela I.A.", "success");
       logToConsole("Injetando script na página...", "info");
@@ -397,13 +445,14 @@ function getPageStructure(tabId) {
 }
 
 // Call Gemini for Document Analysis
-async function callGeminiAPI(key, model, documentText, prompt) {
+async function callGeminiAPI(key, model, documentText, prompt, systemContext = "") {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
   
   const payload = {
     contents: [{
       parts: [{
         text: `Você é o Gemini AI Copilot integrado diretamente no navegador do usuário.
+${systemContext}
 Você está analisando o seguinte documento/texto fornecido:
 
 === INÍCIO DO DOCUMENTO ===
@@ -433,12 +482,12 @@ ${prompt}`
 }
 
 // Call Gemini to generate JavaScript automation
-async function callGeminiForAutomation(key, model, pageStructure, userInstruction) {
+async function callGeminiForAutomation(key, model, pageStructure, userInstruction, systemContext = "") {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`;
   
   const prompt = `Você é um robô gerador de scripts de automação de navegador (Browser Automation Generator).
 Sua tarefa é gerar uma função auto-executável em JavaScript (IIFE) para rodar na página web ativa do usuário para executar uma ação.
-
+${systemContext}
 Abaixo está o resumo da estrutura HTML (inputs, botões e links relevantes) da página ativa:
 ---
 ${pageStructure}
