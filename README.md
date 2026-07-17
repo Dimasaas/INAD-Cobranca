@@ -2,71 +2,71 @@
 
 Esta é uma ferramenta interna desenvolvida para facilitar o contato e cobrança dos clientes inadimplentes. A ferramenta reúne os dados cadastrais dos clientes, permite a importação direta de relatórios em PDF, gera as mensagens de cobrança personalizadas para o WhatsApp e acompanha o status de envio de forma simples.
 
+> [!NOTE]
+> **Privacidade Garantida:** Este repositório não armazena nenhuma informação confidencial ou dados de clientes no histórico do Git. Todos os dados são processados localmente no seu computador.
+
 ---
 
-## 🚀 Como Executar a Ferramenta
+## 💻 Como Baixar e Executar (Tutorial para Colaboradores)
 
-Existem três formas simples de rodar esta ferramenta no computador:
+### Passo 1: Baixar a Ferramenta
+1. No topo desta página do GitHub, clique na aba **Releases** (lado direito) ou em [Releases](../../releases).
+2. Baixe a versão mais recente correspondente ao seu sistema:
+   *   **Para Windows:** Baixe o arquivo `INAD_Cobranca-Windows.zip`.
+   *   **Para macOS:** Baixe o arquivo `INAD_Cobranca-macOS.zip`.
+3. Extraia o arquivo `.zip` baixado em uma pasta de sua preferência.
 
-### Opção 1: Usando o Executável Compilado (Recomendado para Colaboradores)
-Se o repositório estiver configurado no GitHub, você pode ir na aba **Releases** do repositório, baixar o executável para o seu sistema operacional (Windows/macOS) e abri-lo:
-1. Baixe o arquivo `.zip` ou executável (`INAD_Cobranca.exe` ou `INAD_Cobranca`).
-2. Execute o arquivo. Ele abrirá uma janela preta do console e abrirá automaticamente o painel de cobrança no seu navegador de internet padrão.
-3. **Importante:** Mantenha a janela do console aberta enquanto estiver usando o painel. Para fechar, basta fechar o navegador e a janela do console.
+---
 
-### Opção 2: Rodando via Python (Para Desenvolvedores/Administradores)
-Se você baixou a pasta completa do projeto e possui o Python instalado:
-1. Abra a pasta do projeto no Terminal ou Prompt de Comando.
+### Passo 2: Executar no Windows 🪟
+1. Abra a pasta onde você extraiu os arquivos.
+2. Dê dois cliques no arquivo **`INAD_Cobranca.exe`** (ele possui um ícone de console).
+3. Uma janela preta do console abrirá e, em seguida, seu navegador de internet abrirá automaticamente na ferramenta.
+4. **Pronto!** Você já pode usar a ferramenta. 
+   *   *Nota:* Mantenha a janela preta do console aberta enquanto estiver usando o painel. Para encerrar, basta fechar a janela preta.
+
+---
+
+### Passo 3: Executar no macOS (Mac) 🍏
+Devido aos sistemas de segurança do macOS (Gatekeeper), aplicativos baixados da internet que não são assinados digitalmente exigem uma permissão simples na primeira execução:
+1. Abra a pasta onde extraiu os arquivos.
+2. **Não dê dois cliques diretamente.** Em vez disso, **clique com o botão direito** (ou segure a tecla `Control` e clique) no executável **`INAD_Cobranca`** e selecione **Abrir (Open)**.
+3. O macOS exibirá um aviso dizendo que o "desenvolvedor não pode ser verificado". Clique no botão **Abrir (Open)** na caixa de diálogo para confirmar.
+4. Uma janela do Terminal abrirá e a ferramenta será carregada automaticamente no seu navegador.
+5. *Dica:* Esse procedimento do botão direito é necessário **apenas na primeira vez**. Nas próximas vezes, você poderá abrir o arquivo normalmente com dois cliques.
+6. Mantenha a janela do Terminal aberta durante o uso. Feche-a para encerrar o servidor.
+
+---
+
+## 🛠️ Como Usar a Ferramenta
+
+1. **Importar o Relatório PDF:** Clique no botão **📂 Importar PDF** no topo do painel e selecione o arquivo PDF do relatório de inadimplência (ou arraste e solte o PDF na tela).
+2. **Visualizar a Barra de Carregamento:** Uma barra de progresso mostrará o status da leitura do PDF. Quando concluir, todos os clientes serão exibidos na tela organizados em cards.
+3. **Enviar Mensagens:** Cada cliente terá o seu card contendo a mensagem pré-formatada. Clique em **Abrir WhatsApp** para abrir a conversa com a mensagem já digitada no celular ou WhatsApp Web.
+4. **Marcar como Enviado:** O sistema marca o cliente como enviado automaticamente ao abrir o link do WhatsApp, mas você também pode marcar/desmarcar clicando no botão de check (✓).
+
+---
+
+## ⚙️ Para Administradores (Rodando via Código)
+
+Se você deseja rodar ou atualizar a ferramenta a partir do código-fonte:
+
+### Requisitos
+- Python 3.x instalado.
+
+### Executar o Servidor de Desenvolvimento
+1. Abra o terminal na pasta do projeto.
 2. Execute o comando:
    ```bash
    python3 run.py
    ```
-3. O painel abrirá automaticamente no navegador em `http://localhost:8000/inad_whatsapp.html`.
+3. O servidor local será iniciado e abrirá a ferramenta em `http://localhost:8000/inad_whatsapp.html`.
 
-### Opção 3: Abrir diretamente no Navegador (Sem Instalação)
-Você pode simplesmente dar dois cliques no arquivo `inad_whatsapp.html` para abri-lo diretamente:
-- *Nota:* Devido a restrições de segurança dos navegadores, a importação de PDF sob o protocolo `file://` rodará na thread principal, o que pode causar um congelamento momentâneo de 1 a 2 segundos na tela durante a leitura de PDFs muito grandes. Para evitar isso, prefira usar a **Opção 1** ou **Opção 2**.
-
----
-
-## 📂 Estrutura do Projeto
-
-*   `inad_whatsapp.html`: O painel de cobrança completo. Contém os dados dos clientes e a lógica de importação do PDF.
-*   `inad_template.html`: O template base da página web. **Não edite `inad_whatsapp.html` diretamente**; edite este template e depois regenere a ferramenta.
-*   `add_pdf_importer.py`: Script Python que compila o `inad_template.html` junto com os dados atualizados de `clients_data.json` para gerar o `inad_whatsapp.html`.
-*   `run.py`: Script que inicia o servidor local na porta 8000 para contornar restrições de segurança do navegador e habilitar processamento em background.
-*   `libs/`: Pasta contendo a biblioteca PDF.js local para permitir a execução 100% offline.
-*   `clients_data.json`: Arquivo contendo a base de dados padrão dos clientes inadimplentes.
-*   `.github/workflows/build.yml`: Configuração do GitHub Actions que compila automaticamente o executável para Windows e macOS a cada nova versão criada no repositório Git.
-
----
-
-## 🛠️ Como Atualizar a Base de Clientes
-
-Sempre que a base de dados de clientes mudar ou se você quiser atualizar os dados iniciais padrão embutidos na ferramenta:
-1. Substitua ou edite as informações no arquivo `clients_data.json`.
-2. No terminal, execute o comando:
+### Atualizar a Base de Clientes Iniciais Padrão
+Se desejar embutir novos dados iniciais na página principal:
+1. Substitua o conteúdo do arquivo `clients_data.json` na raiz da pasta.
+2. Execute o script de importação:
    ```bash
    python3 add_pdf_importer.py
    ```
-3. O arquivo `inad_whatsapp.html` será regenerado com os novos dados embutidos.
-
----
-
-## ⚙️ Como Gerar o Executável Manualmente (Compilação Local)
-
-Se você precisar compilar o executável manualmente no seu computador sem usar o GitHub Actions:
-1. Instale o PyInstaller:
-   ```bash
-   pip install pyinstaller
-   ```
-2. Compile o executável incluindo a pasta `libs/` e os arquivos HTML:
-   *   **No Windows:**
-       ```cmd
-       pyinstaller --onefile --add-data "inad_whatsapp.html;." --add-data "libs/*;libs" run.py
-       ```
-   *   **No macOS / Linux:**
-       ```bash
-       pyinstaller --onefile --add-data "inad_whatsapp.html:." --add-data "libs/*:libs" run.py
-       ```
-3. O executável pronto estará disponível dentro da pasta `dist/`.
+3. O arquivo `inad_whatsapp.html` será regenerado com os novos dados padrão embutidos.
