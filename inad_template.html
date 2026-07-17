@@ -292,20 +292,30 @@
   </div>
 
   <div class="kpi-reports-section">
-    <h3>Relatórios Históricos Salvos</h3>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+      <h3 style="margin:0;">Relatórios Históricos Salvos</h3>
+      <div style="display:flex; gap:8px;">
+        <button class="kpi-btn-action" onclick="selectAllReports(true)">Selecionar Todos</button>
+        <button class="kpi-btn-action" onclick="selectAllReports(false)">Desmarcar Todos</button>
+      </div>
+    </div>
     <table class="kpi-table">
       <thead>
         <tr>
+          <th style="width: 45px; text-align: center;">
+            <input type="checkbox" id="kpi-select-all-checkbox" checked onchange="toggleSelectAllReports(this)" style="cursor:pointer; width:15px; height:15px;">
+          </th>
           <th>ID</th>
           <th>Identificação do Relatório</th>
           <th>Importado em</th>
           <th>Clientes Inadimplentes</th>
           <th>Parcelas em Atraso</th>
+          <th style="text-align: right; width: 100px;">Ações</th>
         </tr>
       </thead>
       <tbody id="kpi-reports-tbody">
         <tr>
-          <td colspan="5" style="text-align:center; padding: 20px 0; color:var(--text3);">Nenhum relatório importado.</td>
+          <td colspan="7" style="text-align:center; padding: 20px 0; color:var(--text3);">Nenhum relatório importado.</td>
         </tr>
       </tbody>
     </table>
@@ -318,6 +328,10 @@ const EMBEDDED_DATA = CLIENTS_JSON_PLACEHOLDER;
 let DATA = {};
 let sent = new Set();
 let isServerActive = false;
+
+// Controle de seleção de relatórios nos KPIs
+let selectedReportIds = new Set();
+let isFirstKPILoad = true;
 
 async function initApp() {
   if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
@@ -470,11 +484,24 @@ async function updateReportDropdown() {
 async function loadKPIs() {
   if (!isServerActive) return;
   try {
-    const res = await fetch('/api/kpis');
+    // 1. Garante que temos a lista completa em cache
+    await updateReportsCache();
+    const cachedList = reportsListCache || [];
+    
+    // Inicialização da seleção na primeira carga
+    if (isFirstKPILoad && cachedList.length > 0) {
+      selectedReportIds = new Set(cachedList.map(r => r.id));
+      isFirstKPILoad = false;
+    }
+    
+    // 2. Busca KPIs enviando os IDs selecionados como query parameter
+    const reportsParam = selectedReportIds.size > 0 ? Array.from(selectedReportIds).join(',') : '';
+    const res = await fetch(`/api/kpis?reports=${reportsParam}`);
     const kpiData = await res.json();
     
     const transitions = kpiData.transitions || [];
     const evolution = kpiData.evolution || [];
+    const all_evolution = kpiData.all_evolution || [];
     
     let totalRecoveryRate = "—";
     let totalLift = "—";
@@ -502,13 +529,10 @@ async function loadKPIs() {
     const tbody = document.getElementById('kpi-reports-tbody');
     tbody.innerHTML = "";
     
-    if (evolution.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; padding:20px; color:var(--text3);">Nenhum relatório importado.</td></tr>';
+    if (all_evolution.length === 0) {
+      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:20px; color:var(--text3);">Nenhum relatório importado.</td></tr>';
     } else {
-      await updateReportsCache();
-      const cachedList = reportsListCache || [];
-      
-      [...evolution].reverse().forEach(rep => {
+      [...all_evolution].reverse().forEach(rep => {
         const tr = document.createElement('tr');
         const reportDetails = cachedList.find(r => r.id === rep.report_id);
         
@@ -524,15 +548,31 @@ async function loadKPIs() {
           formattedDate = new Date(iDate).toLocaleDateString('pt-BR');
         }
         
+        const isChecked = selectedReportIds.has(rep.report_id);
+        
         tr.innerHTML = `
+          <td style="text-align: center;">
+            <input type="checkbox" class="report-checkbox" data-id="${rep.report_id}" ${isChecked ? 'checked' : ''} onchange="toggleReportSelection(${rep.report_id}, this.checked)" style="cursor:pointer; width:15px; height:15px;">
+          </td>
           <td><strong>#${rep.report_id}</strong></td>
           <td>${rep.report_name}</td>
           <td>${formattedDate}</td>
           <td>${rep.clients} clientes</td>
           <td><span class="chip" style="background:var(--red-bg); color:var(--red); border-color:rgba(239,68,68,.2);">${rep.parcels} parcelas</span></td>
+          <td style="text-align: right;">
+            <button class="kpi-btn-action kpi-btn-del" onclick="deleteReport(${rep.report_id}, '${rep.report_name.replace(/'/g, "\\'")}')">🗑️ Excluir</button>
+          </td>
         `;
         tbody.appendChild(tr);
       });
+      
+      // Atualiza estado do checkbox mestre (Selecionar Todos)
+      const globalCheckbox = document.getElementById('kpi-select-all-checkbox');
+      if (globalCheckbox) {
+        const checkboxes = document.querySelectorAll('.report-checkbox');
+        const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+        globalCheckbox.checked = allChecked && checkboxes.length > 0;
+      }
     }
     
     drawEvolutionChart(evolution);
@@ -540,6 +580,66 @@ async function loadKPIs() {
     
   } catch (e) {
     console.error("Erro ao carregar dados do dashboard de KPIs:", e);
+  }
+}
+
+// ─── AUXILIARES DE COMPARAÇÃO & EXCLUSÃO ───────────────────────────────────
+
+function toggleReportSelection(reportId, isChecked) {
+  if (isChecked) {
+    selectedReportIds.add(reportId);
+  } else {
+    selectedReportIds.delete(reportId);
+  }
+  loadKPIs();
+}
+
+function toggleSelectAllReports(globalCb) {
+  selectAllReports(globalCb.checked);
+}
+
+function selectAllReports(selectAll) {
+  const checkboxes = document.querySelectorAll('.report-checkbox');
+  checkboxes.forEach(cb => {
+    const rid = parseInt(cb.dataset.id);
+    if (selectAll) {
+      selectedReportIds.add(rid);
+    } else {
+      selectedReportIds.delete(rid);
+    }
+  });
+  loadKPIs();
+}
+
+async function deleteReport(reportId, reportName) {
+  if (!confirm(`Tem certeza que deseja excluir permanentemente o relatório "${reportName}"?\nEsta ação é irreversível e excluirá todos os clientes, parcelas e imóveis correspondentes.`)) {
+    return;
+  }
+  
+  try {
+    const res = await fetch(`/api/reports/${reportId}`, { method: 'DELETE' });
+    const result = await res.json();
+    
+    if (result.status === 'success') {
+      selectedReportIds.delete(reportId);
+      
+      // Atualiza caches e dropdown
+      await updateReportDropdown();
+      
+      // Se era o relatório ativo no select, recarrega para o "latest"
+      const select = document.getElementById('report-select');
+      if (select && select.value == reportId) {
+        select.value = 'latest';
+        await changeReport('latest');
+      }
+      
+      await loadKPIs();
+      alert("Relatório excluído com sucesso!");
+    } else {
+      alert("Erro ao excluir relatório: " + result.error);
+    }
+  } catch (e) {
+    alert("Erro ao excluir relatório: " + e.message);
   }
 }
 

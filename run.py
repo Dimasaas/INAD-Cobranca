@@ -217,26 +217,26 @@ def get_clients_for_report(report_id):
     return result
 
 
-def get_kpis_data():
+def get_kpis_data(report_ids=None):
     """
     Calcula a evolução histórica e as transições de conversão.
     Otimizado: usa GROUP BY em vez de N queries separadas por relatório.
     """
     cursor = get_conn().cursor()
 
-    # Relatórios ordenados pela data real do PDF
-    report_rows = cursor.execute("""
+    # Relatórios ordenados pela data real do PDF (Todos)
+    all_report_rows = cursor.execute("""
         SELECT id, report_name,
                COALESCE(NULLIF(report_date, ''), DATE(imported_at)) AS rdate,
                imported_at
         FROM   reports
         ORDER  BY rdate ASC, id ASC
     """).fetchall()
-    reports = [{"id": r[0], "name": r[1], "report_date": r[2], "imported_at": r[3]}
-               for r in report_rows]
+    all_reports = [{"id": r[0], "name": r[1], "report_date": r[2], "imported_at": r[3]}
+                   for r in all_report_rows]
 
     # Uma única query GROUP BY para stats de todos os relatórios
-    stats_rows = cursor.execute("""
+    all_stats_rows = cursor.execute("""
         SELECT c.report_id,
                COUNT(DISTINCT c.id)   AS clients,
                COUNT(DISTINCT p.id)   AS properties,
@@ -246,22 +246,42 @@ def get_kpis_data():
         LEFT JOIN parcels    pa ON pa.property_id = p.id
         GROUP  BY c.report_id
     """).fetchall()
-    stats_map = {r[0]: {"clients": r[1], "properties": r[2], "parcels": r[3]}
-                 for r in stats_rows}
+    all_stats_map = {r[0]: {"clients": r[1], "properties": r[2], "parcels": r[3]}
+                     for r in all_stats_rows}
 
-    evolution = [
+    all_evolution = [
         {
             "report_id":   r["id"],
             "report_name": r["name"],
             "report_date": r["report_date"],
-            **stats_map.get(r["id"], {"clients": 0, "properties": 0, "parcels": 0}),
+            **all_stats_map.get(r["id"], {"clients": 0, "properties": 0, "parcels": 0}),
         }
-        for r in reports
+        for r in all_reports
     ]
 
-    # Busca todos os clientes de uma vez só (sem loop N+1)
+    # Aplica o filtro de IDs selecionados, se fornecido
+    if report_ids is not None:
+        reports = [r for r in all_reports if r["id"] in report_ids]
+        evolution = [e for e in all_evolution if e["report_id"] in report_ids]
+    else:
+        reports = all_reports
+        evolution = all_evolution
+
+    # Busca todos os clientes dos relatórios filtrados
+    if report_ids is not None:
+        if report_ids:
+            placeholders = ",".join("?" for _ in report_ids)
+            client_rows = cursor.execute(
+                f"SELECT report_id, name FROM clients WHERE report_id IN ({placeholders})",
+                report_ids
+            ).fetchall()
+        else:
+            client_rows = []
+    else:
+        client_rows = cursor.execute("SELECT report_id, name FROM clients").fetchall()
+
     client_sets = {}
-    for row in cursor.execute("SELECT report_id, name FROM clients"):
+    for row in client_rows:
         client_sets.setdefault(row[0], set()).add(row[1])
 
     transitions = []
@@ -303,7 +323,11 @@ def get_kpis_data():
             "total_recovery_rate":   round(len(recovered_all) / len(clients_cur) * 100, 1),
         })
 
-    return {"evolution": evolution, "transitions": transitions}
+    return {
+        "evolution": evolution,
+        "transitions": transitions,
+        "all_evolution": all_evolution
+    }
 
 
 # ─── HANDLER HTTP ─────────────────────────────────────────────────────────────
@@ -341,7 +365,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
     def do_OPTIONS(self):
         self.send_response(200)
         self.send_header("Access-Control-Allow-Origin",  "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
@@ -383,7 +407,17 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             _json_response(self, names)
 
         elif path == "/api/kpis":
-            _json_response(self, get_kpis_data())
+            report_ids = None
+            if "?" in self.path:
+                from urllib.parse import parse_qs
+                try:
+                    params = parse_qs(self.path.split("?", 1)[1])
+                    ids_str = params.get("reports", [""])[0]
+                    if ids_str:
+                        report_ids = [int(x) for x in ids_str.split(",")]
+                except Exception:
+                    pass
+            _json_response(self, get_kpis_data(report_ids))
 
         elif path == "/api/health":
             _json_response(self, {"status": "ok", "port": PORT,
@@ -454,6 +488,33 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             except Exception as exc:
                 _json_response(self, {"error": str(exc)}, 500)
 
+        else:
+            _json_response(self, {"error": "Rota não encontrada"}, 404)
+
+    # ── DELETE ────────────────────────────────────────────────────────────────
+    def do_DELETE(self):
+        path = self.path.split("?")[0]
+
+        if path.startswith("/api/reports/"):
+            try:
+                rid = int(path.rsplit("/", 1)[-1])
+                conn = get_conn()
+                cursor = conn.cursor()
+
+                # Verifica existência do relatório
+                exists = cursor.execute("SELECT 1 FROM reports WHERE id = ? LIMIT 1", (rid,)).fetchone()
+                if not exists:
+                    _json_response(self, {"error": "Relatório não encontrado"}, 404)
+                    return
+
+                # A exclusão cascateará devido a restrição ON DELETE CASCADE nos relacionamentos
+                cursor.execute("DELETE FROM reports WHERE id = ?", (rid,))
+                conn.commit()
+                _json_response(self, {"status": "success"})
+            except (ValueError, IndexError):
+                _json_response(self, {"error": "ID inválido"}, 400)
+            except Exception as exc:
+                _json_response(self, {"error": str(exc)}, 500)
         else:
             _json_response(self, {"error": "Rota não encontrada"}, 404)
 
