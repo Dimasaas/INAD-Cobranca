@@ -335,34 +335,50 @@
     </div>
   </div>
 
-  <div class="kpi-reports-section">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
-      <h3 style="margin:0;">Relatórios Históricos Salvos</h3>
-      <div style="display:flex; gap:8px;">
-        <button class="kpi-btn-action" onclick="selectAllReports(true)">Selecionar Todos</button>
-        <button class="kpi-btn-action" onclick="selectAllReports(false)">Desmarcar Todos</button>
+  <div class="kpi-bottom-row" style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom: 24px;">
+    <div class="kpi-reports-section" style="flex: 2; min-width: 500px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+        <h3 style="margin:0;">Relatórios Históricos Salvos</h3>
+        <div style="display:flex; gap:8px;">
+          <button class="kpi-btn-action" onclick="selectAllReports(true)">Selecionar Todos</button>
+          <button class="kpi-btn-action" onclick="selectAllReports(false)">Desmarcar Todos</button>
+        </div>
       </div>
+      <table class="kpi-table">
+        <thead>
+          <tr>
+            <th style="width: 45px; text-align: center;">
+              <input type="checkbox" id="kpi-select-all-checkbox" checked onchange="toggleSelectAllReports(this)" style="cursor:pointer; width:15px; height:15px;">
+            </th>
+            <th>ID</th>
+            <th>Identificação do Relatório</th>
+            <th>Importado em</th>
+            <th>Clientes Inadimplentes</th>
+            <th>Parcelas em Atraso</th>
+            <th style="text-align: right; width: 100px;">Ações</th>
+          </tr>
+        </thead>
+        <tbody id="kpi-reports-tbody">
+          <tr>
+            <td colspan="7" style="text-align:center; padding: 20px 0; color:var(--text3);">Nenhum relatório importado.</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
-    <table class="kpi-table">
-      <thead>
-        <tr>
-          <th style="width: 45px; text-align: center;">
-            <input type="checkbox" id="kpi-select-all-checkbox" checked onchange="toggleSelectAllReports(this)" style="cursor:pointer; width:15px; height:15px;">
-          </th>
-          <th>ID</th>
-          <th>Identificação do Relatório</th>
-          <th>Importado em</th>
-          <th>Clientes Inadimplentes</th>
-          <th>Parcelas em Atraso</th>
-          <th style="text-align: right; width: 100px;">Ações</th>
-        </tr>
-      </thead>
-      <tbody id="kpi-reports-tbody">
-        <tr>
-          <td colspan="7" style="text-align:center; padding: 20px 0; color:var(--text3);">Nenhum relatório importado.</td>
-        </tr>
-      </tbody>
-    </table>
+
+    <div class="kpi-exclusions-section" style="flex: 1; min-width: 300px; background:var(--card); padding:20px; border-radius:12px; border:1px solid var(--border);">
+       <h3 style="margin-top:0; margin-bottom:16px; font-size:14px; font-weight:700; color:var(--text2);">Clientes Ignorados nos KPIs</h3>
+       
+       <div style="display:flex; gap:8px; margin-bottom:16px;">
+         <input type="text" id="kpi-exclude-input" list="kpi-clients-datalist" placeholder="Nome exato do cliente..." style="flex:1; background:rgba(255,255,255,0.03); border:1px solid var(--border); padding:8px 12px; border-radius:6px; color:var(--text); font-family:inherit; font-size:13px;">
+         <datalist id="kpi-clients-datalist"></datalist>
+         <button class="kpi-btn-action" onclick="addClientExclusionFromInput()" style="padding:8px 14px;">🚫 Ignorar</button>
+       </div>
+       
+       <div id="kpi-exclusions-list" style="display:flex; flex-direction:column; gap:8px; max-height:300px; overflow-y:auto; padding-right:4px;">
+         <!-- List of excluded clients will be populated here -->
+       </div>
+    </div>
   </div>
 </div>
 
@@ -653,6 +669,28 @@ async function loadKPIs() {
     
     drawEvolutionChart(evolution);
     drawComparisonChart(transitions);
+    
+    // Atualiza a datalist de clientes
+    updateClientsDatalist();
+    
+    // Renderiza a lista lateral de exclusões
+    const exclListContainer = document.getElementById('kpi-exclusions-list');
+    if (exclListContainer) {
+      exclListContainer.innerHTML = '';
+      if (excludedClients.size === 0) {
+        exclListContainer.innerHTML = '<p style="color:var(--text3); font-size:12px; margin:0; text-align:center; padding:10px 0;">Nenhum cliente ignorado.</p>';
+      } else {
+        Array.from(excludedClients).sort().forEach(name => {
+          const item = document.createElement('div');
+          item.style.cssText = 'display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.01); border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px;';
+          item.innerHTML = `
+            <span style="color:var(--text2); font-weight:500;" title="${name}">${tc(name)}</span>
+            <button class="kpi-btn-action kpi-btn-del" onclick="toggleClientExclusion('${name.replace(/'/g, "\\'")}')" style="padding:2px 6px; font-size:10px;">Reativar</button>
+          `;
+          exclListContainer.appendChild(item);
+        });
+      }
+    }
     
   } catch (e) {
     console.error("Erro ao carregar dados do dashboard de KPIs:", e);
@@ -1531,6 +1569,40 @@ window.addEventListener('drop', async e => {
 });
 
 // ─── EXCLUSÃO DE CLIENTE DOS KPIS ──────────────────────────────────────────
+
+async function updateClientsDatalist() {
+  if (!isServerActive) return;
+  try {
+    const res = await fetch('/api/clients/all');
+    if (!res.ok) return;
+    const names = await res.json();
+    const datalist = document.getElementById('kpi-clients-datalist');
+    if (datalist) {
+      datalist.innerHTML = names.map(n => `<option value="${n}"></option>`).join('');
+    }
+  } catch(e) {}
+}
+
+async function addClientExclusionFromInput() {
+  const input = document.getElementById('kpi-exclude-input');
+  if (!input) return;
+  const clientName = input.value.trim().toUpperCase();
+  if (!clientName) {
+    alert('Digite ou selecione o nome do cliente.');
+    return;
+  }
+  
+  if (excludedClients.has(clientName)) {
+    alert('Este cliente já está na lista de ignorados.');
+    input.value = '';
+    return;
+  }
+  
+  // Call toggleClientExclusion, which automatically adds since it's not in the set
+  await toggleClientExclusion(clientName);
+  input.value = ''; // clear on success
+}
+
 async function toggleClientExclusion(clientName) {
   const shouldExclude = !excludedClients.has(clientName);
   
