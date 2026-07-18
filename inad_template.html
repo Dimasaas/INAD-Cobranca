@@ -309,6 +309,11 @@
       <div class="kpi-card-desc">Média de clientes que saíram da lista de inadimplência entre relatórios consecutivos.</div>
     </div>
     <div class="kpi-card">
+      <div class="kpi-card-title">Total Inadimplente (Atual)</div>
+      <div class="kpi-card-value" id="kpi-active-value">—</div>
+      <div class="kpi-card-desc">Soma do valor de todas as parcelas vencidas no último relatório selecionado.</div>
+    </div>
+    <div class="kpi-card">
       <div class="kpi-card-title">Clientes em Atraso (Atual)</div>
       <div class="kpi-card-value" id="kpi-active-clients">—</div>
       <div class="kpi-card-desc">Total de clientes devedores ativos no último relatório selecionado.</div>
@@ -322,7 +327,7 @@
 
   <div class="kpi-charts-row">
     <div class="kpi-chart-box">
-      <h3>📈 Evolução da Inadimplência</h3>
+      <h3>📈 Evolução do Valor Inadimplente</h3>
       <div id="chart-evolution" class="chart-container">
         <p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar o gráfico. Importe mais de um relatório.</p>
       </div>
@@ -355,12 +360,13 @@
             <th>Importado em</th>
             <th>Clientes Inadimplentes</th>
             <th>Parcelas em Atraso</th>
+            <th>Total Inadimplente</th>
             <th style="text-align: right; width: 100px;">Ações</th>
           </tr>
         </thead>
         <tbody id="kpi-reports-tbody">
           <tr>
-            <td colspan="7" style="text-align:center; padding: 20px 0; color:var(--text3);">Nenhum relatório importado.</td>
+            <td colspan="8" style="text-align:center; padding: 20px 0; color:var(--text3);">Nenhum relatório importado.</td>
           </tr>
         </tbody>
       </table>
@@ -440,6 +446,7 @@ async function initApp() {
     loadLocalData();
   }
   
+  normalizeData();
   migrateSentData();
   renderAll();
 }
@@ -451,6 +458,21 @@ function loadLocalData() {
   isServerActive = false;
   document.getElementById('report-select-sep').style.display = 'none';
   document.getElementById('report-select').style.display = 'none';
+}
+
+function normalizeData() {
+  if (!DATA) return;
+  for (const client of Object.values(DATA)) {
+    if (client.properties) {
+      client.properties.forEach(prop => {
+        if (prop.parcels) {
+          prop.parcels.forEach(parc => {
+            parc.valor = parseFloat(parc.valor || parc.valor_total || parc.valor_parcela || 0);
+          });
+        }
+      });
+    }
+  }
 }
 
 function switchTab(tab) {
@@ -598,13 +620,16 @@ async function loadKPIs() {
     // Pega as estatísticas do relatório selecionado mais recente para mostrar como "Atual"
     let latestClients = "—";
     let latestParcels = "—";
+    let latestValue = "—";
     if (evolution.length > 0) {
       const latest = evolution[evolution.length - 1];
       latestClients = latest.clients;
       latestParcels = latest.parcels;
+      latestValue = formatCurrency(latest.total_value || 0);
     }
     
     document.getElementById('kpi-recovery-rate').textContent = totalRecoveryRate;
+    document.getElementById('kpi-active-value').textContent = latestValue;
     document.getElementById('kpi-active-clients').textContent = latestClients;
     document.getElementById('kpi-active-parcels').textContent = latestParcels;
     
@@ -612,7 +637,7 @@ async function loadKPIs() {
     tbody.innerHTML = "";
     
     if (all_evolution.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="7" style="text-align:center; padding:20px; color:var(--text3);">Nenhum relatório importado.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:20px; color:var(--text3);">Nenhum relatório importado.</td></tr>';
     } else {
       [...all_evolution].reverse().forEach(rep => {
         const tr = document.createElement('tr');
@@ -651,6 +676,7 @@ async function loadKPIs() {
           <td>${formattedDate}</td>
           <td>${rep.clients} clientes</td>
           <td><span class="chip" style="background:var(--red-bg); color:var(--red); border-color:rgba(239,68,68,.2);">${rep.parcels} parcelas</span></td>
+          <td><strong>${formatCurrency(rep.total_value || 0)}</strong></td>
           <td style="text-align: right;">
             <button class="kpi-btn-action kpi-btn-del" onclick="deleteReport(${rep.report_id}, '${rep.report_name.replace(/'/g, "\\'")}')">🗑️ Excluir</button>
           </td>
@@ -764,24 +790,23 @@ function drawEvolutionChart(evolution) {
     return;
   }
   
-  // clientWidth retorna 0 quando o container está oculto (aba fechada) — usa fallback
   const width   = container.clientWidth > 0 ? container.clientWidth : 560;
   const height  = 220;
-  const padding = 40;
+  const padding = 55; // aumento de padding para caber os rótulos de moeda
   
-  const maxVal = Math.max(...evolution.map(d => d.clients), 10);
+  const maxVal = Math.max(...evolution.map(d => d.total_value || 0), 1000);
   const minVal = 0;
   
   const points = evolution.map((d, i) => {
     const x = padding + (i / (evolution.length - 1)) * (width - padding * 2);
-    const y = height - padding - ((d.clients - minVal) / (maxVal - minVal)) * (height - padding * 2);
-    // Formata a data do PDF (YYYY-MM-DD → DD/MM/YY) como rótulo do eixo X
+    const val = d.total_value || 0;
+    const y = height - padding - ((val - minVal) / (maxVal - minVal)) * (height - padding * 2);
     let label = d.report_name;
     if (d.report_date && /^\d{4}-\d{2}-\d{2}$/.test(d.report_date)) {
       const [yr, mo, dy] = d.report_date.split('-');
       label = `${dy}/${mo}/${yr.slice(2)}`;
     }
-    return { x, y, name: label, value: d.clients };
+    return { x, y, name: label, value: val };
   });
   
   let pathD = `M ${points[0].x} ${points[0].y}`;
@@ -794,7 +819,7 @@ function drawEvolutionChart(evolution) {
   for (let val = 0; val <= maxVal; val += step) {
     const y = height - padding - ((val - minVal) / (maxVal - minVal)) * (height - padding * 2);
     gridLines += `<line x1="${padding}" y1="${y}" x2="${width - padding}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3,3" />`;
-    gridLines += `<text x="${padding - 10}" y="${y + 4}" fill="var(--text3)" font-size="10" text-anchor="end">${val}</text>`;
+    gridLines += `<text x="${padding - 10}" y="${y + 4}" fill="var(--text3)" font-size="10" text-anchor="end">${formatShortNumber(val)}</text>`;
   }
   
   let labels = '';
@@ -802,7 +827,7 @@ function drawEvolutionChart(evolution) {
   points.forEach(p => {
     labels += `<text x="${p.x}" y="${height - 15}" fill="var(--text2)" font-size="9" text-anchor="middle">${p.name}</text>`;
     circles += `<circle cx="${p.x}" cy="${p.y}" r="5" fill="var(--accent)" stroke="var(--card)" stroke-width="2" />`;
-    circles += `<text x="${p.x}" y="${p.y - 10}" fill="var(--text)" font-size="10" font-weight="700" text-anchor="middle">${p.value}</text>`;
+    circles += `<text x="${p.x}" y="${p.y - 10}" fill="var(--text)" font-size="10" font-weight="700" text-anchor="middle">${formatShortNumber(p.value)}</text>`;
   });
   
   const svg = `
@@ -863,6 +888,16 @@ const MN=['WILSON','CLEVERTON','DANIEL','UANDERSON','ROBERTO','RAIMUNDO','FRANCI
   'MAYKON','MICHAELL','WELTON','ADRIANO','FERNANDO','LEOPOLDO','MICHAEL','WATSON',
   'ALEXANDRE','VYCTOR','EDIVAM','RAFAEL','ERALDO','UEVERTON','VITOR','ERIVELTON',
   'CARLOS','MARETHUR','MARCIO','MARCOS','RONALDO'];
+
+function formatCurrency(value) {
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+}
+
+function formatShortNumber(num) {
+  if (num >= 1000000) return 'R$ ' + (num / 1000000).toFixed(1) + 'M';
+  if (num >= 1000) return 'R$ ' + (num / 1000).toFixed(0) + 'k';
+  return 'R$ ' + num.toFixed(0);
+}
 
 function gender(name){
   const f=name.split(' ')[0].toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
@@ -1505,10 +1540,23 @@ function parseLayoutText(text) {
       if (pMatch) {
         const parcelNum = pMatch[1];
         const vencShort = dates[0].slice(0, 5);
+        
+        let valor = 0.0;
+        const tokens = line.trim().split(/\s+/);
+        const moneyTokens = tokens.filter(t => /^\d{1,3}(\.\d{3})*,\d{2}$/.test(t) || /^\d+,\d{2}$/.test(t));
+        if (moneyTokens.length >= 6) {
+          const valorTotalStr = moneyTokens[5];
+          valor = parseFloat(valorTotalStr.replace(/\./g, "").replace(",", "."));
+        } else if (moneyTokens.length >= 1) {
+          const valorParcelaStr = moneyTokens[0];
+          valor = parseFloat(valorParcelaStr.replace(/\./g, "").replace(",", "."));
+        }
+        
         parcels.push({
           parcela: parcelNum,
           vencimento: vencShort,
-          vencimento_full: dates[0]
+          vencimento_full: dates[0],
+          valor: valor
         });
       }
     }

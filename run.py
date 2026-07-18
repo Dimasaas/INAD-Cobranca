@@ -88,6 +88,7 @@ def init_db():
             parcela         TEXT    NOT NULL,
             vencimento      TEXT    NOT NULL,
             vencimento_full TEXT    NOT NULL,
+            valor           REAL    DEFAULT 0.0,
             FOREIGN KEY(property_id) REFERENCES properties(id) ON DELETE CASCADE
         );
 
@@ -109,8 +110,55 @@ def init_db():
         cursor.execute("ALTER TABLE reports ADD COLUMN report_date TEXT")
         print("[MIGRAÇÃO] Coluna report_date adicionada à tabela reports.")
 
+    # Migração: adiciona coluna valor se não existir (banco legado)
+    existing_parcel_cols = {row[1] for row in cursor.execute("PRAGMA table_info(parcels)")}
+    if "valor" not in existing_parcel_cols:
+        cursor.execute("ALTER TABLE parcels ADD COLUMN valor REAL DEFAULT 0.0")
+        print("[MIGRAÇÃO] Coluna valor adicionada à tabela parcels.")
+
     conn.commit()
     _migrate_legacy_files(cursor, conn)
+
+    # Backfill de valores de parcelas a partir de clients_data.json se as parcelas no banco estiverem zeradas
+    clients_path = os.path.join(DIRECTORY, "clients_data.json")
+    try:
+        cursor.execute("SELECT COUNT(*) FROM parcels WHERE valor > 0.0")
+        if cursor.fetchone()[0] == 0 and os.path.exists(clients_path):
+            print("[MIGRAÇÃO] Iniciando backfill de valores de parcelas...")
+            with open(clients_path, "r", encoding="utf-8") as f:
+                legacy = json.load(f)
+            
+            values_map = {}
+            for c_name, c_data in legacy.items():
+                for prop in c_data.get("properties", []):
+                    p_ident = prop.get("identifier", "")
+                    for parc in prop.get("parcels", []):
+                        p_num = parc.get("parcela", "")
+                        val = float(parc.get("valor") or parc.get("valor_total") or parc.get("valor_parcela") or 0.0)
+                        if val > 0.0:
+                            values_map[(c_name, p_ident, p_num)] = val
+            
+            db_parcels = cursor.execute("""
+                SELECT pa.id, c.name, p.identifier, pa.parcela
+                FROM parcels pa
+                JOIN properties p ON pa.property_id = p.id
+                JOIN clients c ON p.client_id = c.id
+                WHERE pa.valor = 0.0
+            """).fetchall()
+            
+            updates = []
+            for pa_id, c_name, p_ident, pa_num in db_parcels:
+                val = values_map.get((c_name, p_ident, pa_num))
+                if val:
+                    updates.append((val, pa_id))
+            
+            if updates:
+                cursor.executemany("UPDATE parcels SET valor = ? WHERE id = ?", updates)
+                conn.commit()
+                print(f"[MIGRAÇÃO] {len(updates)} parcelas atualizadas com o valor real.")
+    except Exception as exc:
+        print(f"[MIGRAÇÃO] Erro no backfill de valores de parcelas: {exc}")
+
     _apply_kpi_exclusions_seed(cursor, conn)
 
 
@@ -206,10 +254,11 @@ def _insert_clients(cursor, report_id, clients):
             property_id = cursor.lastrowid
             for parc in prop.get("parcels", []):
                 cursor.execute(
-                    "INSERT INTO parcels (property_id, parcela, vencimento, vencimento_full) "
-                    "VALUES (?,?,?,?)",
+                    "INSERT INTO parcels (property_id, parcela, vencimento, vencimento_full, valor) "
+                    "VALUES (?,?,?,?,?)",
                     (property_id, parc.get("parcela", ""),
-                     parc.get("vencimento", ""), parc.get("vencimento_full", "")),
+                     parc.get("vencimento", ""), parc.get("vencimento_full", ""),
+                     float(parc.get("valor") or parc.get("valor_total") or parc.get("valor_parcela") or 0.0)),
                 )
 
 
@@ -221,7 +270,8 @@ def get_clients_for_report(report_id):
     rows = cursor.execute("""
         SELECT c.name, c.cpf_cnpj, c.cel, c.email,
                p.venda_id, p.identifier,
-               pa.parcela, pa.vencimento, pa.vencimento_full
+               pa.parcela, pa.vencimento, pa.vencimento_full,
+               COALESCE(pa.valor, 0.0)
         FROM   clients c
         LEFT JOIN properties p  ON p.client_id   = c.id
         LEFT JOIN parcels    pa ON pa.property_id = p.id
@@ -231,7 +281,7 @@ def get_clients_for_report(report_id):
 
     result = {}
     for row in rows:
-        c_name, c_cpf, c_cel, c_email, p_vid, p_ident, pa_num, pa_venc, pa_venc_f = row
+        c_name, c_cpf, c_cel, c_email, p_vid, p_ident, pa_num, pa_venc, pa_venc_f, pa_val = row
         if not c_name:
             continue
         if c_name not in result:
@@ -244,7 +294,7 @@ def get_clients_for_report(report_id):
             props.append(prop)
         if prop and pa_num:
             prop["parcels"].append({
-                "parcela": pa_num, "vencimento": pa_venc, "vencimento_full": pa_venc_f
+                "parcela": pa_num, "vencimento": pa_venc, "vencimento_full": pa_venc_f, "valor": pa_val
             })
     return result
 
@@ -271,14 +321,15 @@ def get_kpis_data(report_ids=None):
         SELECT c.report_id,
                COUNT(DISTINCT c.id)   AS clients,
                COUNT(DISTINCT p.id)   AS properties,
-               COUNT(pa.id)           AS parcels
+               COUNT(pa.id)           AS parcels,
+               COALESCE(SUM(pa.valor), 0.0) AS total_value
         FROM   clients   c
         LEFT JOIN properties p  ON p.client_id   = c.id
         LEFT JOIN parcels    pa ON pa.property_id = p.id
         WHERE  c.name NOT IN (SELECT client_name FROM kpi_exclusions)
         GROUP  BY c.report_id
     """).fetchall()
-    all_stats_map = {r[0]: {"clients": r[1], "properties": r[2], "parcels": r[3]}
+    all_stats_map = {r[0]: {"clients": r[1], "properties": r[2], "parcels": r[3], "total_value": round(r[4], 2)}
                      for r in all_stats_rows}
 
     # Identifica o ID do relatório mais recente para cada data real (Deduplicação Global)
@@ -295,7 +346,7 @@ def get_kpis_data(report_ids=None):
             "report_name": r["name"],
             "report_date": r["report_date"],
             "is_duplicate": r["id"] not in active_ids_global,
-            **all_stats_map.get(r["id"], {"clients": 0, "properties": 0, "parcels": 0}),
+            **all_stats_map.get(r["id"], {"clients": 0, "properties": 0, "parcels": 0, "total_value": 0.0}),
         }
         for r in all_reports
     ]
