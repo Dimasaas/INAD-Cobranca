@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="INAD Analytics — análise avançada de inadimplência: segmentação de clientes novos/antigos, filtros por período e valores em atraso.">
+  <meta name="robots" content="noindex, nofollow">
+  <title>INAD — Analytics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="analytics.css">
+  <script src="libs/chart.umd.min.js" onerror="this.onerror=null; this.src='https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js';"></script>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="logo">
+      <div class="logo-icon">🔬</div>
+      <div>
+        INAD Analytics
+        <div class="logo-sub">Análise avançada de inadimplência</div>
+      </div>
+    </div>
+    <a class="back-link" href="inad_whatsapp.html">← Voltar ao Painel</a>
+  </div>
+
+  <div class="demo-banner" id="demo-banner">⚠ MODO DEMO — dados fictícios (inad_demo.db)</div>
+
+  <div class="filterbar">
+    <div class="fgroup">
+      <span class="flabel">Período</span>
+      <input type="date" id="f-from" title="Data inicial">
+      <input type="date" id="f-to" title="Data final">
+      <button class="chip" data-days="30">30d</button>
+      <button class="chip" data-days="90">90d</button>
+      <button class="chip" data-days="180">6m</button>
+      <button class="chip active" data-days="0">Tudo</button>
+    </div>
+
+    <div class="fgroup dd" id="dd-reports">
+      <span class="flabel">Relatórios</span>
+      <button class="dd-btn" id="dd-reports-btn">📄 <span id="dd-count">todos</span> ▾</button>
+      <div class="dd-panel">
+        <div class="dd-actions">
+          <button id="dd-all">Selecionar todos</button>
+          <button id="dd-none">Desmarcar todos</button>
+        </div>
+        <div id="dd-list"></div>
+      </div>
+    </div>
+
+    <div class="fgroup">
+      <span class="flabel">Segmento</span>
+      <div class="seg-toggle">
+        <button class="active" data-seg="all">Todos</button>
+        <button data-seg="novo">Novos</button>
+        <button data-seg="antigo">Antigos</button>
+      </div>
+    </div>
+
+    <div class="fgroup">
+      <span class="flabel">Corte "novo"</span>
+      <select id="f-cutoff" title="Cliente é 'novo' se apareceu pela 1ª vez a partir deste corte">
+        <option value="1">Último relatório</option>
+        <option value="2">Últimos 2</option>
+        <option value="3">Últimos 3</option>
+        <option value="6">Últimos 6</option>
+        <option value="date">Data específica…</option>
+      </select>
+      <input type="date" id="f-cutoff-date" style="display:none" title="Data de corte">
+    </div>
+
+    <div class="refresh-area">
+      <span class="updated-at" id="updated-at"></span>
+      <button class="fresh-pill" id="fresh-pill">● Novos dados — atualizar</button>
+      <button class="btn-refresh" id="btn-refresh">⟳ Atualizar</button>
+    </div>
+  </div>
+
+  <div class="wrap">
+    <p style="font-size:11.5px;color:var(--text3);margin-bottom:14px" id="cutoff-info"></p>
+
+    <div class="tiles">
+      <div class="tile t-blue">
+        <div class="tile-label">Clientes em atraso</div>
+        <div class="tile-value" id="tile-clients-v">—</div>
+        <div class="tile-delta neutral" id="tile-clients-d"></div>
+      </div>
+      <div class="tile t-purple">
+        <div class="tile-label">Parcelas em atraso</div>
+        <div class="tile-value" id="tile-parcels-v">—</div>
+        <div class="tile-delta neutral" id="tile-parcels-d"></div>
+      </div>
+      <div class="tile t-red">
+        <div class="tile-label">Valor total em atraso</div>
+        <div class="tile-value" id="tile-value-v">—</div>
+        <div class="tile-delta neutral" id="tile-value-d"></div>
+      </div>
+      <div class="tile t-green">
+        <div class="tile-label">Taxa de recuperação</div>
+        <div class="tile-value" id="tile-recovery-v">—</div>
+        <div class="tile-delta neutral" id="tile-recovery-d"></div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <div class="chart-box full">
+        <h3>📈 Evolução da inadimplência (clientes por relatório)</h3>
+        <div class="chart-canvas-wrap"><canvas id="chart-evolution"></canvas></div>
+      </div>
+
+      <div class="chart-box">
+        <h3>💰 Tendência do valor em atraso (R$)</h3>
+        <div class="chart-canvas-wrap"><canvas id="chart-value"></canvas></div>
+      </div>
+
+      <div class="chart-box">
+        <h3>✅ Taxa de recuperação por transição (%)</h3>
+        <div class="chart-canvas-wrap"><canvas id="chart-recovery"></canvas></div>
+      </div>
+
+      <div class="chart-box">
+        <h3>🧩 Composição do último relatório (novos × antigos)</h3>
+        <div class="chart-canvas-wrap"><canvas id="chart-mix"></canvas></div>
+      </div>
+
+      <div class="chart-box">
+        <h3>📊 Mix de clientes ao longo do tempo</h3>
+        <div class="chart-canvas-wrap"><canvas id="chart-mix-time"></canvas></div>
+      </div>
+
+      <div class="chart-box full">
+        <h3>🗂 Relatórios no período</h3>
+        <div class="table-scroll">
+          <table class="detail-table">
+            <thead>
+              <tr>
+                <th>ID</th><th>Relatório</th><th>Data</th>
+                <th class="num">Clientes</th><th class="num">Parcelas</th>
+                <th class="num">Valor (R$)</th><th class="num">% Novos</th>
+              </tr>
+            </thead>
+            <tbody id="detail-tbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="spinner"></div>
+  <script src="analytics.js"></script>
+</body>
+</html>
