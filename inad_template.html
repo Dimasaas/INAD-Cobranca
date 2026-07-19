@@ -433,6 +433,10 @@
        </div>
     </div>
   </div>
+  
+  <footer style="margin-top: 40px; padding: 20px 0; border-top: 1px solid var(--border); text-align: center; font-size: 11px; color: var(--text3); line-height: 1.5; width: 100%;">
+    🔒 <strong>Conformidade LGPD:</strong> Este sistema opera de forma 100% local. Suas bases de relatórios e dados de inadimplência são processados e armazenados exclusivamente no seu computador/rede intranet local, garantindo total privacidade em conformidade com a Lei Geral de Proteção de Dados (Lei nº 13.709/2018).
+  </footer>
 </div>
 
 <script>
@@ -1198,7 +1202,7 @@ function buildCard(c){
   const emailHtml=c.email&&c.email.includes('@')?`<span class="mi"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>${c.email}</span>`:'';
 
   const waBtn=wl
-    ?`<a href="${wl}" target="_blank" class="btn bwa" onclick="markSent('${c.name.replace(/'/g,"\\'")}','${id}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.083.535 4.04 1.474 5.74L0 24l6.416-1.455A11.95 11.95 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 0 1-5.136-1.453l-.368-.219-3.806.866.887-3.706-.241-.381A9.793 9.793 0 0 1 2.182 12C2.182 6.566 6.566 2.182 12 2.182S21.818 6.566 21.818 12 17.434 21.818 12 21.818z"/></svg>Abrir WhatsApp</a>`
+    ?`<a href="${wl}" target="_blank" class="btn bwa" onclick="return handleWaClick(event,'${c.name.replace(/'/g,"\\'")}','${id}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.083.535 4.04 1.474 5.74L0 24l6.416-1.455A11.95 11.95 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 0 1-5.136-1.453l-.368-.219-3.806.866.887-3.706-.241-.381A9.793 9.793 0 0 1 2.182 12C2.182 6.566 6.566 2.182 12 2.182S21.818 6.566 21.818 12 17.434 21.818 12 21.818z"/></svg>Abrir WhatsApp</a>`
     :`<span class="btn bwa noph"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Sem telefone</span>`;
 
   const excludeBtn = `
@@ -1304,6 +1308,67 @@ async function registerOutcome(name, id, outcome) {
   } catch(e) {
     alert("Erro ao salvar desfecho: " + e.message);
   }
+}
+
+// Verifica se o contato está sendo feito dentro da janela legal permitida no Brasil (CDC Art. 42 e leis estaduais):
+// - Segunda a Sexta: 08:00 às 20:00
+// - Sábado: 08:00 às 13:00
+// - Domingos e Feriados Nacionais Fixos: Proibido
+function checkContactWindow() {
+  const now = new Date();
+  const day = now.getDay(); // 0 = Domingo, 1 = Segunda, ..., 6 = Sábado
+  const hour = now.getHours();
+  const min = now.getMinutes();
+  const timeVal = hour + min / 60.0;
+  
+  // Lista de feriados nacionais fixos no Brasil (formato: "MM-DD")
+  const feriados = [
+    "01-01", // Confraternização Universal
+    "04-21", // Tiradentes
+    "05-01", // Dia do Trabalho
+    "09-07", // Independência do Brasil
+    "10-12", // Nossa Senhora Aparecida
+    "11-02", // Finados
+    "11-15", // Proclamação da República
+    "12-25"  // Natal
+  ];
+  
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  const mmdd = `${m}-${d}`;
+  
+  // Se for domingo ou feriado nacional fixo, é proibido
+  if (day === 0 || feriados.includes(mmdd)) {
+    return false;
+  }
+  
+  // Sábado: permitido das 8h às 13h
+  if (day === 6) {
+    return timeVal >= 8.0 && timeVal < 13.0;
+  }
+  
+  // Segunda a Sexta: permitido das 8h às 20h
+  return timeVal >= 8.0 && timeVal < 20.0;
+}
+
+// Intercepta o clique no link de abertura de WhatsApp para validar se está no horário comercial.
+// Exibe um prompt de confirmação caso seja fora da janela legal de cobrança comercial do CDC.
+function handleWaClick(event, name, id) {
+  if (!checkContactWindow()) {
+    const confirmProceed = confirm(
+      "[ALERTA DE CONFORMIDADE LEGAL (CDC Art. 42)]\n\n" +
+      "Você está tentando iniciar um contato de cobrança fora do horário comercial permitido por lei " +
+      "(Segunda a Sexta das 8h às 20h, Sábado das 8h às 13h, Domingos e Feriados não permitidos).\n\n" +
+      "Contatos fora desse horário podem ser interpretados como perturbação ou assédio comercial sob a lei brasileira.\n\n" +
+      "Deseja prosseguir mesmo assim sob sua responsabilidade?"
+    );
+    if (!confirmProceed) {
+      event.preventDefault();
+      return false;
+    }
+  }
+  markSent(name, id);
+  return true;
 }
 
 function markSent(name, id){
