@@ -424,8 +424,47 @@ async function checkDemoMode() {
     const res = await fetch('/api/health');
     if (!res.ok) return;
     const h = await res.json();
-    if (h.demo) document.getElementById('demo-banner').classList.add('visible');
+    if (h.demo) {
+      document.getElementById('demo-banner').classList.add('visible');
+      const btn = document.getElementById('btn-demo');
+      if (btn) btn.style.display = 'none'; // já estamos numa instância demo
+    }
   } catch (e) { /* sem servidor */ }
+}
+
+async function launchDemo() {
+  const btn = document.getElementById('btn-demo');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Iniciando...';
+  try {
+    const res = await fetch('/api/demo/launch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || 'Falha ao iniciar o servidor demo.');
+
+    btn.textContent = data.already_running ? '⏳ Abrindo...' : '⏳ Gerando dados...';
+
+    let ready = false;
+    for (let i = 0; i < 20 && !ready; i++) {
+      await new Promise(r => setTimeout(r, 400));
+      try {
+        const h = await fetch(data.health_url, { cache: 'no-store' });
+        ready = h.ok;
+      } catch (e) { /* ainda subindo */ }
+    }
+    if (!ready) throw new Error('O servidor demo demorou demais para responder.');
+
+    window.open(data.url, '_blank');
+  } catch (e) {
+    alert('Não foi possível iniciar o modo demo: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
 }
 
 // ─── BOOT ────────────────────────────────────────────────────────────────────

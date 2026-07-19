@@ -31,4 +31,4 @@ inad_database.db
 *.db-shm
 *.db-wal
 *.db-journal
-server.log
+*.log

@@ -24,7 +24,9 @@ graph TD
     D -->|4. Heurísticas de Regex| E[Dados Extraídos]
     E -->|5. POST /api/reports| F[Python Server run.py]
     F -->|6. Salva no Disco| G[(SQLite: inad_database.db)]
-    F -.->|INAD_DEMO=1| G2[(SQLite: inad_demo.db)]
+    F -.->|INAD_DEMO=1 ou botão 🧪 Modo Demo| G2[(SQLite: inad_demo.db)]
+    F -->|POST /api/demo/launch| F2[Processo filho: run.py --demo]
+    F2 -.-> G2
     C -->|7. Dispara WhatsApp| H[POST /api/actions/sent]
     H -->|8. Loga Evento| G
     N[inad_analytics.html] -->|GET /api/kpis/analytics| F
@@ -166,6 +168,7 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 | `GET` | `/api/kpis/analytics` | Série temporal segmentada para a página de Analytics (ver abaixo) |
 | `GET` | `/api/kpis/exclusions` | Lista clientes excluídos dos KPIs |
 | `POST` | `/api/kpis/exclusions` | `{client_name, exclude: true\|false}` |
+| `POST` | `/api/demo/launch` | Sobe (ou reaproveita) uma instância demo isolada em outra porta — ver seção "Modo Demo" |
 
 **Resposta de `/api/kpis`:** `evolution` (filtrada, sem duplicados), `all_evolution` (com flag `is_duplicate`), `transitions` (cruzamentos consecutivos). Cada entrada de evolução inclui `total_value` (soma R$ das parcelas).
 
@@ -226,7 +229,19 @@ Na aba KPI e na página de Analytics, o usuário pode marcar/desmarcar relatóri
 
 ## 🧪 Modo Demo / Sandbox
 
-Para testar sem tocar no banco real:
+Para testar sem tocar no banco real, três formas equivalentes:
+
+### 1. Botão "🧪 Modo Demo" na UI (recomendado, sem terminal)
+
+No painel principal (`inad_whatsapp.html`) e na página de Analytics, o botão **🧪 Modo Demo** chama `POST /api/demo/launch`:
+- O servidor real (`run.py`, não-demo) sobe um **processo filho independente**: `python run.py --demo --headless`, escutando em `INAD_PORT + 1000` (configurável via `INAD_DEMO_PORT`; ex.: real=8000 → demo=9000).
+- Se essa porta já responde (`_is_port_open`), reaproveita a instância existente em vez de duplicar (`already_running: true`).
+- Na primeira subida, como `inad_demo.db` está vazio, `init_db()` chama `generate_demo_data.generate()` automaticamente — o usuário não precisa rodar nada manualmente.
+- O frontend faz polling de `health_url` até a instância responder e então abre `url` (`inad_whatsapp.html` da instância demo) em nova aba.
+- Logs do processo filho vão para `inad_demo_server.log` (gitignored).
+- Chamar `/api/demo/launch` num servidor que **já está** em modo demo retorna erro 400 (não há demo-dentro-de-demo).
+
+### 2. Terminal manual
 
 ```bash
 python3 generate_demo_data.py --reset   # (Re)cria inad_demo.db com dados fictícios
@@ -234,11 +249,13 @@ INAD_DEMO=1 python3 run.py              # Servidor apontando SÓ para inad_demo.
 python3 run.py --demo                   # Equivalente
 ```
 
+### 3. Regras gerais
+
 - `INAD_DEMO=1` (ou `--demo`) troca `DB_PATH` para `inad_demo.db` — **nada lê ou grava** `inad_database.db` nesse modo.
-- Em demo, `init_db()` **não roda** migração de JSONs legados, backfill de `clients_data.json` nem seed de `kpi_exclusions.json` (dados reais jamais entram no banco demo).
-- `/api/health` e `/api/context` retornam `"demo": true`; a página de Analytics exibe o banner "⚠ MODO DEMO".
+- Em demo, `init_db()` **não roda** migração de JSONs legados, backfill de `clients_data.json` nem seed de `kpi_exclusions.json` (dados reais jamais entram no banco demo); só popula via `generate_demo_data` se o banco estiver vazio.
+- `/api/health` e `/api/context` retornam `"demo": true`; painel principal e Analytics exibem o banner "⚠ MODO DEMO" e escondem o próprio botão (evita aninhamento).
 - O gerador é determinístico (seed 42; `--seed N` para variar): ~15 relatórios mensais com churn de 10-20%, ~80 clientes fictícios (incluindo variações propositais de grafia para exercitar a limitação de identidade por nome), valores R$ 300-5.000 por parcela.
-- `inad_demo.db` está coberto pelo `.gitignore` (`*.db`).
+- `inad_demo.db`, `inad_demo.db-shm/-wal` e `inad_demo_server.log` estão cobertos pelo `.gitignore`.
 
 ---
 
@@ -275,7 +292,7 @@ Se o painel principal for aberto sem servidor (`file://`), o frontend usa `local
 4. **Retrocompatibilidade** — manter aliases `/api/sent` ↔ `/api/actions/sent` e a forma da resposta de `/api/kpis` (a aba KPI depende dela); features novas de análise vão em `/api/kpis/analytics`.
 5. **Contexto ao vivo** — consulte `GET /api/context` antes de alterações que afetem API ou schema.
 6. **Escopo mínimo** — alterações focadas; não refatorar código não relacionado à tarefa.
-7. **Testes com dados fake** — use o modo demo (`INAD_DEMO=1` + `generate_demo_data.py`), nunca o banco real.
+7. **Testes com dados fake** — use o modo demo (botão 🧪 na UI, ou `INAD_DEMO=1` + `generate_demo_data.py`), nunca o banco real.
 
 ---
 

@@ -22,6 +22,8 @@ import json
 import sqlite3
 import signal
 import platform
+import socket
+import subprocess
 
 # Windows: garante UTF-8 no console/redirecionamento (evita crash do banner
 # com caracteres Unicode sob cp1252)
@@ -41,6 +43,10 @@ DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 DEMO      = os.environ.get("INAD_DEMO", "0").strip() == "1" or "--demo" in sys.argv
 DB_FILE   = "inad_demo.db" if DEMO else "inad_database.db"
 DB_PATH   = os.path.join(DIRECTORY, DB_FILE)
+
+# Porta onde uma instância demo (lançada pelo botão "🧪 Modo Demo" da UI)
+# deve escutar. Só usada pelo servidor real para orquestrar o child process.
+DEMO_PORT = int(os.environ.get("INAD_DEMO_PORT", PORT + 1000))
 
 # Modo headless: ativado via arg --headless, var INAD_HEADLESS=1,
 # ou quando o sistema não tiver display (servidores Linux sem GUI).
@@ -140,8 +146,17 @@ def init_db():
     conn.commit()
 
     # Modo demo: nenhum dado real (JSONs legados, backfill, seed de exclusões)
-    # pode entrar no banco demo — apenas o schema é criado.
+    # pode entrar no banco demo — apenas o schema é criado. Na primeira vez
+    # (banco vazio), popula automaticamente com dados fictícios para que o
+    # botão "🧪 Modo Demo" da UI funcione sem passos manuais no terminal.
     if DEMO:
+        if cursor.execute("SELECT COUNT(*) FROM reports").fetchone()[0] == 0:
+            try:
+                import generate_demo_data
+                generate_demo_data.generate()
+                print("[DEMO] Banco demo populado automaticamente com dados fictícios.")
+            except Exception as exc:
+                print(f"[DEMO] Falha ao gerar dados fictícios automaticamente: {exc}")
         return
 
     _migrate_legacy_files(cursor, conn)
@@ -793,6 +808,45 @@ def _json_response(handler, data, status=200):
     handler.wfile.write(body)
 
 
+def _is_port_open(port, timeout=0.35):
+    """Testa se algo já está escutando em localhost:port (usado para não
+    duplicar a instância demo ao clicar no botão várias vezes)."""
+    try:
+        with socket.create_connection(("localhost", port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _launch_demo_instance():
+    """Sobe (ou reaproveita) uma instância demo em DEMO_PORT, como processo
+    filho independente, para o botão '🧪 Modo Demo' da UI."""
+    if _is_port_open(DEMO_PORT):
+        return {"already_running": True}
+
+    env = os.environ.copy()
+    env["INAD_DEMO"] = "1"
+    env["INAD_PORT"] = str(DEMO_PORT)
+    env["INAD_HEADLESS"] = "1"
+
+    log_path = os.path.join(DIRECTORY, "inad_demo_server.log")
+    log_file = open(log_path, "a", encoding="utf-8")
+
+    kwargs = {}
+    if platform.system() == "Windows":
+        kwargs["creationflags"] = (
+            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        )
+    else:
+        kwargs["start_new_session"] = True
+
+    subprocess.Popen(
+        [sys.executable, os.path.abspath(__file__), "--demo", "--headless"],
+        cwd=DIRECTORY, env=env, stdout=log_file, stderr=log_file, **kwargs,
+    )
+    return {"already_running": False}
+
+
 def _read_body(handler):
     """Lê o corpo do POST de forma segura; retorna None se Content-Length ausente."""
     length = handler.headers.get("Content-Length")
@@ -994,6 +1048,22 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                         )
                 conn.commit()
                 _json_response(self, {"status": "success"})
+            except Exception as exc:
+                _json_response(self, {"error": str(exc)}, 500)
+
+        elif path == "/api/demo/launch":
+            if DEMO:
+                _json_response(self, {"error": "Este servidor já está em modo demo."}, 400)
+                return
+            try:
+                info = _launch_demo_instance()
+                _json_response(self, {
+                    "status": "success",
+                    "port": DEMO_PORT,
+                    "url": f"http://localhost:{DEMO_PORT}/inad_whatsapp.html",
+                    "health_url": f"http://localhost:{DEMO_PORT}/api/health",
+                    "already_running": info["already_running"],
+                })
             except Exception as exc:
                 _json_response(self, {"error": str(exc)}, 500)
 
