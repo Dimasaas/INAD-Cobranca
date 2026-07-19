@@ -1,72 +1,121 @@
-# 🏡 INAD — Painel de Cobrança
+# 🏡 INAD — Painel de Gestão e Cobrança de Inadimplência
 
-Esta é uma ferramenta interna desenvolvida para facilitar o contato e cobrança dos clientes inadimplentes. A ferramenta reúne os dados cadastrais dos clientes, permite a importação direta de relatórios em PDF, gera as mensagens de cobrança personalizadas para o WhatsApp e acompanha o status de envio de forma simples.
+[![Python Version](https://img.shields.io/badge/Python-3.8+-blue?logo=python&logoColor=white)](https://www.python.org/)
+[![SQLite Database](https://img.shields.io/badge/Database-SQLite-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![Frontend UI](https://img.shields.io/badge/UI-Glassmorphism_Premium-purple)](https://developer.mozilla.org/en-US/docs/Web/CSS)
+[![Build Tool](https://img.shields.io/badge/Bundler-PyInstaller-yellow)](https://pyinstaller.org/)
+[![Platform Supported](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-brightgreen)](#)
 
-> [!NOTE]
-> **Privacidade Garantida:** Este repositório não armazena nenhuma informação confidencial ou dados de clientes no histórico do Git. Todos os dados são processados localmente no seu computador.
+Esta é uma ferramenta profissional de CRM e Gestão de Cobrança desenvolvida para automatizar e otimizar o fluxo de recuperação de inadimplência da construtora. O sistema unifica o processamento de relatórios em PDF, calcula scores de risco inteligentes, classifica devedores em réguas de cobrança operacionais e facilita contatos dinâmicos via WhatsApp Web.
+
+> [!IMPORTANT]
+> **Privacidade & Segurança:** Toda a manipulação de dados é realizada **localmente no seu computador** ou na **Intranet da sua empresa**. O banco de dados SQLite (`inad_database.db`) e os relatórios ficam protegidos no ambiente do servidor local, sem qualquer vazamento de dados confidenciais para a nuvem.
+
+---
+
+## 📐 Arquitetura do Sistema
+
+O INAD possui uma arquitetura híbrida ultra-leve que permite rodar tanto de forma 100% offline (local no navegador) quanto integrada com um servidor centralizado:
+
+```mermaid
+graph TD
+    subgraph Frontend (HTML5 / Glassmorphism UI)
+        UI[Painel de Cobrança / inad_whatsapp.html]
+        ANA[Painel Científico / inad_analytics.html]
+        JS[Motor JS Local / localStorage]
+    end
+
+    subgraph Backend (Servidor run.py)
+        API[Servidor HTTP Integrado]
+        DB[(Banco SQLite / WAL Mode)]
+    end
+
+    PDF[Relatório Inadimplência PDF] -->|Drag & Drop / PDF.js| UI
+    UI -->|Registrar Log /api/actions/sent| API
+    UI -->|Salvar Desfecho /api/actions/outcome| API
+    API -->|Persistir dados| DB
+    DB -->|Fila de Risco /api/queue| UI
+    DB -->|Evolução de KPIs /api/kpis| ANA
+    JS -.->|Fallback Offline| UI
+```
+
+---
+
+## ✨ Funcionalidades Principais
+
+- 📊 **Fila de Prioridades Inteligente (`/api/queue`):** Ordenação dinâmica de clientes calculada a partir do cruzamento de valor devedor (P90), dias de atraso (aging) e taxa de reincidência de relatórios.
+- 📋 **Worklist Operacional:** Categorização imediata de clientes que precisam de ação urgente:
+  - *Promessas Vencidas:* Clientes que prometeram pagar mas não quitaram no prazo da promessa.
+  - *Recontato Agendado:* Agendas de ligação e follow-up automáticos para o dia corrente.
+  - *Sem Resposta:* Clientes contatados há mais de 7 dias e sem respostas registradas.
+  - *Novos no Pré-Jurídico:* Devedores que acabam de ultrapassar a barreira crítica dos 120 dias.
+- 💬 **WhatsApp Dinâmico Integrado:** Mensagens customizadas geradas automaticamente, incluindo variáveis de saudação baseadas em gênero, identificação do lote/quadra e saldo devedor atualizado, com link direto de disparo.
+- 📝 **Registro de Desfechos (Outcomes):** Painel interno em cada card para cadastrar retornos das conversas (*Prometeu Pagar*, *Negociação*, *Recusou*, *Sem resposta*).
 
 ---
 
 ## 💻 Como Baixar e Executar (Tutorial para Colaboradores)
 
-### Passo 1: Baixar a Ferramenta
-1. No topo desta página do GitHub, clique na aba **Releases** (lado direito) ou em [Releases](../../releases).
-2. Baixe a versão mais recente correspondente ao seu sistema:
-   *   **Para Windows:** Baixe o arquivo `INAD_Cobranca-Windows.zip`.
-   *   **Para macOS:** Baixe o arquivo `INAD_Cobranca-macOS.zip`.
-3. Extraia o arquivo `.zip` baixado em uma pasta de sua preferência.
+### Passo 1: Obter a Aplicação
+1. Vá até a aba de **Releases** do repositório no GitHub.
+2. Baixe o pacote comprimido compatível com seu sistema operacional:
+   - **Para Windows:** `INAD_Cobranca-Windows.zip`
+   - **Para macOS:** `INAD_Cobranca-macOS.zip`
+3. Extraia o conteúdo do zip em uma pasta permanente.
 
 ---
 
 ### Passo 2: Executar no Windows 🪟
-1. Abra a pasta onde você extraiu os arquivos.
-2. Dê dois cliques no arquivo **`INAD_Cobranca.exe`** (ele possui um ícone de console).
-3. Uma janela preta do console abrirá e, em seguida, seu navegador de internet abrirá automaticamente na ferramenta.
-4. **Pronto!** Você já pode usar a ferramenta. 
-   *   *Nota:* Mantenha a janela preta do console aberta enquanto estiver usando o painel. Para encerrar, basta fechar a janela preta.
+1. Abra a pasta extraída.
+2. Execute o arquivo **`INAD_Cobranca.exe`** (clicando duas vezes).
+3. Uma tela preta de terminal se abrirá no background, e o seu navegador de internet padrão abrirá automaticamente o Painel de Cobrança.
+4. *Importante:* Mantenha o terminal aberto enquanto estiver trabalhando. Ao finalizar, basta fechar a janela preta para desligar o sistema.
 
 ---
 
 ### Passo 3: Executar no macOS (Mac) 🍏
-Devido aos sistemas de segurança do macOS (Gatekeeper), aplicativos baixados da internet que não são assinados digitalmente exigem uma permissão simples na primeira execução:
-1. Abra a pasta onde extraiu os arquivos.
-2. **Não dê dois cliques diretamente.** Em vez disso, **clique com o botão direito** (ou segure a tecla `Control` e clique) no executável **`INAD_Cobranca`** e selecione **Abrir (Open)**.
-3. O macOS exibirá um aviso dizendo que o "desenvolvedor não pode ser verificado". Clique no botão **Abrir (Open)** na caixa de diálogo para confirmar.
-4. Uma janela do Terminal abrirá e a ferramenta será carregada automaticamente no seu navegador.
-5. *Dica:* Esse procedimento do botão direito é necessário **apenas na primeira vez**. Nas próximas vezes, você poderá abrir o arquivo normalmente com dois cliques.
-6. Mantenha a janela do Terminal aberta durante o uso. Feche-a para encerrar o servidor.
+Devido aos termos de segurança do macOS (Gatekeeper), o aplicativo precisará de uma autorização inicial:
+1. Abra a pasta extraída no *Finder*.
+2. **Clique com o botão direito** no executável **`INAD_Cobranca`** e selecione **Abrir (Open)**.
+3. Na janela de aviso de "Desenvolvedor não verificado", clique em **Abrir (Open)**.
+4. O navegador abrirá o painel. Nas próximas utilizações, basta abrir o arquivo com dois cliques simples.
 
 ---
 
-## 🛠️ Como Usar a Ferramenta
-
-1. **Importar o Relatório PDF:** Clique no botão **📂 Importar PDF** no topo do painel e selecione o arquivo PDF do relatório de inadimplência (ou arraste e solte o PDF na tela).
-2. **Visualizar a Barra de Carregamento:** Uma barra de progresso mostrará o status da leitura do PDF. Quando concluir, todos os clientes serão exibidos na tela organizados em cards.
-3. **Enviar Mensagens:** Cada cliente terá o seu card contendo a mensagem pré-formatada. Clique em **Abrir WhatsApp** para abrir a conversa com a mensagem já digitada no celular ou WhatsApp Web.
-4. **Marcar como Enviado:** O sistema marca o cliente como enviado automaticamente ao abrir o link do WhatsApp, mas você também pode marcar/desmarcar clicando no botão de check (✓).
+### Passo 4: Rodando em Servidor / Intranet 🌐
+Se você deseja compartilhar a ferramenta com toda a equipe através de um servidor local na rede da construtora:
+1. Coloque o projeto no servidor e configure o script `run.py` para escutar na interface pública:
+   ```bash
+   python run.py --port 8000
+   ```
+2. O restante dos computadores na rede interna poderá acessar a ferramenta digitando o IP do servidor na barra de navegação (Ex: `http://192.168.1.100:8000`).
 
 ---
 
-## ⚙️ Para Administradores (Rodando via Código)
+## ⚙️ Para Desenvolvedores (Rodando via Código)
 
-Se você deseja rodar ou atualizar a ferramenta a partir do código-fonte:
+### Instalação de Requisitos
+Instale o Python 3.8+ em sua máquina e garanta o driver SQLite padrão ativo. Para iniciar o servidor de desenvolvimento local:
 
-### Requisitos
-- Python 3.x instalado.
+```bash
+# Iniciar o servidor com a base real
+python run.py
 
-### Executar o Servidor de Desenvolvimento
-1. Abra o terminal na pasta do projeto.
-2. Execute o comando:
-   ```bash
-   python3 run.py
-   ```
-3. O servidor local será iniciado e abrirá a ferramenta em `http://localhost:8000/inad_whatsapp.html`.
+# Iniciar o servidor forçando o Modo de Testes (dados demo gerados dinamicamente)
+INAD_DEMO=1 python run.py
+```
+O painel abrirá automaticamente em `http://localhost:8000`.
 
-### Atualizar a Base de Clientes Iniciais Padrão
-Se desejar embutir novos dados iniciais na página principal:
-1. Substitua o conteúdo do arquivo `clients_data.json` na raiz da pasta.
-2. Execute o script de importação:
-   ```bash
-   python3 add_pdf_importer.py
-   ```
-3. O arquivo `inad_whatsapp.html` será regenerado com os novos dados padrão embutidos.
+### Estrutura dos Arquivos Principal
+- `run.py`: Servidor HTTP/API REST nativo com SQLite em modo WAL.
+- `inad_template.html`: Arquivo core da interface contendo as tags CSS (Design System) e lógica de comunicação.
+- `add_pdf_importer.py`: Compilador estático que gera o arquivo autônomo offline `inad_whatsapp.html`.
+- `inad_analytics.html`: Dashboard de inteligência estatística para análise de coortes e taxas de recuperação.
+
+### Compilando Binários
+Caso precise empacotar uma nova versão para distribuição rápida:
+```bash
+pip install pyinstaller
+pyinstaller --onefile --windowed --name=INAD_Cobranca --add-data "inad_template.html;." --add-data "inad_whatsapp.html;." --add-data "inad_analytics.html;." --add-data "analytics.js;." --add-data "analytics.css;." --add-data "libs;libs" run.py
+```
+*(No macOS, troque o `;` do argumento `--add-data` por `:`).*
