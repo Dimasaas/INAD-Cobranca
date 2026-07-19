@@ -760,15 +760,18 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 
 class _ReuseServer(socketserver.TCPServer):
     """TCPServer com reutilização de porta compatível com Windows e UNIX."""
-    allow_reuse_address = True
+    allow_reuse_address = (platform.system() != "Windows")
 
     def server_bind(self):
         if platform.system() == "Windows":
             import socket
-            # SO_EXCLUSIVEADDRUSE evita que outra aplicação roube a porta no Windows
-            self.socket.setsockopt(
-                socket.SOL_SOCKET, getattr(socket, "SO_EXCLUSIVEADDRUSE", 14), 1
-            )
+            try:
+                # SO_EXCLUSIVEADDRUSE evita que outra aplicação roube a porta no Windows
+                self.socket.setsockopt(
+                    socket.SOL_SOCKET, getattr(socket, "SO_EXCLUSIVEADDRUSE", 14), 1
+                )
+            except OSError:
+                pass
         super().server_bind()
 
 
