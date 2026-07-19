@@ -1256,6 +1256,9 @@ function toggleOutcomePanel(id) {
   if (p) p.classList.toggle('active');
 }
 
+// Registra o desfecho do contato com o devedor (Prometeu Pagar, Negociação, Sem Resposta, Recusou).
+// Se for necessário agendar uma data (promessa ou recontato), o operador preenche no formato brasileiro (DD/MM/AAAA).
+// O script valida o formato, converte para ISO (AAAA-MM-DD) e envia para a API REST do backend.
 async function registerOutcome(name, id, outcome) {
   if (!isServerActive) {
     alert("Operação indisponível em modo offline.");

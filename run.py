@@ -34,9 +34,15 @@ for _stream in (sys.stdout, sys.stderr):
         except Exception:
             pass
 
-# ─── CONFIGURAÇÃO ─────────────────────────────────────────────────────────────
+# ─── CONFIGURAÇÃO DO SERVIDOR ──────────────────────────────────────────────────
+# Define a porta padrão do servidor HTTP. O sistema tenta ler a variável de
+# ambiente 'INAD_PORT' primeiro. Se não existir, assume a porta 8000.
 PORT      = int(os.environ.get("INAD_PORT", 8000))
-# Também suporta --port <porta> ou --port=<porta> da linha de comando
+
+# Analisa os argumentos da linha de comando (CLI) para customizar a porta de execução.
+# Suporta os formatos:
+#   python run.py --port 9090
+#   python run.py --port=9090
 for _i, _arg in enumerate(sys.argv):
     if _arg == "--port" and _i + 1 < len(sys.argv):
         try:
@@ -51,7 +57,10 @@ for _i, _arg in enumerate(sys.argv):
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
-# Configuração de Logs de Erro
+# Configuração de Logs de Erro Persistentes
+# Inicializa o logger padrão do Python para capturar erros críticos de execução do servidor.
+# Os registros de falha são salvos no arquivo 'inad_errors.log' na pasta raiz do projeto.
+# Isso garante o registro detalhado de exceções em qualquer sistema (Windows, macOS ou Linux).
 import logging
 logging.basicConfig(
     filename=os.path.join(DIRECTORY, "inad_errors.log"),
@@ -1409,6 +1418,11 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 
     # ── GET ───────────────────────────────────────────────────────────────────
     def do_GET(self):
+        """
+        Ponto de entrada para todas as requisições HTTP do tipo GET.
+        Implementa um wrapper global de tratamento de erros para capturar qualquer exceção 
+        e gravar o rastreamento completo (stack trace) no arquivo 'inad_errors.log'.
+        """
         try:
             self._do_GET_unwrapped()
         except Exception as exc:
@@ -1420,6 +1434,10 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 pass
 
     def _do_GET_unwrapped(self):
+        """
+        Executa o roteamento interno de requisições GET.
+        Retorna arquivos estáticos (HTML/CSS/JS) ou responde a endpoints de API REST.
+        """
         path = self.path.split("?")[0]
 
         # Atalhos de navegação: acessar a raiz ou caminhos amigáveis sempre
@@ -2108,6 +2126,10 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 
     # ── POST ──────────────────────────────────────────────────────────────────
     def do_POST(self):
+        """
+        Ponto de entrada para requisições POST.
+        Implementa um wrapper global de tratamento de erros que registra falhas críticas no log persistente.
+        """
         try:
             self._do_POST_unwrapped()
         except Exception as exc:
@@ -2119,6 +2141,10 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 pass
 
     def _do_POST_unwrapped(self):
+        """
+        Executa as ações de alteração e inserção de dados do painel,
+        como gravação de relatórios de cobrança e cadastro de desfechos de contato.
+        """
         path = self.path.split("?")[0]
         body = _read_body(self)
         if body is None:
@@ -2259,6 +2285,10 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 
     # ── DELETE ────────────────────────────────────────────────────────────────
     def do_DELETE(self):
+        """
+        Ponto de entrada para requisições DELETE.
+        Exclui relatórios ou desfechos de contato, registrando qualquer falha no log persistente.
+        """
         try:
             self._do_DELETE_unwrapped()
         except Exception as exc:
@@ -2270,6 +2300,9 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 pass
 
     def _do_DELETE_unwrapped(self):
+        """
+        Executa a deleção física ou lógica de relatórios e desfechos de contatos.
+        """
         path = self.path.split("?")[0]
 
         if path.startswith("/api/reports/"):

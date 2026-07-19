@@ -9,7 +9,7 @@
 Esta é uma ferramenta profissional de CRM e Gestão de Cobrança desenvolvida para automatizar e otimizar o fluxo de recuperação de inadimplência da construtora. O sistema unifica o processamento de relatórios em PDF, calcula scores de risco inteligentes, classifica devedores em réguas de cobrança operacionais e facilita contatos dinâmicos via WhatsApp Web.
 
 > [!IMPORTANT]
-> **Privacidade & Segurança:** Toda a manipulação de dados é realizada **localmente no seu computador** ou na **Intranet da sua empresa**. O banco de dados SQLite (`inad_database.db`) e os relatórios ficam protegidos no ambiente do servidor local, sem qualquer vazamento de dados confidenciais para a nuvem.
+> **Privacidade & Segurança:** Toda a manipulação de dados é realizada **localmente no seu computador** ou na **Intranet da sua empresa**. O banco de dados SQLite (`inad_database.db` / `inad_demo.db`) e os relatórios ficam protegidos no ambiente do servidor local, sem qualquer vazamento de dados confidenciais para a nuvem.
 
 ---
 
@@ -32,7 +32,7 @@ graph TD
 
     PDF[Relatório Inadimplência PDF] -->|Drag & Drop / PDF.js| UI
     UI -->|Registrar Log /api/actions/sent| API
-    UI -->|Salvar Desfecho /api/actions/outcome| API
+    UI -->|Salvar Desfecho /api/outcomes| API
     API -->|Persistir dados| DB
     DB -->|Fila de Risco /api/queue| UI
     DB -->|Evolução de KPIs /api/kpis| ANA
@@ -47,10 +47,11 @@ graph TD
 - 📋 **Worklist Operacional:** Categorização imediata de clientes que precisam de ação urgente:
   - *Promessas Vencidas:* Clientes que prometeram pagar mas não quitaram no prazo da promessa.
   - *Recontato Agendado:* Agendas de ligação e follow-up automáticos para o dia corrente.
-  - *Sem Resposta:* Clientes contatados há mais de 7 dias e sem respostas registradas.
+  - *Sem Resposta:* Clientes contatados e sem respostas registradas (agrupados automaticamente após envio de WhatsApp).
   - *Novos no Pré-Jurídico:* Devedores que acabam de ultrapassar a barreira crítica dos 120 dias.
 - 💬 **WhatsApp Dinâmico Integrado:** Mensagens customizadas geradas automaticamente, incluindo variáveis de saudação baseadas em gênero, identificação do lote/quadra e saldo devedor atualizado, com link direto de disparo.
-- 📝 **Registro de Desfechos (Outcomes):** Painel interno em cada card para cadastrar retornos das conversas (*Prometeu Pagar*, *Negociação*, *Recusou*, *Sem resposta*).
+- 📝 **Registro de Desfechos (Outcomes):** Painel interno em cada card para cadastrar retornos das conversas (*Prometeu Pagar*, *Negociação*, *Recusou*, *Sem resposta*) no formato brasileiro `DD/MM/AAAA`.
+- 📁 **Auditoria e Logs de Erro:** Gravação automática de logs operacionais no terminal e registro de exceções de sistema estruturadas no arquivo `inad_errors.log` (multiplataforma).
 
 ---
 
@@ -84,11 +85,15 @@ Devido aos termos de segurança do macOS (Gatekeeper), o aplicativo precisará d
 
 ### Passo 4: Rodando em Servidor / Intranet 🌐
 Se você deseja compartilhar a ferramenta com toda a equipe através de um servidor local na rede da construtora:
-1. Coloque o projeto no servidor e configure o script `run.py` para escutar na interface pública:
+1. Coloque o projeto no servidor e configure o script `run.py` para escutar na porta ou interface desejada:
    ```bash
-   python run.py --port 8000
+   # Executar na porta padrão (8000)
+   python run.py
+   
+   # Executar em uma porta customizada (ex: 9090)
+   python run.py --port 9090
    ```
-2. O restante dos computadores na rede interna poderá acessar a ferramenta digitando o IP do servidor na barra de navegação (Ex: `http://192.168.1.100:8000`).
+2. O restante dos computadores na rede interna poderá acessar a ferramenta digitando o IP do servidor na barra de navegação (Ex: `http://192.168.1.100:9090`).
 
 ---
 
@@ -98,22 +103,26 @@ Se você deseja compartilhar a ferramenta com toda a equipe através de um servi
 Instale o Python 3.8+ em sua máquina e garanta o driver SQLite padrão ativo. Para iniciar o servidor de desenvolvimento local:
 
 ```bash
-# Iniciar o servidor com a base real
+# Iniciar o servidor com a base de dados real
 python run.py
 
-# Iniciar o servidor forçando o Modo de Testes (dados demo gerados dinamicamente)
-INAD_DEMO=1 python run.py
-```
-O painel abrirá automaticamente em `http://localhost:8000`.
+# Iniciar o servidor em Modo de Demonstração (gera dados de teste fictícios em inad_demo.db)
+python run.py --demo
 
-### Estrutura dos Arquivos Principal
-- `run.py`: Servidor HTTP/API REST nativo com SQLite em modo WAL.
-- `inad_template.html`: Arquivo core da interface contendo as tags CSS (Design System) e lógica de comunicação.
-- `add_pdf_importer.py`: Compilador estático que gera o arquivo autônomo offline `inad_whatsapp.html`.
-- `inad_analytics.html`: Dashboard de inteligência estatística para análise de coortes e taxas de recuperação.
+# Iniciar o servidor em Modo Demo escutando em uma porta específica
+python run.py --demo --port 9090
+```
+O painel abrirá automaticamente no endereço correspondente.
+
+### Estrutura dos Arquivos Principais
+- `run.py`: Servidor HTTP/API REST nativo em Python com SQLite em modo WAL e gerenciamento de erros estruturado.
+- `inad_template.html`: Template base da interface contendo o Design System (CSS) e lógica JS da aplicação.
+- `add_pdf_importer.py`: Compilador estático que gera o arquivo autônomo offline `inad_whatsapp.html` a partir do template.
+- `inad_analytics.html` / `analytics.js`: Dashboard de inteligência estatística para análise de recuperação.
+- `inad_errors.log`: Arquivo gerado automaticamente em caso de exceções não tratadas no servidor para fins de suporte técnico.
 
 ### Compilando Binários
-Caso precise empacotar uma nova versão para distribuição rápida:
+Caso precise empacotar uma nova versão executável para distribuição rápida:
 ```bash
 pip install pyinstaller
 pyinstaller --onefile --windowed --name=INAD_Cobranca --add-data "inad_template.html;." --add-data "inad_whatsapp.html;." --add-data "inad_analytics.html;." --add-data "analytics.js;." --add-data "analytics.css;." --add-data "libs;libs" run.py
