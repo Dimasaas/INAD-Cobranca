@@ -36,7 +36,28 @@ for _stream in (sys.stdout, sys.stderr):
 
 # ─── CONFIGURAÇÃO ─────────────────────────────────────────────────────────────
 PORT      = int(os.environ.get("INAD_PORT", 8000))
+# Também suporta --port <porta> ou --port=<porta> da linha de comando
+for _i, _arg in enumerate(sys.argv):
+    if _arg == "--port" and _i + 1 < len(sys.argv):
+        try:
+            PORT = int(sys.argv[_i + 1])
+        except ValueError:
+            pass
+    elif _arg.startswith("--port="):
+        try:
+            PORT = int(_arg.split("=", 1)[1])
+        except ValueError:
+            pass
+
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
+
+# Configuração de Logs de Erro
+import logging
+logging.basicConfig(
+    filename=os.path.join(DIRECTORY, "inad_errors.log"),
+    level=logging.ERROR,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 
 # Modo demo: banco totalmente isolado (inad_demo.db) para testes com dados
 # fictícios, sem nunca ler ou gravar o inad_database.db real.
@@ -708,6 +729,17 @@ def _get_worklist_data(cursor, ref_date):
         bucket = _bucketize(cf["max_days_overdue"])
         stage = _stage_for_days(cf["max_days_overdue"])
 
+        last_c = latest_contacts.get(name)
+        out_info = latest_outcomes.get(name)
+        out_outcome = out_info["outcome"] if out_info else None
+        out_date = out_info["created_at"] if out_info else None
+        
+        last_outcome = out_outcome
+        last_outcome_date = out_date
+        if last_c and (not out_date or last_c > out_date):
+            last_outcome = "sem_resposta"
+            last_outcome_date = last_c
+
         queue_row = {
             "name": name,
             "cel": cf["cel"],
@@ -723,10 +755,11 @@ def _get_worklist_data(cursor, ref_date):
             "reentries": reentries,
             "risk_score": score_info["score"],
             "components": score_info["components"],
-            "last_contact": latest_contacts.get(name),
-            "last_outcome": latest_outcomes.get(name, {}).get("outcome"),
-            "promised_date": latest_outcomes.get(name, {}).get("promised_date"),
-            "next_contact": latest_outcomes.get(name, {}).get("next_contact")
+            "last_contact": last_c,
+            "last_outcome": last_outcome,
+            "promised_date": out_info["promised_date"] if out_info else None,
+            "next_contact": out_info["next_contact"] if out_info else None,
+            "last_outcome_date": last_outcome_date
         }
 
         # 1) Promessas vencidas
@@ -1376,6 +1409,17 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 
     # ── GET ───────────────────────────────────────────────────────────────────
     def do_GET(self):
+        try:
+            self._do_GET_unwrapped()
+        except Exception as exc:
+            import traceback
+            logging.error(f"Erro não tratado em GET {self.path}: {exc}\n{traceback.format_exc()}")
+            try:
+                _json_response(self, {"error": "Internal Server Error", "details": str(exc)}, 500)
+            except Exception:
+                pass
+
+    def _do_GET_unwrapped(self):
         path = self.path.split("?")[0]
 
         # Atalhos de navegação: acessar a raiz ou caminhos amigáveis sempre
@@ -1425,9 +1469,10 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 
         elif path in ("/api/sent", "/api/actions/sent"):
             cursor = get_conn().cursor()
-            names  = [r[0] for r in cursor.execute(
-                "SELECT DISTINCT client_name FROM action_logs"
-            ).fetchall()]
+            names  = [r[0] for r in cursor.execute("""
+                SELECT DISTINCT client_name FROM action_logs
+                WHERE sent_at >= COALESCE((SELECT MAX(imported_at) FROM reports), '1970-01-01 00:00:00')
+            """).fetchall()]
             _json_response(self, names)
 
         elif path == "/api/kpis":
@@ -1615,6 +1660,17 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 if min_days_filter is not None and cf["max_days_overdue"] < min_days_filter:
                     continue
 
+                last_c = latest_contacts.get(name)
+                out_info = latest_outcomes.get(name)
+                out_outcome = out_info["outcome"] if out_info else None
+                out_date = out_info["created_at"] if out_info else None
+                
+                last_outcome = out_outcome
+                last_outcome_date = out_date
+                if last_c and (not out_date or last_c > out_date):
+                    last_outcome = "sem_resposta"
+                    last_outcome_date = last_c
+
                 item = {
                     "name": name,
                     "cel": cf["cel"],
@@ -1630,10 +1686,11 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     "reentries": reentries,
                     "risk_score": score_info["score"],
                     "components": score_info["components"],
-                    "last_contact": latest_contacts.get(name),
-                    "last_outcome": latest_outcomes.get(name, {}).get("outcome"),
-                    "promised_date": latest_outcomes.get(name, {}).get("promised_date"),
-                    "next_contact": latest_outcomes.get(name, {}).get("next_contact")
+                    "last_contact": last_c,
+                    "last_outcome": last_outcome,
+                    "promised_date": out_info["promised_date"] if out_info else None,
+                    "next_contact": out_info["next_contact"] if out_info else None,
+                    "last_outcome_date": last_outcome_date
                 }
                 queue.append(item)
 
@@ -2051,6 +2108,17 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 
     # ── POST ──────────────────────────────────────────────────────────────────
     def do_POST(self):
+        try:
+            self._do_POST_unwrapped()
+        except Exception as exc:
+            import traceback
+            logging.error(f"Erro não tratado em POST {self.path}: {exc}\n{traceback.format_exc()}")
+            try:
+                _json_response(self, {"error": "Internal Server Error", "details": str(exc)}, 500)
+            except Exception:
+                pass
+
+    def _do_POST_unwrapped(self):
         path = self.path.split("?")[0]
         body = _read_body(self)
         if body is None:
@@ -2080,6 +2148,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 report_id = cursor.lastrowid
                 _insert_clients(cursor, report_id, clients)
                 conn.commit()
+                print(f"[API] Novo relatório importado com sucesso: '{report_name}' (ID: {report_id})")
                 _json_response(self, {"status": "success", "report_id": report_id})
             except Exception as exc:
                 _json_response(self, {"error": str(exc)}, 500)
@@ -2098,6 +2167,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                                 "INSERT INTO action_logs (venda_id, client_name) VALUES (?,?)",
                                 ("0000", name),
                             )
+                            print(f"[API] Contato registrado: '{name}' (via lista)")
                 else:
                     vid  = payload.get("venda_id", "0000")
                     name = payload.get("client_name", "")
@@ -2106,6 +2176,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                             "INSERT INTO action_logs (venda_id, client_name) VALUES (?,?)",
                             (vid, name),
                         )
+                        print(f"[API] Contato registrado: '{name}' para a venda '{vid}'")
                 conn.commit()
                 _json_response(self, {"status": "success"})
             except Exception as exc:
@@ -2178,6 +2249,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (client_name, venda_id, action_log_id, outcome, promised_date, next_contact, note))
                 conn.commit()
+                print(f"[API] Desfecho registrado: '{outcome}' para o cliente '{client_name}'")
                 _json_response(self, {"status": "success", "id": cursor.lastrowid})
             except Exception as exc:
                 _json_response(self, {"error": str(exc)}, 500)
@@ -2187,6 +2259,17 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 
     # ── DELETE ────────────────────────────────────────────────────────────────
     def do_DELETE(self):
+        try:
+            self._do_DELETE_unwrapped()
+        except Exception as exc:
+            import traceback
+            logging.error(f"Erro não tratado em DELETE {self.path}: {exc}\n{traceback.format_exc()}")
+            try:
+                _json_response(self, {"error": "Internal Server Error", "details": str(exc)}, 500)
+            except Exception:
+                pass
+
+    def _do_DELETE_unwrapped(self):
         path = self.path.split("?")[0]
 
         if path.startswith("/api/reports/"):

@@ -1134,6 +1134,35 @@ function renderAll(){
 function buildCard(c){
   const g=gender(c.name);
   const multi=c.properties.length>1;
+  
+  let histHtml = '';
+  if (c.queue_info && c.queue_info.last_outcome) {
+    const outcomeName = c.queue_info.last_outcome.replace(/_/g, ' ');
+    let dateStr = 'Desconhecido';
+    
+    let rawDate = null;
+    if (c.queue_info.last_outcome === 'prometeu_pagar' && c.queue_info.promised_date) {
+      rawDate = c.queue_info.promised_date;
+    } else if (c.queue_info.last_outcome_date) {
+      rawDate = c.queue_info.last_outcome_date.split(' ')[0];
+    } else if (c.queue_info.last_contact) {
+      rawDate = c.queue_info.last_contact.split(' ')[0];
+    }
+    
+    if (rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+      const [y, m, d] = rawDate.split('-');
+      dateStr = `${d}/${m}/${y}`;
+    }
+    
+    let extra = '';
+    if (c.queue_info.last_outcome === 'prometeu_pagar' && c.queue_info.promised_date) {
+      extra = ` para ${dateStr}`;
+    } else if (rawDate) {
+      extra = ` em ${dateStr}`;
+    }
+    
+    histHtml = `<div class="hist"><strong>Último Desfecho:</strong> <span style="text-transform: capitalize;">${outcomeName}</span>${extra}</div>`;
+  }
   const isSent=sent.has(c.name);
   const isExcluded=excludedClients.has(c.name);
   const phone=cleanPhone(c.cel);
@@ -1209,7 +1238,7 @@ function buildCard(c){
     <button class="oc-btn" onclick="registerOutcome('${c.name.replace(/'/g,"\\'")}','${id}','sem_resposta')">Sem Resposta</button>
     <button class="oc-btn" onclick="registerOutcome('${c.name.replace(/'/g,"\\'")}','${id}','recusou')">Recusou</button>
   </div>
-  ${c.queue_info && c.queue_info.last_outcome ? `<div class="hist"><strong>Último Desfecho:</strong> ${c.queue_info.last_outcome.replace(/_/g, ' ')} (${c.queue_info.last_contact ? c.queue_info.last_contact.split(' ')[0] : 'Desconhecido'})</div>` : ''}
+  ${histHtml}
 </div>`;
 }
 
@@ -1235,13 +1264,28 @@ async function registerOutcome(name, id, outcome) {
   let payload = { client_name: name, outcome: outcome };
   
   if (outcome === 'prometeu_pagar') {
-    let dt = prompt("Para quando prometeu pagar? (YYYY-MM-DD)");
+    let dt = prompt("Para quando prometeu pagar? (Formato: DD/MM/AAAA - ex: 15/08/2026)");
     if (!dt) return;
-    payload.promised_date = dt;
+    if (!/^\d{2}\/\d{2}\/\d{4}$/.test(dt)) {
+      alert("Formato de data inválido! Use DD/MM/AAAA (ex: 15/08/2026)");
+      return;
+    }
+    const [d, m, y] = dt.split('/');
+    payload.promised_date = `${y}-${m}-${d}`;
+  } else if (outcome === 'negociacao' || outcome === 'sem_resposta') {
+    let dt = prompt("Deseja agendar um recontato? (Deixe em branco se não quiser agendar) - Formato: DD/MM/AAAA");
+    if (dt) {
+      if (!/^\d{2}\/\d{2}\/\d{4}$/.test(dt)) {
+        alert("Formato de data inválido! Use DD/MM/AAAA (ex: 15/08/2026)");
+        return;
+      }
+      const [d, m, y] = dt.split('/');
+      payload.next_contact = `${y}-${m}-${d}`;
+    }
   }
   
   try {
-    const res = await fetch('/api/actions/outcome', {
+    const res = await fetch('/api/outcomes', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
@@ -1249,11 +1293,13 @@ async function registerOutcome(name, id, outcome) {
     if(res.ok) {
       alert("Desfecho salvo!");
       toggleOutcomePanel(id);
-      // optionally trigger full refresh
-      // window.location.reload(); 
+      await initApp();
+    } else {
+      const errData = await res.json().catch(() => ({}));
+      alert("Erro ao salvar desfecho: " + (errData.error || res.statusText));
     }
   } catch(e) {
-    alert("Erro ao salvar desfecho.");
+    alert("Erro ao salvar desfecho: " + e.message);
   }
 }
 
