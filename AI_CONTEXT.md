@@ -117,11 +117,27 @@ CREATE TABLE kpi_exclusions (
     client_name TEXT PRIMARY KEY
 );
 
+-- 7. Desfechos de contato (outcomes)
+CREATE TABLE contact_outcomes (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_name   TEXT    NOT NULL,
+    venda_id      TEXT    DEFAULT '',
+    action_log_id INTEGER,
+    outcome       TEXT    NOT NULL,
+    promised_date TEXT,
+    next_contact  TEXT,
+    note          TEXT    DEFAULT '',
+    created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Índices (criados idempotentemente pelo init_db)
 CREATE INDEX idx_clients_name         ON clients(name);
 CREATE INDEX idx_clients_report_id    ON clients(report_id);
 CREATE INDEX idx_properties_client_id ON properties(client_id);
 CREATE INDEX idx_parcels_property_id  ON parcels(property_id);
+CREATE INDEX idx_parcels_venc         ON parcels(vencimento_full);
+CREATE INDEX idx_outcomes_client      ON contact_outcomes(client_name);
+CREATE INDEX idx_outcomes_created     ON contact_outcomes(created_at);
 ```
 
 > **Identidade de cliente:** não existe tabela canônica de clientes — a identidade é por **string exata de `name`** entre relatórios. Variações de grafia/acento (ex.: "GONCALVES" vs "GONÇALVES") são tratadas como clientes distintos. Limitação conhecida e aceita.
@@ -210,9 +226,93 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 
 `meta.data_version` muda a cada importação/exclusão de relatório — o frontend faz polling barato disso para exibir "novos dados disponíveis".
 
+### 📊 Riscos, Fila e Alertas Operacionais (v3.0.0)
+
+| Método | Rota | Descrição |
+|--------|------|-----------|
+| `GET` | `/api/queue` | Retorna a fila priorizada por score de risco DESC `queue` (?stage&min_days&limit=50) |
+| `GET` | `/api/clients/profile` | Dossiê detalhado do devedor, timeline de presença, logs e desfechos (?name) |
+| `POST` | `/api/outcomes` | Registra desfecho de contato `{client_name, outcome, venda_id?, action_log_id?, promised_date?, next_contact?, note?}` |
+| `GET` | `/api/outcomes` | Lista todos os desfechos registrados (?name&limit=100) |
+| `DELETE` | `/api/outcomes/<id>` | Remove um registro de desfecho (correções e auditoria) |
+| `GET` | `/api/worklist` | Alertas operacionais categorizados em listas de prioridades |
+| `GET` | `/api/summary` | Snapshot consolidado de KPIs financeiros, metas de contatos e conversão (?top=5) |
+
+#### Formato JSON `/api/queue`
+```json
+{
+  "meta": { "reference_date": "YYYY-MM-DD", "report_id": 1, "report_date": "YYYY-MM-DD", "data_version": "..." },
+  "queue": [
+    {
+      "name": "ANA SILVA SANTOS", "cel": "(62) 9...", "email": "...", "venda_ids": ["12345"],
+      "total_owed": 18450.20, "avg_parcel": 1240.5, "n_properties": 2, "n_parcels": 14,
+      "max_days_overdue": 143, "bucket": "120+", "stage": "pre_juridico",
+      "reentries": 2, "risk_score": 82.3,
+      "components": {"valor": 0.91, "aging": 1.0, "reincidencia": 0.67},
+      "last_contact": "2026-07-10 18:22:10", "last_outcome": "sem_resposta",
+      "promised_date": null, "next_contact": null
+    }
+  ]
+}
+```
+
+#### Formato JSON `/api/clients/profile`
+```json
+{
+  "meta": { "reference_date": "...", "report_id": 1, "report_date": "...", "data_version": "..." },
+  "name": "FABIO COSTA SILVA", "cel": "...", "email": "...", "cpf_cnpj": "...",
+  "financials": {
+    "total_owed": 12500.0, "avg_parcel": 2500.0, "n_properties": 1, "n_parcels": 5,
+    "oldest_due": "2026-02-10", "max_days_overdue": 143,
+    "buckets": {
+      "0-30": {"parcels": 2, "value": 2400.0},
+      "31-60": {"parcels": 0, "value": 0.0},
+      "61-90": {"parcels": 0, "value": 0.0},
+      "91-120": {"parcels": 0, "value": 0.0},
+      "120+": {"parcels": 3, "value": 10100.0}
+    }
+  },
+  "risk": { "score": 82.3, "components": {"valor": 0.91, "aging": 1.0, "reincidencia": 0.67}, "stage": "pre_juridico", "bucket": "120+" },
+  "recurrence": {
+    "first_seen": "2025-03-31", "reentries": 2, "currently_present": true,
+    "timeline": [{"report_date": "2025-03-31", "present": true}, ...]
+  },
+  "contacts": [{"sent_at": "2026-07-10 18:00:00", "venda_id": "12345"}],
+  "outcomes": [{"id": 7, "outcome": "prometeu_pagar", "promised_date": "2026-07-15", "next_contact": null, "note": "...", "created_at": "..."}],
+  "response_behavior": { "contacted_times": 3, "regularized_after_contact": false, "days_since_last_contact": 9 },
+  "properties": [{"venda_id": "12345", "identifier": "QD 01 LT 02", "parcels": [...]}]
+}
+```
+
+#### Formato JSON `/api/worklist`
+Categoriza clientes ativos sob regras de prioridades sequenciais (evitando duplicar trabalho na tela):
+```json
+{
+  "meta": { "reference_date": "...", "report_id": 1, "report_date": "...", "data_version": "..." },
+  "promessas_vencidas": [ { ... queue_row_shape ..., "days_late_on_promise": 4 } ],
+  "recontato_agendado": [ { ... queue_row_shape ... } ],
+  "sem_resposta":       [ { ... queue_row_shape ..., "days_since_contact": 14 } ],
+  "novos_pre_juridico": [ { ... queue_row_shape ..., "entered_bucket": true } ]
+}
+```
+
+#### Formato JSON `/api/summary`
+```json
+{
+  "meta": { "reference_date": "...", "report_id": 1, "report_date": "...", "data_version": "..." },
+  "current": {"clients": 87, "total_owed": 412300.5, "avg_days_overdue": 74},
+  "trend": {"vs_previous_report": {"clients_delta": -4, "value_delta": -18200.0, "direction": "melhora"}},
+  "aging_distribution": {"0-30": {"clients": 20, "value": 24000.0}, ..., "120+": {...}},
+  "pre_juridico": {"count": 12, "value": 98000.0, "new_this_report": 3},
+  "top_debtors": [ {"name": "ANA SILVA", "total_owed": 25000.0, "max_days_overdue": 145, "stage": "pre_juridico"} ],
+  "effectiveness": {"contacted": 60, "regularized_after_contact": 22, "rate": 36.7, "promises_made": 15, "promises_kept": 6},
+  "worklist_counts": {"promessas_vencidas": 4, "sem_resposta": 9, "novos_pre_juridico": 3}
+}
+```
+
 ---
 
-## 📈 Lógica dos KPIs
+## 📈 Lógica dos KPIs e Regras de Risco (v3.0.0)
 
 ### Deduplicação por data
 
@@ -235,6 +335,29 @@ Clientes presentes em `kpi_exclusions` são **ignorados** em todos os cálculos 
 ### Seleção de relatórios
 
 Na aba KPI e na página de Analytics, o usuário pode marcar/desmarcar relatórios individualmente (`?reports=1,3,5`).
+
+### Score de Risco (0 a 100)
+
+O score de risco operacional de cada inadimplente é calculado de forma puramente matemática e explicável com base na fórmula:
+
+$$\text{Score} = 45 \times V + 35 \times A + 20 \times R$$
+
+* **Componente V (Valor)**: $\min(\text{total\_owed} / P90\text{ da carteira}, 1.0)$ — proporcional à exposição financeira do cliente.
+* **Componente A (Aging)**: $\min(\text{max\_days\_overdue} / 180, 1.0)$ — mede o tempo do atraso mais antigo (satura com 180 dias).
+* **Componente R (Reincidência)**: $\min(\text{reentry\_count} / 3, 1.0)$ — mede a quantidade de reentradas do cliente na lista após ter saído dela (satura em 3 retornos).
+
+### Estágios de Cobrança (`STAGES`)
+
+A régua de cobrança é dividida em 4 estágios baseados no tempo máximo de atraso do devedor:
+1. **`lembrete`** ($\le 30$ dias): Lembrete amigável.
+2. **`firme`** ($31 - 90$ dias): Cobrança firme.
+3. **`serio`** ($91 - 120$ dias): Cobrança séria.
+4. **`pre_juridico`** ($> 120$ dias): Encaminhamento pré-jurídico.
+
+### Política de Data de Referência (Aging Reference Date)
+
+* **Visão Operacional (Queue, Worklist, Profile, Stages)**: O cálculo de atraso em dias (`max_days_overdue`) é calculado em relação à **data local do servidor (hoje)**. Isso garante que a fila sempre mostre quem deve ser cobrado *agora*, e que os débitos continuem a acumular atrasos enquanto não houver um novo relatório.
+* **Visão Analítica Histórica (KPIs, Analytics)**: O cálculo do envelhecimento de um relatório pretérito é feito com base na **data de emissão do próprio relatório (`report_date`)**. Isso garante que os dados analíticos históricos sejam reproduzíveis e consistentes no tempo.
 
 ---
 
@@ -265,8 +388,22 @@ python3 run.py --demo                   # Equivalente
 - `INAD_DEMO=1` (ou `--demo`) troca `DB_PATH` para `inad_demo.db` — **nada lê ou grava** `inad_database.db` nesse modo.
 - Em demo, `init_db()` **não roda** migração de JSONs legados, backfill de `clients_data.json` nem seed de `kpi_exclusions.json` (dados reais jamais entram no banco demo); só popula via `generate_demo_data` se o banco estiver vazio.
 - `/api/health` e `/api/context` retornam `"demo": true`; painel principal e Analytics exibem o banner "⚠ MODO DEMO" e escondem o próprio botão (evita aninhamento).
-- O gerador é determinístico (seed 42; `--seed N` para variar): ~15 relatórios mensais com churn de 10-20%, ~80 clientes fictícios (incluindo variações propositais de grafia para exercitar a limitação de identidade por nome), valores R$ 300-5.000 por parcela.
+- O gerador é determinístico (seed 42; `--seed N` para variar): ~15 relatórios mensais com churn de 10-20%, ~80 clientes fictícios (incluindo variações de grafia), valores R$ 300-5.000 por parcela.
+- **Simulação de Contatos e Desfechos (Outcomes)**: O gerador executa uma rotina de simulação que envia mensagens (action_logs) para 50-70% dos clientes e gera desfechos (contact_outcomes) para 65% destes. Os desfechos são correlacionados de forma determinística com a taxa de regularização no relatório seguinte para simular relatórios realistas.
+- **Alertas Controlados para a Worklist**: São gerados casos específicos com promessas de pagamento expiradas, recontatos agendados e clientes que cruzam a faixa de 120 dias na última rodada para popular a fila de alertas operacionais da worklist de forma rica.
 - `inad_demo.db`, `inad_demo.db-shm/-wal` e `inad_demo_server.log` estão cobertos pelo `.gitignore`.
+
+---
+
+## ⚖️ Conformidade e Termos de Uso (Artigo 42 do CDC)
+
+Conforme o CDC art. 42, a cobrança não pode expor o cliente a ridículo, constrangimento ou ameaça. Todos os templates — inclusive o de pré-jurídico — devem ser factuais, respeitosos e limitados aos dados do débito (parcelas, valores, vencimentos) e a canais de regularização. O template pré-jurídico deve informar que o caso "poderá ser encaminhado ao setor jurídico" — nunca ameaçar processo, negativação ou perda do imóvel. No financiamento com alienação fiduciária (Lei 9.514/97), os passos formais (notificação via cartório, purga da mora) são atos jurídicos conduzidos por humanos/advogados; a ferramenta não automatiza nenhum passo legal — o estágio pre_juridico é apenas uma fila interna para triagem humana e entrega ao jurídico. Isto não é aconselhamento jurídico.
+
+---
+
+## 🗺️ Roadmap de Integrações Futuras
+
+* **Detecção automática de respostas do WhatsApp**: A infraestrutura atual baseada na tabela `contact_outcomes` e no endpoint `/api/worklist` serve como base estrutural. No futuro, um módulo ingestor de respostas do WhatsApp poderá ler mensagens recebidas e produzir registros na tabela `contact_outcomes` automaticamente (ex.: identificar que o cliente respondeu com uma promessa de pagamento ou agendou retorno).
 
 ---
 

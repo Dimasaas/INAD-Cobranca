@@ -57,6 +57,25 @@ _no_display    = (platform.system() == "Linux"
                   and not os.environ.get("WAYLAND_DISPLAY"))
 HEADLESS = _headless_env or _headless_arg or _no_display
 
+# ─── REGRAS DE NEGÓCIO E CONSTANTES OPERACIONAIS (v3.0.0) ────────────────────
+AGING_BUCKETS = [(0, 30, '0-30'), (31, 60, '31-60'), (61, 90, '61-90'), (91, 120, '91-120'), (121, None, '120+')]
+PREJURIDICO_DAYS = 120
+STAGES = {'0-30': 'lembrete', '31-60': 'firme', '61-90': 'firme', '91-120': 'serio', '120+': 'pre_juridico'}
+RISK_WEIGHT_VALOR = 45.0
+RISK_WEIGHT_AGING = 35.0
+RISK_WEIGHT_REINCIDENCIA = 20.0
+OUTCOME_TYPES = ("prometeu_pagar", "negociacao", "pagou", "sem_resposta", "numero_invalido", "recusou", "outro")
+
+# Nota de compliance do art. 42 do CDC / Lei 9.514/97:
+# Conforme o CDC art. 42, a cobrança não pode expor o cliente a ridículo, constrangimento ou ameaça.
+# Todos os templates — inclusive o de pré-jurídico — devem ser factuais, respeitosos e limitados aos dados
+# do débito (parcelas, valores, vencimentos) e a canais de regularização. O template pré-jurídico deve
+# informar que o caso "poderá ser encaminhado ao setor jurídico" — nunca ameaçar processo, negativação
+# ou perda do imóvel. No financiamento com alienação fiduciária (Lei 9.514/97), os passos formais (notificação
+# via cartório, purga da mora) são atos jurídicos conduzidos por humanos/advogados; a ferramenta não automatiza
+# nenhum passo legal — o estágio pre_juridico é apenas uma fila interna para triagem humana e entrega ao jurídico.
+# Isto não é aconselhamento jurídico.
+
 # ─── BANCO DE DADOS ───────────────────────────────────────────────────────────
 # Conexão thread-safe: cada thread reutiliza a sua própria conexão.
 _local = threading.local()
@@ -125,10 +144,26 @@ def init_db():
             client_name TEXT    PRIMARY KEY
         );
 
+        -- 7. Desfechos de contato (outcomes)
+        CREATE TABLE IF NOT EXISTS contact_outcomes (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_name   TEXT    NOT NULL,
+            venda_id      TEXT    DEFAULT '',
+            action_log_id INTEGER,
+            outcome       TEXT    NOT NULL,
+            promised_date TEXT,
+            next_contact  TEXT,
+            note          TEXT    DEFAULT '',
+            created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_clients_name         ON clients(name);
         CREATE INDEX IF NOT EXISTS idx_clients_report_id    ON clients(report_id);
         CREATE INDEX IF NOT EXISTS idx_properties_client_id ON properties(client_id);
         CREATE INDEX IF NOT EXISTS idx_parcels_property_id  ON parcels(property_id);
+        CREATE INDEX IF NOT EXISTS idx_parcels_venc         ON parcels(vencimento_full);
+        CREATE INDEX IF NOT EXISTS idx_outcomes_client      ON contact_outcomes(client_name);
+        CREATE INDEX IF NOT EXISTS idx_outcomes_created     ON contact_outcomes(created_at);
     """)
 
     # Migração: adiciona coluna report_date se não existir (banco legado)
@@ -339,6 +374,427 @@ def get_clients_for_report(report_id):
                 "parcela": pa_num, "vencimento": pa_venc, "vencimento_full": pa_venc_f, "valor": pa_val
             })
     return result
+
+
+# ─── FUNÇÕES AUXILIARES OPERACIONAIS E DE RISCO (v3.0.0) ──────────────────────
+
+def _dedup_latest_report_id(cursor):
+    """Retorna o ID do relatório mais recente deduplicado por data."""
+    rows = cursor.execute("""
+        SELECT id, COALESCE(NULLIF(report_date, ''), DATE(imported_at)) AS rdate
+        FROM   reports
+        ORDER  BY rdate DESC, id DESC
+    """).fetchall()
+    if not rows:
+        return None
+    seen_dates = set()
+    latest_ids = []
+    for rid, rdate in rows:
+        if rdate not in seen_dates:
+            seen_dates.add(rdate)
+            latest_ids.append(rid)
+    return latest_ids[0] if latest_ids else None
+
+
+def _client_financials(cursor, report_id, ref_date):
+    """
+    Agrupa dados financeiros dos inadimplentes de um relatório até a data ref_date.
+    Ignora parcelas futuras (vencimento_full > ref_date).
+    """
+    rows = cursor.execute("""
+        SELECT c.name, c.cel, c.email,
+               COUNT(DISTINCT p.id)                          AS n_properties,
+               COUNT(pa.id)                                  AS n_parcels,
+               COALESCE(SUM(pa.valor), 0.0)                  AS total_owed,
+               COALESCE(AVG(pa.valor), 0.0)                  AS avg_parcel,
+               MIN(pa.vencimento_full)                       AS oldest_due,
+               CAST(julianday(?) - julianday(MIN(pa.vencimento_full)) AS INTEGER) AS max_days_overdue
+        FROM clients c
+        LEFT JOIN properties p ON p.client_id = c.id
+        LEFT JOIN parcels pa   ON pa.property_id = p.id AND pa.vencimento_full <= ?
+        WHERE c.report_id = ?
+          AND c.name NOT IN (SELECT client_name FROM kpi_exclusions)
+        GROUP BY c.name
+    """, (ref_date, ref_date, report_id)).fetchall()
+
+    result = {}
+    for r in rows:
+        name = r[0]
+        oldest_due = r[7]
+        max_days = r[8] if oldest_due is not None else 0
+        if max_days < 0:
+            max_days = 0
+        result[name] = {
+            "name": name,
+            "cel": r[1] or "",
+            "email": r[2] or "",
+            "n_properties": r[3],
+            "n_parcels": r[4],
+            "total_owed": round(r[5], 2),
+            "avg_parcel": round(r[6], 2),
+            "oldest_due": oldest_due,
+            "max_days_overdue": max_days
+        }
+    return result
+
+
+def _bucketize(days):
+    """Mapeia dias de atraso para o bucket correspondente."""
+    for start, end, label in AGING_BUCKETS:
+        if end is None:
+            if days >= start:
+                return label
+        elif start <= days <= end:
+            return label
+    return '0-30'
+
+
+def _stage_for_days(days):
+    """Mapeia dias de atraso para o estágio de cobrança."""
+    if days <= 30:
+        return 'lembrete'
+    elif days <= 90:
+        return 'firme'
+    elif days <= 120:
+        return 'serio'
+    else:
+        return 'pre_juridico'
+
+
+def _calculate_reentries(cursor):
+    """
+    Mapeia o número de reentradas e timeline cronológica de todos os clientes.
+    """
+    report_rows = cursor.execute("""
+        SELECT id, COALESCE(NULLIF(report_date, ''), DATE(imported_at)) AS rdate
+        FROM   reports
+        ORDER  BY rdate ASC, id ASC
+    """).fetchall()
+
+    rdate_to_latest_id = {}
+    for rid, rdate in report_rows:
+        rdate_to_latest_id[rdate] = rid
+    deduped_reports = sorted(
+        [{"id": rid, "date": rdate} for rdate, rid in rdate_to_latest_id.items()],
+        key=lambda x: x["date"]
+    )
+
+    if not deduped_reports:
+        return {}
+
+    presence_rows = cursor.execute("""
+        SELECT report_id, name FROM clients
+        WHERE name NOT IN (SELECT client_name FROM kpi_exclusions)
+    """).fetchall()
+
+    client_presence = {}
+    for rid, name in presence_rows:
+        if name not in client_presence:
+            client_presence[name] = set()
+        client_presence[name].add(rid)
+
+    results = {}
+    for name, rids in client_presence.items():
+        timeline = []
+        first_seen = None
+        present_seq = []
+        for r in deduped_reports:
+            present = r["id"] in rids
+            timeline.append({"report_date": r["date"], "present": present})
+            if present:
+                if first_seen is None:
+                    first_seen = r["date"]
+                present_seq.append(True)
+            else:
+                if first_seen is not None:
+                    present_seq.append(False)
+
+        reentry_count = 0
+        if present_seq:
+            last_state = True
+            for state in present_seq[1:]:
+                if state and not last_state:
+                    reentry_count += 1
+                last_state = state
+
+        results[name] = {
+            "reentries": reentry_count,
+            "timeline": timeline,
+            "first_seen": first_seen,
+            "currently_present": (deduped_reports[-1]["id"] in rids) if deduped_reports else False
+        }
+    return results
+
+
+def _calculate_risk_score(total_owed, max_days_overdue, reentry_count, p90_total_owed):
+    """Retorna score final e componentes."""
+    p90 = p90_total_owed if p90_total_owed > 0 else 1.0
+    v = min(total_owed / p90, 1.0)
+    a = min(max_days_overdue / 180.0, 1.0)
+    r = min(reentry_count / 3.0, 1.0)
+    score = round(RISK_WEIGHT_VALOR * v + RISK_WEIGHT_AGING * a + RISK_WEIGHT_REINCIDENCIA * r, 1)
+    return {
+        "score": score,
+        "components": {
+            "valor": round(v, 2),
+            "aging": round(a, 2),
+            "reincidencia": round(r, 2)
+        }
+    }
+
+
+def _contact_effectiveness(cursor):
+    """
+    Calcula eficácia dos envios e promessas cumpridas.
+    """
+    report_rows = cursor.execute("""
+        SELECT id, COALESCE(NULLIF(report_date, ''), DATE(imported_at)) AS rdate
+        FROM   reports
+        ORDER  BY rdate ASC, id ASC
+    """).fetchall()
+
+    rdate_to_latest_id = {}
+    for rid, rdate in report_rows:
+        rdate_to_latest_id[rdate] = rid
+    deduped_reports = sorted(
+        [{"id": rid, "date": rdate} for rdate, rid in rdate_to_latest_id.items()],
+        key=lambda x: x["date"]
+    )
+
+    report_clients = {}
+    for r in deduped_reports:
+        rows = cursor.execute("SELECT name FROM clients WHERE report_id = ?", (r["id"],)).fetchall()
+        report_clients[r["id"]] = {row[0] for row in rows}
+
+    contacts = cursor.execute("""
+        SELECT client_name, MAX(sent_at) FROM action_logs
+        GROUP BY client_name
+    """).fetchall()
+
+    contacted = 0
+    regularized = 0
+    for name, sent_at in contacts:
+        sent_date = sent_at.split()[0] if sent_at else ""
+        subsequent_report_id = None
+        for r in deduped_reports:
+            if r["date"] > sent_date:
+                subsequent_report_id = r["id"]
+                break
+        if subsequent_report_id is not None:
+            contacted += 1
+            if name not in report_clients[subsequent_report_id]:
+                regularized += 1
+
+    promises = cursor.execute("""
+        SELECT client_name, promised_date FROM contact_outcomes
+        WHERE outcome = 'prometeu_pagar' AND promised_date IS NOT NULL
+    """).fetchall()
+
+    promises_made = len(promises)
+    promises_kept = 0
+    for name, promised_date in promises:
+        subsequent_report_id = None
+        for r in deduped_reports:
+            if r["date"] > promised_date:
+                subsequent_report_id = r["id"]
+                break
+        if subsequent_report_id is not None:
+            if name not in report_clients[subsequent_report_id]:
+                promises_kept += 1
+
+    rate = round(regularized / contacted * 100, 1) if contacted > 0 else 0.0
+    return {
+        "contacted": contacted,
+        "regularized_after_contact": regularized,
+        "rate": rate,
+        "promises_made": promises_made,
+        "promises_kept": promises_kept
+    }
+
+
+def _get_worklist_data(cursor, ref_date):
+    """
+    Retorna as categorias de worklist (alertas operacionais).
+    """
+    import datetime
+    report_id = _dedup_latest_report_id(cursor)
+    if not report_id:
+        return {
+            "promessas_vencidas": [],
+            "recontato_agendado": [],
+            "sem_resposta": [],
+            "novos_pre_juridico": []
+        }
+
+    cf_all = _client_financials(cursor, report_id, ref_date)
+    if not cf_all:
+        return {
+            "promessas_vencidas": [],
+            "recontato_agendado": [],
+            "sem_resposta": [],
+            "novos_pre_juridico": []
+        }
+
+    # P90, Reentries, Contacts, Venda ids, Outcomes
+    vals = sorted([x["total_owed"] for x in cf_all.values()])
+    idx = int(len(vals) * 0.9) if vals else 0
+    p90 = vals[idx] if vals else 0.0
+
+    reentries_map = _calculate_reentries(cursor)
+
+    outcomes_rows = cursor.execute("""
+        SELECT client_name, outcome, promised_date, next_contact, note, created_at
+        FROM contact_outcomes
+        WHERE (client_name, created_at) IN (
+            SELECT client_name, MAX(created_at) FROM contact_outcomes GROUP BY client_name
+        )
+    """).fetchall()
+    latest_outcomes = {
+        r[0]: {
+            "outcome": r[1], "promised_date": r[2], "next_contact": r[3], "note": r[4], "created_at": r[5]
+        } for r in outcomes_rows
+    }
+
+    contact_rows = cursor.execute("""
+        SELECT client_name, MAX(sent_at) FROM action_logs GROUP BY client_name
+    """).fetchall()
+    latest_contacts = {r[0]: r[1] for r in contact_rows}
+
+    venda_rows = cursor.execute("""
+        SELECT c.name, p.venda_id FROM properties p
+        JOIN clients c ON p.client_id = c.id
+        WHERE c.report_id = ?
+    """, (report_id,)).fetchall()
+    venda_map = {}
+    for cname, vid in venda_rows:
+        if cname not in venda_map:
+            venda_map[cname] = []
+        venda_map[cname].append(vid)
+
+    # Novos Pré-Jurídico detection
+    prev_report_id = None
+    report_rows = cursor.execute("""
+        SELECT id, COALESCE(NULLIF(report_date, ''), DATE(imported_at)) AS rdate
+        FROM   reports
+        ORDER  BY rdate DESC, id DESC
+    """).fetchall()
+
+    seen_dates = set()
+    latest_ids = []
+    for rid, rdate in report_rows:
+        if rdate not in seen_dates:
+            seen_dates.add(rdate)
+            latest_ids.append((rid, rdate))
+
+    prev_report_date = None
+    if len(latest_ids) > 1:
+        prev_report_id = latest_ids[1][0]
+        prev_report_date = latest_ids[1][1]
+
+    prev_cf = {}
+    if prev_report_id:
+        prev_cf = _client_financials(cursor, prev_report_id, prev_report_date)
+
+    promessas_vencidas = []
+    recontato_agendado = []
+    sem_resposta = []
+    novos_pre_juridico = []
+
+    categorized_clients = set()
+
+    for name, cf in cf_all.items():
+        reentries = reentries_map.get(name, {}).get("reentries", 0)
+        score_info = _calculate_risk_score(cf["total_owed"], cf["max_days_overdue"], reentries, p90)
+        bucket = _bucketize(cf["max_days_overdue"])
+        stage = _stage_for_days(cf["max_days_overdue"])
+
+        queue_row = {
+            "name": name,
+            "cel": cf["cel"],
+            "email": cf["email"],
+            "venda_ids": venda_map.get(name, []),
+            "total_owed": cf["total_owed"],
+            "avg_parcel": cf["avg_parcel"],
+            "n_properties": cf["n_properties"],
+            "n_parcels": cf["n_parcels"],
+            "max_days_overdue": cf["max_days_overdue"],
+            "bucket": bucket,
+            "stage": stage,
+            "reentries": reentries,
+            "risk_score": score_info["score"],
+            "components": score_info["components"],
+            "last_contact": latest_contacts.get(name),
+            "last_outcome": latest_outcomes.get(name, {}).get("outcome"),
+            "promised_date": latest_outcomes.get(name, {}).get("promised_date"),
+            "next_contact": latest_outcomes.get(name, {}).get("next_contact")
+        }
+
+        # 1) Promessas vencidas
+        out_info = latest_outcomes.get(name)
+        if out_info and out_info["outcome"] == "prometeu_pagar" and out_info["promised_date"]:
+            if out_info["promised_date"] < ref_date:
+                try:
+                    p_dt = datetime.datetime.strptime(out_info["promised_date"], "%Y-%m-%d").date()
+                    ref_dt = datetime.datetime.strptime(ref_date, "%Y-%m-%d").date()
+                    days_late = (ref_dt - p_dt).days
+                except Exception:
+                    days_late = 0
+                item = dict(queue_row)
+                item["days_late_on_promise"] = days_late
+                promessas_vencidas.append(item)
+                categorized_clients.add(name)
+                continue
+
+        # 2) Recontato agendado
+        if out_info and out_info["next_contact"] and out_info["next_contact"] <= ref_date:
+            item = dict(queue_row)
+            recontato_agendado.append(item)
+            categorized_clients.add(name)
+            continue
+
+        # 3) Sem resposta
+        last_c = latest_contacts.get(name)
+        if last_c:
+            last_c_date = last_c.split()[0]
+            try:
+                c_dt = datetime.datetime.strptime(last_c_date, "%Y-%m-%d").date()
+                ref_dt = datetime.datetime.strptime(ref_date, "%Y-%m-%d").date()
+                days_since = (ref_dt - c_dt).days
+            except Exception:
+                days_since = 0
+
+            if days_since >= 7:
+                has_valid_outcome = False
+                if out_info:
+                    outcome_date = out_info["created_at"].split()[0]
+                    if outcome_date >= last_c_date:
+                        if out_info["outcome"] != "sem_resposta":
+                            has_valid_outcome = True
+
+                if not has_valid_outcome:
+                    item = dict(queue_row)
+                    item["days_since_contact"] = days_since
+                    sem_resposta.append(item)
+                    categorized_clients.add(name)
+                    continue
+
+        # 4) Novos Pré-Jurídico
+        if cf["max_days_overdue"] > 120:
+            if prev_report_id:
+                prev_cf_client = prev_cf.get(name)
+                if prev_cf_client and prev_cf_client["max_days_overdue"] <= 120:
+                    item = dict(queue_row)
+                    item["entered_bucket"] = True
+                    novos_pre_juridico.append(item)
+                    categorized_clients.add(name)
+                    continue
+
+    return {
+        "promessas_vencidas": promessas_vencidas,
+        "recontato_agendado": recontato_agendado,
+        "sem_resposta": sem_resposta,
+        "novos_pre_juridico": novos_pre_juridico
+    }
 
 
 def get_kpis_data(report_ids=None):
@@ -674,6 +1130,23 @@ def get_system_context():
         "SELECT COUNT(DISTINCT client_name) FROM action_logs"
     ).fetchone()[0]
     excluded_count = cursor.execute("SELECT COUNT(*) FROM kpi_exclusions").fetchone()[0]
+    outcomes_count = cursor.execute("SELECT COUNT(*) FROM contact_outcomes").fetchone()[0]
+    
+    # Contagem de clientes pré-jurídicos no relatório mais recente
+    pre_juridico_count = 0
+    import datetime
+    ref_date = datetime.date.today().isoformat()
+    latest_rid = _dedup_latest_report_id(cursor)
+    if latest_rid:
+        pre_juridico_count = len(cursor.execute("""
+            SELECT c.name FROM clients c
+            LEFT JOIN properties p ON p.client_id = c.id
+            LEFT JOIN parcels pa ON pa.property_id = p.id AND pa.vencimento_full <= ?
+            WHERE c.report_id = ?
+              AND c.name NOT IN (SELECT client_name FROM kpi_exclusions)
+            GROUP BY c.name
+            HAVING CAST(julianday(?) - julianday(MIN(pa.vencimento_full)) AS INTEGER) > 120
+        """, (ref_date, latest_rid, ref_date)).fetchall())
 
     ai_context_path = os.path.join(DIRECTORY, "AI_CONTEXT.md")
     ai_context_md = ""
@@ -705,6 +1178,7 @@ def get_system_context():
                 "PDF importado no navegador → parsing client-side (pdf.js + regex)",
                 "Dados extraídos → POST /api/reports → SQLite",
                 "WhatsApp aberto → POST /api/actions/sent → action_logs",
+                "Desfecho de contato registrado → POST /api/outcomes → contact_outcomes",
                 "Fallback file:// → localStorage (sem servidor)",
             ],
             "compile_step": (
@@ -718,6 +1192,7 @@ def get_system_context():
             "parcels": "Parcelas em atraso (parcela, vencimento, vencimento_full, valor R$)",
             "action_logs": "Histórico de disparos WhatsApp (venda_id, client_name, sent_at)",
             "kpi_exclusions": "Clientes excluídos manualmente dos cálculos de KPI",
+            "contact_outcomes": "Registros de desfechos de contatos (client_name, outcome, promised_date, next_contact, note)",
         },
         "api_endpoints": {
             "GET /api/context": "Este payload — contexto completo para IAs",
@@ -740,6 +1215,13 @@ def get_system_context():
             ),
             "GET /api/kpis/exclusions": "Clientes excluídos dos KPIs",
             "POST /api/kpis/exclusions": "Inclui/exclui cliente {client_name, exclude: bool}",
+            "GET /api/queue": "Fila priorizada de inadimplência baseada em score de risco (?stage&min_days&limit)",
+            "GET /api/clients/profile": "Dossiê completo do cliente com histórico de dívidas, contatos e desfechos (?name)",
+            "POST /api/outcomes": "Insere desfecho de contato {client_name, outcome, venda_id, promised_date, next_contact, note}",
+            "GET /api/outcomes": "Histórico de desfechos (?name&limit)",
+            "DELETE /api/outcomes/<id>": "Exclui um registro de desfecho",
+            "GET /api/worklist": "Alertas operacionais categorizados de recontato/promessas",
+            "GET /api/summary": "Resumo executivo consolidado com metas de eficácia, aging e top devedores",
         },
         "business_rules": {
             "kpi_deduplication": (
@@ -758,6 +1240,18 @@ def get_system_context():
                 "Corte configurável por data (cutoff) ou N últimos relatórios "
                 "(cutoff_last_n). Limitação: variações de grafia/acento no nome "
                 "contam como clientes distintos."
+            ),
+            "risk_score_explainable": (
+                "Score (0-100) = 45% valor normalizado + 35% envelhecimento da divida "
+                "+ 20% reincidencia historica (transicoes False->True de presenca)."
+            ),
+            "billing_stages": (
+                "Estágios definidos pela idade máxima do débito: "
+                "0-30 dias (lembrete), 31-90 dias (firme), 91-120 dias (serio), >120 dias (pre_juridico)."
+            ),
+            "aging_reference_date_policy": (
+                "Operacional (queue, worklist, profile, stages) calcula atraso a partir da data de hoje. "
+                "Analítico (analytics, kpis) calcula atraso a partir da report_date para reprodutibilidade."
             ),
             "demo_mode": (
                 "INAD_DEMO=1 (ou --demo) troca o banco para inad_demo.db, isolado "
@@ -780,6 +1274,8 @@ def get_system_context():
             "unique_clients": client_count,
             "clients_contacted": sent_count,
             "kpi_excluded_clients": excluded_count,
+            "contact_outcomes": outcomes_count,
+            "active_pre_juridico_clients": pre_juridico_count,
             "port": PORT,
             "platform": platform.system(),
             "demo": DEMO,
@@ -1005,6 +1501,551 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         elif path == "/api/context":
             _json_response(self, get_system_context())
 
+        elif path == "/api/queue":
+            import datetime
+            cursor = get_conn().cursor()
+            ref_date = datetime.date.today().isoformat()
+            
+            from urllib.parse import parse_qs
+            params = {}
+            if "?" in self.path:
+                try:
+                    params = parse_qs(self.path.split("?", 1)[1])
+                except Exception:
+                    pass
+                    
+            def _param(key):
+                return params.get(key, [""])[0].strip() or None
+                
+            stage_filter = _param("stage")
+            min_days_filter = None
+            if _param("min_days"):
+                try:
+                    min_days_filter = int(_param("min_days"))
+                except ValueError:
+                    pass
+            limit_val = 50
+            if _param("limit"):
+                try:
+                    limit_val = int(_param("limit"))
+                except ValueError:
+                    pass
+
+            report_id = _dedup_latest_report_id(cursor)
+            if not report_id:
+                _json_response(self, {
+                    "meta": {
+                        "reference_date": ref_date,
+                        "report_id": None,
+                        "report_date": None,
+                        "data_version": "0::"
+                    },
+                    "queue": []
+                })
+                return
+
+            ver_row = cursor.execute(
+                "SELECT COUNT(*), COALESCE(MAX(imported_at), ''), COALESCE(MAX(id), 0) FROM reports"
+            ).fetchone()
+            data_version = f"{ver_row[0]}:{ver_row[2]}:{ver_row[1]}"
+
+            rep_date_row = cursor.execute(
+                "SELECT COALESCE(NULLIF(report_date, ''), DATE(imported_at)) FROM reports WHERE id = ?", (report_id,)
+            ).fetchone()
+            report_date_str = rep_date_row[0] if rep_date_row else None
+
+            cf_all = _client_financials(cursor, report_id, ref_date)
+            if not cf_all:
+                _json_response(self, {
+                    "meta": {
+                        "reference_date": ref_date,
+                        "report_id": report_id,
+                        "report_date": report_date_str,
+                        "data_version": data_version
+                    },
+                    "queue": []
+                })
+                return
+
+            vals = sorted([x["total_owed"] for x in cf_all.values()])
+            idx = int(len(vals) * 0.9) if vals else 0
+            p90 = vals[idx] if vals else 0.0
+
+            reentries_map = _calculate_reentries(cursor)
+
+            outcomes_rows = cursor.execute("""
+                SELECT client_name, outcome, promised_date, next_contact, note, created_at
+                FROM contact_outcomes
+                WHERE (client_name, created_at) IN (
+                    SELECT client_name, MAX(created_at) FROM contact_outcomes GROUP BY client_name
+                )
+            """).fetchall()
+            latest_outcomes = {
+                r[0]: {
+                    "outcome": r[1], "promised_date": r[2], "next_contact": r[3], "note": r[4], "created_at": r[5]
+                } for r in outcomes_rows
+            }
+
+            contact_rows = cursor.execute("""
+                SELECT client_name, MAX(sent_at) FROM action_logs GROUP BY client_name
+            """).fetchall()
+            latest_contacts = {r[0]: r[1] for r in contact_rows}
+
+            venda_rows = cursor.execute("""
+                SELECT c.name, p.venda_id FROM properties p
+                JOIN clients c ON p.client_id = c.id
+                WHERE c.report_id = ?
+            """, (report_id,)).fetchall()
+            venda_map = {}
+            for cname, vid in venda_rows:
+                if cname not in venda_map:
+                    venda_map[cname] = []
+                venda_map[cname].append(vid)
+
+            queue = []
+            for name, cf in cf_all.items():
+                reentries = reentries_map.get(name, {}).get("reentries", 0)
+                score_info = _calculate_risk_score(cf["total_owed"], cf["max_days_overdue"], reentries, p90)
+                
+                bucket = _bucketize(cf["max_days_overdue"])
+                stage = _stage_for_days(cf["max_days_overdue"])
+                
+                if stage_filter and stage != stage_filter:
+                    continue
+                if min_days_filter is not None and cf["max_days_overdue"] < min_days_filter:
+                    continue
+
+                item = {
+                    "name": name,
+                    "cel": cf["cel"],
+                    "email": cf["email"],
+                    "venda_ids": venda_map.get(name, []),
+                    "total_owed": cf["total_owed"],
+                    "avg_parcel": cf["avg_parcel"],
+                    "n_properties": cf["n_properties"],
+                    "n_parcels": cf["n_parcels"],
+                    "max_days_overdue": cf["max_days_overdue"],
+                    "bucket": bucket,
+                    "stage": stage,
+                    "reentries": reentries,
+                    "risk_score": score_info["score"],
+                    "components": score_info["components"],
+                    "last_contact": latest_contacts.get(name),
+                    "last_outcome": latest_outcomes.get(name, {}).get("outcome"),
+                    "promised_date": latest_outcomes.get(name, {}).get("promised_date"),
+                    "next_contact": latest_outcomes.get(name, {}).get("next_contact")
+                }
+                queue.append(item)
+
+            queue.sort(key=lambda x: (-x["risk_score"], x["name"]))
+            if limit_val > 0:
+                queue = queue[:limit_val]
+
+            _json_response(self, {
+                "meta": {
+                    "reference_date": ref_date,
+                    "report_id": report_id,
+                    "report_date": report_date_str,
+                    "data_version": data_version
+                },
+                "queue": queue
+            })
+
+        elif path == "/api/clients/profile":
+            from urllib.parse import parse_qs
+            params = {}
+            if "?" in self.path:
+                try:
+                    params = parse_qs(self.path.split("?", 1)[1])
+                except Exception:
+                    pass
+            
+            name = params.get("name", [""])[0].strip()
+            if not name:
+                _json_response(self, {"error": "Parametro name e obrigatorio"}, 400)
+                return
+
+            cursor = get_conn().cursor()
+            exists = cursor.execute("SELECT 1 FROM clients WHERE name = ? LIMIT 1", (name,)).fetchone()
+            if not exists:
+                _json_response(self, {"error": f"Cliente '{name}' nao encontrado no sistema"}, 404)
+                return
+
+            import datetime
+            ref_date = datetime.date.today().isoformat()
+            report_id = _dedup_latest_report_id(cursor)
+            
+            latest_client_row = cursor.execute("""
+                SELECT c.id, c.report_id, c.cpf_cnpj, c.cel, c.email
+                FROM clients c
+                JOIN reports r ON r.id = c.report_id
+                WHERE c.name = ?
+                ORDER BY COALESCE(NULLIF(r.report_date, ''), DATE(r.imported_at)) DESC, r.id DESC
+                LIMIT 1
+            """, (name,)).fetchone()
+            
+            c_id, c_rep_id, cpf_cnpj, cel, email = latest_client_row
+            
+            ver_row = cursor.execute(
+                "SELECT COUNT(*), COALESCE(MAX(imported_at), ''), COALESCE(MAX(id), 0) FROM reports"
+            ).fetchone()
+            data_version = f"{ver_row[0]}:{ver_row[2]}:{ver_row[1]}"
+            
+            rep_date_str = None
+            if report_id:
+                rep_date_row = cursor.execute(
+                    "SELECT COALESCE(NULLIF(report_date, ''), DATE(imported_at)) FROM reports WHERE id = ?", (report_id,)
+                ).fetchone()
+                rep_date_str = rep_date_row[0] if rep_date_row else None
+
+            is_present_latest = cursor.execute("SELECT id FROM clients WHERE report_id = ? AND name = ?", (report_id, name)).fetchone() if report_id else None
+            
+            buckets_data = {
+                "0-30": {"parcels": 0, "value": 0.0},
+                "31-60": {"parcels": 0, "value": 0.0},
+                "61-90": {"parcels": 0, "value": 0.0},
+                "91-120": {"parcels": 0, "value": 0.0},
+                "120+": {"parcels": 0, "value": 0.0}
+            }
+            properties_list = []
+            
+            if is_present_latest:
+                latest_c_id = is_present_latest[0]
+                props_rows = cursor.execute("""
+                    SELECT id, venda_id, identifier FROM properties
+                    WHERE client_id = ?
+                """, (latest_c_id,)).fetchall()
+                for p_id, p_vid, p_ident in props_rows:
+                    parcels_list = []
+                    parc_rows = cursor.execute("""
+                        SELECT parcela, vencimento, vencimento_full, valor FROM parcels
+                        WHERE property_id = ?
+                    """, (p_id,)).fetchall()
+                    for pa in parc_rows:
+                        pa_val = round(pa[3], 2)
+                        parcels_list.append({
+                            "parcela": pa[0], "vencimento": pa[1], "vencimento_full": pa[2], "valor": pa_val
+                        })
+                        try:
+                            v_dt = datetime.datetime.strptime(pa[2], "%Y-%m-%d").date()
+                            ref_dt = datetime.datetime.strptime(ref_date, "%Y-%m-%d").date()
+                            days = (ref_dt - v_dt).days
+                            if days < 0:
+                                days = 0
+                            b = _bucketize(days)
+                            buckets_data[b]["parcels"] += 1
+                            buckets_data[b]["value"] = round(buckets_data[b]["value"] + pa_val, 2)
+                        except Exception:
+                            pass
+                    properties_list.append({
+                        "venda_id": p_vid, "identifier": p_ident, "parcels": parcels_list
+                    })
+
+            reentries_map = _calculate_reentries(cursor)
+            rec_info = reentries_map.get(name, {
+                "reentries": 0, "timeline": [], "first_seen": None, "currently_present": False
+            })
+
+            contacts_rows = cursor.execute("""
+                SELECT sent_at, venda_id FROM action_logs
+                WHERE client_name = ?
+                ORDER BY sent_at DESC
+            """, (name,)).fetchall()
+            contacts_list = [{"sent_at": r[0], "venda_id": r[1]} for r in contacts_rows]
+
+            outcomes_rows = cursor.execute("""
+                SELECT id, outcome, promised_date, next_contact, note, created_at
+                FROM contact_outcomes
+                WHERE client_name = ?
+                ORDER BY created_at DESC
+            """, (name,)).fetchall()
+            outcomes_list = [{
+                "id": r[0], "outcome": r[1], "promised_date": r[2], "next_contact": r[3], "note": r[4], "created_at": r[5]
+            } for r in outcomes_rows]
+
+            contacted_times = len(contacts_list)
+            regularized_after_contact = False
+            if contacted_times > 0:
+                last_contact_date = contacts_list[0]["sent_at"].split()[0]
+                for t in rec_info["timeline"]:
+                    if t["report_date"] > last_contact_date:
+                        if not t["present"]:
+                            regularized_after_contact = True
+                        break
+            days_since_last_contact = None
+            if contacted_times > 0:
+                last_contact_date = contacts_list[0]["sent_at"].split()[0]
+                try:
+                    l_dt = datetime.datetime.strptime(last_contact_date, "%Y-%m-%d").date()
+                    ref_dt = datetime.datetime.strptime(ref_date, "%Y-%m-%d").date()
+                    days_since_last_contact = (ref_dt - l_dt).days
+                except Exception:
+                    pass
+
+            if is_present_latest:
+                cf_all = _client_financials(cursor, report_id, ref_date)
+                vals = sorted([x["total_owed"] for x in cf_all.values()])
+                idx = int(len(vals) * 0.9) if vals else 0
+                p90 = vals[idx] if vals else 0.0
+                
+                cf_client = cf_all.get(name, {
+                    "total_owed": 0.0, "max_days_overdue": 0, "n_properties": 0, "n_parcels": 0, "oldest_due": None, "avg_parcel": 0.0
+                })
+                score_info = _calculate_risk_score(cf_client["total_owed"], cf_client["max_days_overdue"], rec_info["reentries"], p90)
+                risk_data = {
+                    "score": score_info["score"],
+                    "components": score_info["components"],
+                    "stage": _stage_for_days(cf_client["max_days_overdue"]),
+                    "bucket": _bucketize(cf_client["max_days_overdue"])
+                }
+                financials_data = {
+                    "total_owed": cf_client["total_owed"],
+                    "avg_parcel": cf_client["avg_parcel"],
+                    "n_properties": cf_client["n_properties"],
+                    "n_parcels": cf_client["n_parcels"],
+                    "oldest_due": cf_client["oldest_due"],
+                    "max_days_overdue": cf_client["max_days_overdue"],
+                    "buckets": buckets_data
+                }
+            else:
+                risk_data = {
+                    "score": 0.0,
+                    "components": {"valor": 0.0, "aging": 0.0, "reincidencia": 0.0},
+                    "stage": "regularizado",
+                    "bucket": "-"
+                }
+                financials_data = {
+                    "total_owed": 0.0,
+                    "avg_parcel": 0.0,
+                    "n_properties": 0,
+                    "n_parcels": 0,
+                    "oldest_due": None,
+                    "max_days_overdue": 0,
+                    "buckets": buckets_data
+                }
+
+            _json_response(self, {
+                "meta": {
+                    "reference_date": ref_date,
+                    "report_id": report_id,
+                    "report_date": rep_date_str,
+                    "data_version": data_version
+                },
+                "name": name,
+                "cel": cel or "",
+                "email": email or "",
+                "cpf_cnpj": cpf_cnpj or "",
+                "financials": financials_data,
+                "risk": risk_data,
+                "recurrence": {
+                    "first_seen": rec_info["first_seen"],
+                    "reentries": rec_info["reentries"],
+                    "currently_present": rec_info["currently_present"],
+                    "timeline": rec_info["timeline"]
+                },
+                "contacts": contacts_list,
+                "outcomes": outcomes_list,
+                "response_behavior": {
+                    "contacted_times": contacted_times,
+                    "regularized_after_contact": regularized_after_contact,
+                    "days_since_last_contact": days_since_last_contact
+                },
+                "properties": properties_list
+            })
+
+        elif path == "/api/outcomes":
+            from urllib.parse import parse_qs
+            params = {}
+            if "?" in self.path:
+                try:
+                    params = parse_qs(self.path.split("?", 1)[1])
+                except Exception:
+                    pass
+            cname = params.get("name", [""])[0].strip()
+            limit_val = 100
+            if params.get("limit"):
+                try:
+                    limit_val = int(params.get("limit")[0])
+                except ValueError:
+                    pass
+                    
+            cursor = get_conn().cursor()
+            if cname:
+                rows = cursor.execute("""
+                    SELECT id, client_name, venda_id, action_log_id, outcome, promised_date, next_contact, note, created_at
+                    FROM contact_outcomes
+                    WHERE client_name = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                """, (cname, limit_val)).fetchall()
+            else:
+                rows = cursor.execute("""
+                    SELECT id, client_name, venda_id, action_log_id, outcome, promised_date, next_contact, note, created_at
+                    FROM contact_outcomes
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                """, (limit_val,)).fetchall()
+                
+            res = [{
+                "id": r[0], "client_name": r[1], "venda_id": r[2], "action_log_id": r[3],
+                "outcome": r[4], "promised_date": r[5], "next_contact": r[6], "note": r[7], "created_at": r[8]
+            } for r in rows]
+            _json_response(self, res)
+
+        elif path == "/api/worklist":
+            import datetime
+            cursor = get_conn().cursor()
+            ref_date = datetime.date.today().isoformat()
+            
+            report_id = _dedup_latest_report_id(cursor)
+            if not report_id:
+                _json_response(self, {
+                    "meta": {"reference_date": ref_date, "report_id": None, "report_date": None, "data_version": "0::"},
+                    "promessas_vencidas": [], "recontato_agendado": [], "sem_resposta": [], "novos_pre_juridico": []
+                })
+                return
+
+            ver_row = cursor.execute(
+                "SELECT COUNT(*), COALESCE(MAX(imported_at), ''), COALESCE(MAX(id), 0) FROM reports"
+            ).fetchone()
+            data_version = f"{ver_row[0]}:{ver_row[2]}:{ver_row[1]}"
+
+            rep_date_row = cursor.execute(
+                "SELECT COALESCE(NULLIF(report_date, ''), DATE(imported_at)) FROM reports WHERE id = ?", (report_id,)
+            ).fetchone()
+            report_date_str = rep_date_row[0] if rep_date_row else None
+
+            w_data = _get_worklist_data(cursor, ref_date)
+            _json_response(self, {
+                "meta": {
+                    "reference_date": ref_date,
+                    "report_id": report_id,
+                    "report_date": report_date_str,
+                    "data_version": data_version
+                },
+                "promessas_vencidas": w_data["promessas_vencidas"],
+                "recontato_agendado": w_data["recontato_agendado"],
+                "sem_resposta": w_data["sem_resposta"],
+                "novos_pre_juridico": w_data["novos_pre_juridico"]
+            })
+
+        elif path == "/api/summary":
+            import datetime
+            cursor = get_conn().cursor()
+            ref_date = datetime.date.today().isoformat()
+            
+            report_id = _dedup_latest_report_id(cursor)
+            if not report_id:
+                _json_response(self, {
+                    "meta": {"reference_date": ref_date, "report_id": None, "report_date": None, "data_version": "0::"},
+                    "current": {"clients": 0, "total_owed": 0.0, "avg_days_overdue": 0},
+                    "trend": {"vs_previous_report": {"clients_delta": 0, "value_delta": 0.0, "direction": "estavel"}},
+                    "aging_distribution": {},
+                    "pre_juridico": {"count": 0, "value": 0.0, "new_this_report": 0},
+                    "top_debtors": [],
+                    "effectiveness": {"contacted": 0, "regularized_after_contact": 0, "rate": 0.0, "promises_made": 0, "promises_kept": 0},
+                    "worklist_counts": {"promessas_vencidas": 0, "sem_resposta": 0, "novos_pre_juridico": 0}
+                })
+                return
+
+            ver_row = cursor.execute(
+                "SELECT COUNT(*), COALESCE(MAX(imported_at), ''), COALESCE(MAX(id), 0) FROM reports"
+            ).fetchone()
+            data_version = f"{ver_row[0]}:{ver_row[2]}:{ver_row[1]}"
+
+            rep_date_row = cursor.execute(
+                "SELECT COALESCE(NULLIF(report_date, ''), DATE(imported_at)) FROM reports WHERE id = ?", (report_id,)
+            ).fetchone()
+            report_date_str = rep_date_row[0] if rep_date_row else None
+
+            cf_all = _client_financials(cursor, report_id, ref_date)
+            total_clients = len(cf_all)
+            total_value = round(sum(x["total_owed"] for x in cf_all.values()), 2)
+            avg_days = int(sum(x["max_days_overdue"] for x in cf_all.values()) / total_clients) if total_clients > 0 else 0
+
+            report_rows = cursor.execute("""
+                SELECT id, COALESCE(NULLIF(report_date, ''), DATE(imported_at)) AS rdate
+                FROM   reports
+                ORDER  BY rdate DESC, id DESC
+            """).fetchall()
+            seen_dates = set()
+            latest_ids = []
+            for rid, rdate in report_rows:
+                if rdate not in seen_dates:
+                    seen_dates.add(rdate)
+                    latest_ids.append((rid, rdate))
+            
+            clients_delta = 0
+            value_delta = 0.0
+            direction = "estavel"
+            if len(latest_ids) > 1:
+                prev_id = latest_ids[1][0]
+                prev_date = latest_ids[1][1]
+                prev_cf = _client_financials(cursor, prev_id, prev_date)
+                prev_clients = len(prev_cf)
+                prev_value = sum(x["total_owed"] for x in prev_cf.values())
+                
+                clients_delta = total_clients - prev_clients
+                value_delta = round(total_value - prev_value, 2)
+                direction = "melhora" if value_delta < 0 else "piora" if value_delta > 0 else "estavel"
+
+            aging_distribution = {
+                "0-30": {"clients": 0, "value": 0.0},
+                "31-60": {"clients": 0, "value": 0.0},
+                "61-90": {"clients": 0, "value": 0.0},
+                "91-120": {"clients": 0, "value": 0.0},
+                "120+": {"clients": 0, "value": 0.0}
+            }
+            pre_juridico_count = 0
+            pre_juridico_value = 0.0
+            for cf in cf_all.values():
+                b = _bucketize(cf["max_days_overdue"])
+                aging_distribution[b]["clients"] += 1
+                aging_distribution[b]["value"] = round(aging_distribution[b]["value"] + cf["total_owed"], 2)
+                if cf["max_days_overdue"] > 120:
+                    pre_juridico_count += 1
+                    pre_juridico_value = round(pre_juridico_value + cf["total_owed"], 2)
+
+            top_val = 5
+            if "?" in self.path:
+                from urllib.parse import parse_qs
+                try:
+                    params = parse_qs(self.path.split("?", 1)[1])
+                    top_val = int(params.get("top", [5])[0])
+                except Exception:
+                    pass
+            top_debtors = sorted(
+                [{"name": x["name"], "total_owed": x["total_owed"], "max_days_overdue": x["max_days_overdue"], "stage": _stage_for_days(x["max_days_overdue"])} for x in cf_all.values()],
+                key=lambda x: x["total_owed"],
+                reverse=True
+            )[:top_val]
+
+            eff_data = _contact_effectiveness(cursor)
+
+            w_data = _get_worklist_data(cursor, ref_date)
+            w_counts = {
+                "promessas_vencidas": len(w_data["promessas_vencidas"]),
+                "recontato_agendado": len(w_data["recontato_agendado"]),
+                "sem_resposta": len(w_data["sem_resposta"]),
+                "novos_pre_juridico": len(w_data["novos_pre_juridico"])
+            }
+
+            _json_response(self, {
+                "meta": {
+                    "reference_date": ref_date,
+                    "report_id": report_id,
+                    "report_date": report_date_str,
+                    "data_version": data_version
+                },
+                "current": {"clients": total_clients, "total_owed": total_value, "avg_days_overdue": avg_days},
+                "trend": {"vs_previous_report": {"clients_delta": clients_delta, "value_delta": value_delta, "direction": direction}},
+                "aging_distribution": aging_distribution,
+                "pre_juridico": {"count": pre_juridico_count, "value": pre_juridico_value, "new_this_report": w_counts["novos_pre_juridico"]},
+                "top_debtors": top_debtors,
+                "effectiveness": eff_data,
+                "worklist_counts": w_counts
+            })
+
         else:
             super().do_GET()
 
@@ -1107,6 +2148,40 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             except Exception as exc:
                 _json_response(self, {"error": str(exc)}, 500)
 
+        elif path == "/api/outcomes":
+            try:
+                conn = get_conn()
+                cursor = conn.cursor()
+                client_name = payload.get("client_name")
+                outcome = payload.get("outcome")
+                venda_id = payload.get("venda_id", "")
+                action_log_id = payload.get("action_log_id")
+                promised_date = payload.get("promised_date")
+                next_contact = payload.get("next_contact")
+                note = payload.get("note", "")
+
+                if not client_name:
+                    _json_response(self, {"error": "client_name e obrigatorio"}, 400)
+                    return
+                if not outcome:
+                    _json_response(self, {"error": "outcome e obrigatorio"}, 400)
+                    return
+                if outcome not in OUTCOME_TYPES:
+                    _json_response(self, {"error": f"outcome deve ser um dos: {OUTCOME_TYPES}"}, 400)
+                    return
+                if outcome == "prometeu_pagar" and not promised_date:
+                    _json_response(self, {"error": "promised_date e obrigatoria para desfecho prometeu_pagar"}, 400)
+                    return
+
+                cursor.execute("""
+                    INSERT INTO contact_outcomes (client_name, venda_id, action_log_id, outcome, promised_date, next_contact, note)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (client_name, venda_id, action_log_id, outcome, promised_date, next_contact, note))
+                conn.commit()
+                _json_response(self, {"status": "success", "id": cursor.lastrowid})
+            except Exception as exc:
+                _json_response(self, {"error": str(exc)}, 500)
+
         else:
             _json_response(self, {"error": "Rota não encontrada"}, 404)
 
@@ -1128,6 +2203,22 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 
                 # A exclusão cascateará devido a restrição ON DELETE CASCADE nos relacionamentos
                 cursor.execute("DELETE FROM reports WHERE id = ?", (rid,))
+                conn.commit()
+                _json_response(self, {"status": "success"})
+            except (ValueError, IndexError):
+                _json_response(self, {"error": "ID inválido"}, 400)
+            except Exception as exc:
+                _json_response(self, {"error": str(exc)}, 500)
+        elif path.startswith("/api/outcomes/"):
+            try:
+                oid = int(path.rsplit("/", 1)[-1])
+                conn = get_conn()
+                cursor = conn.cursor()
+                exists = cursor.execute("SELECT 1 FROM contact_outcomes WHERE id = ? LIMIT 1", (oid,)).fetchone()
+                if not exists:
+                    _json_response(self, {"error": "Desfecho não encontrado"}, 404)
+                    return
+                cursor.execute("DELETE FROM contact_outcomes WHERE id = ?", (oid,))
                 conn.commit()
                 _json_response(self, {"status": "success"})
             except (ValueError, IndexError):
