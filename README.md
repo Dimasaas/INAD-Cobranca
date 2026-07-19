@@ -19,18 +19,18 @@ O INAD possui uma arquitetura híbrida ultra-leve que permite rodar tanto de for
 
 ```mermaid
 graph TD
-    subgraph Frontend (HTML5 / Glassmorphism UI)
-        UI[Painel de Cobrança / inad_whatsapp.html]
-        ANA[Painel Científico / inad_analytics.html]
-        JS[Motor JS Local / localStorage]
+    subgraph Frontend ["Frontend (HTML5 / Glassmorphism UI)"]
+        UI["Painel de Cobrança / inad_whatsapp.html"]
+        ANA["Painel Científico / inad_analytics.html"]
+        JS["Motor JS Local / localStorage"]
     end
 
-    subgraph Backend (Servidor run.py)
-        API[Servidor HTTP Integrado]
-        DB[(Banco SQLite / WAL Mode)]
+    subgraph Backend ["Backend (Servidor run.py)"]
+        API["Servidor HTTP Integrado"]
+        DB[("Banco SQLite / WAL Mode")]
     end
 
-    PDF[Relatório Inadimplência PDF] -->|Drag & Drop / PDF.js| UI
+    PDF["Relatório Inadimplência PDF"] -->|Drag & Drop / PDF.js| UI
     UI -->|Registrar Log /api/actions/sent| API
     UI -->|Salvar Desfecho /api/outcomes| API
     API -->|Persistir dados| DB
