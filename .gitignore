@@ -28,3 +28,7 @@ ocr_extracted.txt
 *.pdf
 inad_database.db
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
+server.log
