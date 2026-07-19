@@ -873,11 +873,30 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
 
+    def _redirect(self, location):
+        self.send_response(302)
+        self.send_header("Location", location)
+        self.end_headers()
+
     # ── GET ───────────────────────────────────────────────────────────────────
     def do_GET(self):
         path = self.path.split("?")[0]
 
-        if path == "/api/reports":
+        # Atalhos de navegação: acessar a raiz ou caminhos amigáveis sempre
+        # cai na página certa, em vez de listagem de diretório ou 404.
+        if path in ("/", ""):
+            target = "/inad_whatsapp.html" if os.path.exists(
+                os.path.join(DIRECTORY, "inad_whatsapp.html")
+            ) else "/inad_template.html"
+            self._redirect(target)
+        elif path in ("/kpi", "/kpis"):
+            self._redirect("/inad_whatsapp.html#kpi")
+        elif path in ("/cobranca", "/painel"):
+            self._redirect("/inad_whatsapp.html#cobranca")
+        elif path in ("/analytics", "/analitico"):
+            self._redirect("/inad_analytics.html")
+
+        elif path == "/api/reports":
             cursor = get_conn().cursor()
             rows   = cursor.execute("""
                 SELECT id, report_name,

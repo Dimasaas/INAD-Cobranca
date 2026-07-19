@@ -132,6 +132,17 @@ CREATE INDEX idx_parcels_property_id  ON parcels(property_id);
 
 Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 
+### Atalhos de navegação
+
+`http://localhost:8000/` e outras rotas amigáveis fazem redirect 302 para o arquivo estático certo — evita "connection refused"/404 ao digitar só a raiz:
+
+| Rota | Redireciona para |
+|------|-------------------|
+| `/` | `/inad_whatsapp.html` (ou `/inad_template.html` se ainda não compilado) |
+| `/kpi`, `/kpis` | `/inad_whatsapp.html#kpi` |
+| `/cobranca`, `/painel` | `/inad_whatsapp.html#cobranca` |
+| `/analytics`, `/analitico` | `/inad_analytics.html` |
+
 ### Contexto e saúde
 
 | Método | Rota | Descrição |
@@ -307,5 +318,5 @@ INAD_DEMO=1 python3 run.py         # Modo demo (banco isolado inad_demo.db)
 python3 generate_demo_data.py --reset   # Popula o banco demo com dados fictícios
 ```
 
-Painel: `http://localhost:8000/inad_whatsapp.html`
-Analytics: `http://localhost:8000/inad_analytics.html`
+Painel: `http://localhost:8000/` (redireciona automaticamente para `inad_whatsapp.html`)
+Analytics: `http://localhost:8000/analytics` (ou diretamente `/inad_analytics.html`)
