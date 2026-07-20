@@ -9,7 +9,7 @@
 Esta é uma ferramenta profissional de CRM e Gestão de Cobrança desenvolvida para automatizar e otimizar o fluxo de recuperação de inadimplência da construtora. O sistema unifica o processamento de relatórios em PDF, calcula scores de risco inteligentes, classifica devedores em réguas de cobrança operacionais e facilita contatos dinâmicos via WhatsApp Web.
 
 > [!IMPORTANT]
-> **Privacidade & Segurança:** Toda a manipulação de dados é realizada **localmente no seu computador** ou na **Intranet da sua empresa**. O banco de dados SQLite (`inad_database.db` / `inad_demo.db`) e os relatórios ficam protegidos no ambiente do servidor local, sem qualquer vazamento de dados confidenciais para a nuvem.
+> **Privacidade & Segurança:** Toda a manipulação de dados é realizada **localmente no seu computador** ou na **Intranet da sua empresa**. O banco de dados SQLite (`inad_database.db`) e os relatórios ficam protegidos no ambiente do servidor local, sem qualquer vazamento de dados confidenciais para a nuvem.
 
 ---
 
@@ -106,11 +106,8 @@ Instale o Python 3.8+ em sua máquina e garanta o driver SQLite padrão ativo. P
 # Iniciar o servidor com a base de dados real
 python run.py
 
-# Iniciar o servidor em Modo de Demonstração (gera dados de teste fictícios em inad_demo.db)
-python run.py --demo
-
-# Iniciar o servidor em Modo Demo escutando em uma porta específica
-python run.py --demo --port 9090
+# Iniciar o servidor escutando em uma porta específica
+python run.py --port 9090
 ```
 O painel abrirá automaticamente no endereço correspondente.
 

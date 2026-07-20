@@ -25,6 +25,7 @@ clients_data_full.json
 inad_whatsapp.html
 pdf_text.txt
 ocr_extracted.txt
+kpi_exclusions.json
 *.pdf
 inad_database.db
 *.db
@@ -33,4 +34,3 @@ inad_database.db
 *.db-journal
 *.log
 backups/
-backups_demo/

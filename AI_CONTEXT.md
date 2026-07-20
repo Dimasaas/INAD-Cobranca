@@ -24,9 +24,6 @@ graph TD
     D -->|4. Heurísticas de Regex| E[Dados Extraídos]
     E -->|5. POST /api/reports| F[Python Server run.py]
     F -->|6. Salva no Disco| G[(SQLite: inad_database.db)]
-    F -.->|INAD_DEMO=1 ou botão 🧪 Modo Demo| G2[(SQLite: inad_demo.db)]
-    F -->|POST /api/demo/launch| F2[Processo filho: run.py --demo]
-    F2 -.-> G2
     C -->|7. Dispara WhatsApp| H[POST /api/actions/sent]
     H -->|8. Loga Evento| G
     N[inad_analytics.html] -->|GET /api/kpis/analytics| F
@@ -42,9 +39,7 @@ graph TD
 | `inad_whatsapp.html` | **Artefato gerado** — não editar manualmente |
 | `inad_analytics.html` + `analytics.css` + `analytics.js` | **Página de Analytics** — estática, fora do passo de compilação; consome a API ao vivo (não funciona via `file://`) |
 | `run.py` | Servidor HTTP + API REST + SQLite |
-| `generate_demo_data.py` | Gerador de dados fictícios para o banco demo (`inad_demo.db`) |
 | `inad_database.db` | Banco real (não versionado no Git) |
-| `inad_demo.db` | Banco demo isolado (não versionado no Git) |
 | `libs/` | Bibliotecas vendorizadas: `pdf.min.js`, `pdf.worker.min.js`, `chart.umd.min.js` (Chart.js v4) — todas com fallback CDN |
 | `AI_CONTEXT.md` | Este documento |
 | `extension/` | Extensão Chrome (Gemini Copilot) — opcional, separada do painel |
@@ -62,7 +57,7 @@ python3 add_pdf_importer.py
 
 ## 🗄️ Esquema do Banco de Dados (SQLite)
 
-O banco é inicializado automaticamente pelo `run.py` (`inad_database.db`, ou `inad_demo.db` em modo demo):
+O banco é inicializado automaticamente pelo `run.py` (`inad_database.db`):
 
 ```sql
 -- 1. Relatórios Históricos
@@ -164,7 +159,7 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 | Método | Rota | Descrição |
 |--------|------|-----------|
 | `GET` | `/api/context` | Contexto estruturado completo para IAs (schema, regras, stats ao vivo, markdown) |
-| `GET` | `/api/health` | `{status, port, platform, python, demo, db_file}` |
+| `GET` | `/api/health` | `{status, port, platform, python, db_file}` |
 
 ### Relatórios e clientes
 
@@ -195,7 +190,6 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 | `GET` | `/api/kpis/analytics` | Série temporal segmentada para a página de Analytics (ver abaixo) |
 | `GET` | `/api/kpis/exclusions` | Lista clientes excluídos dos KPIs |
 | `POST` | `/api/kpis/exclusions` | `{client_name, exclude: true\|false}` |
-| `POST` | `/api/demo/launch` | Sobe (ou reaproveita) uma instância demo isolada em outra porta — ver seção "Modo Demo" |
 
 **Resposta de `/api/kpis`:** `evolution` (filtrada, sem duplicados), `all_evolution` (com flag `is_duplicate`), `transitions` (cruzamentos consecutivos). Cada entrada de evolução inclui `total_value` (soma R$ das parcelas).
 
@@ -361,40 +355,6 @@ A régua de cobrança é dividida em 4 estágios baseados no tempo máximo de at
 
 ---
 
-## 🧪 Modo Demo / Sandbox
-
-Para testar sem tocar no banco real, três formas equivalentes:
-
-### 1. Botão "🧪 Modo Demo" na UI (recomendado, sem terminal)
-
-No painel principal (`inad_whatsapp.html`) e na página de Analytics, o botão **🧪 Modo Demo** chama `POST /api/demo/launch`:
-- O servidor real (`run.py`, não-demo) sobe um **processo filho independente**: `python run.py --demo --headless`, escutando em `INAD_PORT + 1000` (configurável via `INAD_DEMO_PORT`; ex.: real=8000 → demo=9000).
-- Se essa porta já responde (`_is_port_open`), reaproveita a instância existente em vez de duplicar (`already_running: true`).
-- Na primeira subida, como `inad_demo.db` está vazio, `init_db()` chama `generate_demo_data.generate()` automaticamente — o usuário não precisa rodar nada manualmente.
-- O frontend faz polling de `health_url` até a instância responder e então abre `url` (`inad_whatsapp.html` da instância demo) em nova aba.
-- Logs do processo filho vão para `inad_demo_server.log` (gitignored).
-- Chamar `/api/demo/launch` num servidor que **já está** em modo demo retorna erro 400 (não há demo-dentro-de-demo).
-
-### 2. Terminal manual
-
-```bash
-python3 generate_demo_data.py --reset   # (Re)cria inad_demo.db com dados fictícios
-INAD_DEMO=1 python3 run.py              # Servidor apontando SÓ para inad_demo.db
-python3 run.py --demo                   # Equivalente
-```
-
-### 3. Regras gerais
-
-- `INAD_DEMO=1` (ou `--demo`) troca `DB_PATH` para `inad_demo.db` — **nada lê ou grava** `inad_database.db` nesse modo.
-- Em demo, `init_db()` **não roda** migração de JSONs legados, backfill de `clients_data.json` nem seed de `kpi_exclusions.json` (dados reais jamais entram no banco demo); só popula via `generate_demo_data` se o banco estiver vazio.
-- `/api/health` e `/api/context` retornam `"demo": true`; painel principal e Analytics exibem o banner "⚠ MODO DEMO" e escondem o próprio botão (evita aninhamento).
-- O gerador é determinístico (seed 42; `--seed N` para variar): ~15 relatórios mensais com churn de 10-20%, ~80 clientes fictícios (incluindo variações de grafia), valores R$ 300-5.000 por parcela.
-- **Simulação de Contatos e Desfechos (Outcomes)**: O gerador executa uma rotina de simulação que envia mensagens (action_logs) para 50-70% dos clientes e gera desfechos (contact_outcomes) para 65% destes. Os desfechos são correlacionados de forma determinística com a taxa de regularização no relatório seguinte para simular relatórios realistas.
-- **Alertas Controlados para a Worklist**: São gerados casos específicos com promessas de pagamento expiradas, recontatos agendados e clientes que cruzam a faixa de 120 dias na última rodada para popular a fila de alertas operacionais da worklist de forma rica.
-- `inad_demo.db`, `inad_demo.db-shm/-wal` e `inad_demo_server.log` estão cobertos pelo `.gitignore`.
-
----
-
 ## ⚖️ Conformidade e Termos de Uso (Artigo 42 do CDC)
 
 Conforme o CDC art. 42, a cobrança não pode expor o cliente a ridículo, constrangimento ou ameaça. Todos os templates — inclusive o de pré-jurídico — devem ser factuais, respeitosos e limitados aos dados do débito (parcelas, valores, vencimentos) e a canais de regularização. O template pré-jurídico deve informar que o caso "poderá ser encaminhado ao setor jurídico" — nunca ameaçar processo, negativação ou perda do imóvel. No financiamento com alienação fiduciária (Lei 9.514/97), os passos formais (notificação via cartório, purga da mora) são atos jurídicos conduzidos por humanos/advogados; a ferramenta não automatiza nenhum passo legal — o estágio pre_juridico é apenas uma fila interna para triagem humana e entrega ao jurídico. Isto não é aconselhamento jurídico.
@@ -440,7 +400,7 @@ Se o painel principal for aberto sem servidor (`file://`), o frontend usa `local
 4. **Retrocompatibilidade** — manter aliases `/api/sent` ↔ `/api/actions/sent` e a forma da resposta de `/api/kpis` (a aba KPI depende dela); features novas de análise vão em `/api/kpis/analytics`.
 5. **Contexto ao vivo** — consulte `GET /api/context` antes de alterações que afetem API ou schema.
 6. **Escopo mínimo** — alterações focadas; não refatorar código não relacionado à tarefa.
-7. **Testes com dados fake** — use o modo demo (botão 🧪 na UI, ou `INAD_DEMO=1` + `generate_demo_data.py`), nunca o banco real.
+7. **Testes com dados fake** — use `tests/test_golden_kpis.py` (fixtures determinísticas + reconciliação em bancos SQLite temporários), nunca o banco real.
 
 ---
 
@@ -451,8 +411,6 @@ python3 run.py                     # Porta 8000, abre navegador
 INAD_PORT=9090 python3 run.py      # Porta customizada
 INAD_HEADLESS=1 python3 run.py     # Sem abrir navegador (servidor)
 python3 run.py --headless          # Igual ao headless
-INAD_DEMO=1 python3 run.py         # Modo demo (banco isolado inad_demo.db)
-python3 generate_demo_data.py --reset   # Popula o banco demo com dados fictícios
 ```
 
 Painel: `http://localhost:8000/` (redireciona automaticamente para `inad_whatsapp.html`)

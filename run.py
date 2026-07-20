@@ -7,8 +7,6 @@ Uso:
   INAD_PORT=9090 python3 run.py     → Usa a porta 9090
   INAD_HEADLESS=1 python3 run.py    → Modo servidor (sem abrir o navegador)
   python3 run.py --headless         → Igual ao modo servidor
-  INAD_DEMO=1 python3 run.py        → Modo demo (banco isolado inad_demo.db)
-  python3 run.py --demo             → Igual ao modo demo
 """
 
 import http.server
@@ -23,7 +21,6 @@ import sqlite3
 import signal
 import platform
 import socket
-import subprocess
 import re
 
 # Windows: garante UTF-8 no console/redirecionamento (evita crash do banner
@@ -77,15 +74,8 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 
-# Modo demo: banco totalmente isolado (inad_demo.db) para testes com dados
-# fictícios, sem nunca ler ou gravar o inad_database.db real.
-DEMO      = os.environ.get("INAD_DEMO", "0").strip() == "1" or "--demo" in sys.argv
-DB_FILE   = "inad_demo.db" if DEMO else "inad_database.db"
+DB_FILE   = "inad_database.db"
 DB_PATH   = os.path.join(DIRECTORY, DB_FILE)
-
-# Porta onde uma instância demo (lançada pelo botão "🧪 Modo Demo" da UI)
-# deve escutar. Só usada pelo servidor real para orquestrar o child process.
-DEMO_PORT = int(os.environ.get("INAD_DEMO_PORT", PORT + 1000))
 
 # Modo headless: ativado via arg --headless, var INAD_HEADLESS=1,
 # ou quando o sistema não tiver display (servidores Linux sem GUI).
@@ -219,20 +209,6 @@ def init_db():
 
     conn.commit()
 
-    # Modo demo: nenhum dado real (JSONs legados, backfill, seed de exclusões)
-    # pode entrar no banco demo — apenas o schema é criado. Na primeira vez
-    # (banco vazio), popula automaticamente com dados fictícios para que o
-    # botão "🧪 Modo Demo" da UI funcione sem passos manuais no terminal.
-    if DEMO:
-        if cursor.execute("SELECT COUNT(*) FROM reports").fetchone()[0] == 0:
-            try:
-                import generate_demo_data
-                generate_demo_data.generate()
-                print("[DEMO] Banco demo populado automaticamente com dados fictícios.")
-            except Exception as exc:
-                print(f"[DEMO] Falha ao gerar dados fictícios automaticamente: {exc}")
-        return
-
     _migrate_legacy_files(cursor, conn)
 
     # Backfill de valores de parcelas a partir de clients_data.json se as parcelas no banco estiverem zeradas
@@ -279,7 +255,8 @@ def init_db():
 
 
 def _apply_kpi_exclusions_seed(cursor, conn):
-    """Carrega exclusões padrão de kpi_exclusions.json (versionado no Git)."""
+    """Carrega exclusões padrão de kpi_exclusions.json, se existir localmente
+    (arquivo não versionado no Git — pode conter nomes reais de clientes)."""
     seed_path = os.path.join(DIRECTORY, "kpi_exclusions.json")
     if not os.path.exists(seed_path):
         return
@@ -461,8 +438,7 @@ def _backup_report_before_delete(cursor, rid):
     report_name, report_date = row
     clients = get_clients_for_report(rid)
 
-    # Backups do modo demo ficam separados dos backups do banco real.
-    backup_dir = os.path.join(DIRECTORY, "backups_demo" if DEMO else "backups")
+    backup_dir = os.path.join(DIRECTORY, "backups")
     os.makedirs(backup_dir, exist_ok=True)
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     safe_name = re.sub(r'[^\w\-. ]', '_', report_name or "relatorio")[:60]
@@ -1283,7 +1259,6 @@ def get_system_context():
             "frontend_compiled": "inad_whatsapp.html",
             "compiler": "add_pdf_importer.py",
             "database_file": DB_FILE,
-            "demo_mode": DEMO,
         },
         "architecture": {
             "pattern": "Servidor HTTP Python + SPA HTML/JS + SQLite local",
@@ -1366,11 +1341,6 @@ def get_system_context():
                 "Operacional (queue, worklist, profile, stages) calcula atraso a partir da data de hoje. "
                 "Analítico (analytics, kpis) calcula atraso a partir da report_date para reprodutibilidade."
             ),
-            "demo_mode": (
-                "INAD_DEMO=1 (ou --demo) troca o banco para inad_demo.db, isolado "
-                "do banco real; migrações/seed de dados reais não rodam em demo. "
-                "Popular com: python3 generate_demo_data.py --reset"
-            ),
             "offline_fallback": (
                 "Se aberto via file://, dados vão para localStorage "
                 "(inad_clients_db, inad_sent, inad_kpi_exclusions)."
@@ -1391,7 +1361,6 @@ def get_system_context():
             "active_pre_juridico_clients": pre_juridico_count,
             "port": PORT,
             "platform": platform.system(),
-            "demo": DEMO,
         },
         "ai_guidelines": [
             "Leia AI_CONTEXT.md antes de alterações significativas.",
@@ -1427,45 +1396,6 @@ def _error_response(handler, exc, status=500):
     )
     message = "Requisição inválida" if status == 400 else "Erro interno"
     _json_response(handler, {"error": message}, status)
-
-
-def _is_port_open(port, timeout=0.35):
-    """Testa se algo já está escutando em localhost:port (usado para não
-    duplicar a instância demo ao clicar no botão várias vezes)."""
-    try:
-        with socket.create_connection(("localhost", port), timeout=timeout):
-            return True
-    except OSError:
-        return False
-
-
-def _launch_demo_instance():
-    """Sobe (ou reaproveita) uma instância demo em DEMO_PORT, como processo
-    filho independente, para o botão '🧪 Modo Demo' da UI."""
-    if _is_port_open(DEMO_PORT):
-        return {"already_running": True}
-
-    env = os.environ.copy()
-    env["INAD_DEMO"] = "1"
-    env["INAD_PORT"] = str(DEMO_PORT)
-    env["INAD_HEADLESS"] = "1"
-
-    log_path = os.path.join(DIRECTORY, "inad_demo_server.log")
-    log_file = open(log_path, "a", encoding="utf-8")
-
-    kwargs = {}
-    if platform.system() == "Windows":
-        kwargs["creationflags"] = (
-            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
-        )
-    else:
-        kwargs["start_new_session"] = True
-
-    subprocess.Popen(
-        [sys.executable, os.path.abspath(__file__), "--demo", "--headless"],
-        cwd=DIRECTORY, env=env, stdout=log_file, stderr=log_file, **kwargs,
-    )
-    return {"already_running": False}
 
 
 _BODY_TOO_LARGE = object()  # sentinel: Content-Length excede MAX_BODY_BYTES
@@ -1655,7 +1585,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             _json_response(self, {"status": "ok", "port": PORT,
                                    "platform": platform.system(),
                                    "python": platform.python_version(),
-                                   "demo": DEMO, "db_file": DB_FILE})
+                                   "db_file": DB_FILE})
 
         elif path == "/api/context":
             _json_response(self, get_system_context())
@@ -2315,22 +2245,6 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             except Exception as exc:
                 _error_response(self, exc, 500)
 
-        elif path == "/api/demo/launch":
-            if DEMO:
-                _json_response(self, {"error": "Este servidor já está em modo demo."}, 400)
-                return
-            try:
-                info = _launch_demo_instance()
-                _json_response(self, {
-                    "status": "success",
-                    "port": DEMO_PORT,
-                    "url": f"http://localhost:{DEMO_PORT}/inad_whatsapp.html",
-                    "health_url": f"http://localhost:{DEMO_PORT}/api/health",
-                    "already_running": info["already_running"],
-                })
-            except Exception as exc:
-                _error_response(self, exc, 500)
-
         elif path == "/api/kpis/exclusions":
             try:
                 conn = get_conn()
@@ -2465,11 +2379,10 @@ class _ReuseServer(socketserver.TCPServer):
     uma requisição HTTP por vez (modelo simples, adequado a um CRM local de
     poucos operadores). O `threading.local`/`check_same_thread=False` na
     conexão SQLite (get_conn(), acima) existe só porque a thread principal de
-    serve_forever() é distinta da thread de import/setup, e porque o modo demo
-    sobe um processo filho separado — não porque múltiplas requisições HTTP
-    rodem concorrentemente. Se algum dia migrar para ThreadingHTTPServer,
-    revisar todo cursor/conexão compartilhado antes (acesso a SQLite não é
-    thread-safe por padrão)."""
+    serve_forever() é distinta da thread de import/setup — não porque
+    múltiplas requisições HTTP rodem concorrentemente. Se algum dia migrar
+    para ThreadingHTTPServer, revisar todo cursor/conexão compartilhado antes
+    (acesso a SQLite não é thread-safe por padrão)."""
     allow_reuse_address = (platform.system() != "Windows")
 
     def server_bind(self):
@@ -2523,8 +2436,6 @@ if __name__ == "__main__":
     print(f"  Python     : {platform.python_version()}")
     print(f"  Porta      : {PORT}  (use INAD_PORT=XXXX para mudar)")
     print(f"  Modo       : {'Servidor headless' if HEADLESS else 'Local (abre navegador)'}")
-    if DEMO:
-        print(f"  ⚠ DEMO     : Banco isolado ({DB_FILE}) — dados fictícios")
     print("══════════════════════════════════════════════════")
 
     server_thread = threading.Thread(target=start_server, daemon=True)

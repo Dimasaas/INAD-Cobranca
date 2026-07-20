@@ -40,9 +40,10 @@ Este documento apresenta as alterações realizadas, a validação executada e o
 * **`GET /api/worklist`**: Fila de alertas operacionais dividida por urgência (Promessas Vencidas $\rightarrow$ Recontato Agendado $\rightarrow$ Sem Resposta $\rightarrow$ Novos Pré-Jurídico).
 * **`GET /api/summary`**: Snapshot executivo com valores totais, média de atraso, tendência contra o relatório anterior, distribuição de aging por faixas, ranking dos top 5 devedores e taxa de eficácia de cobrança.
 
-### 4. Gerador de Dados de Teste (`generate_demo_data.py`)
+### 4. Gerador de Dados de Teste (`generate_demo_data.py`) — *removido posteriormente*
 * Atualizamos o gerador de dados demo para injetar de forma controlada clientes que cruzam a marca de 120 dias e novos clientes na última rodada (faixa 0-30).
 * Implementamos a função `_simulate_contacts` que gera históricos realistas de disparos e desfechos, ligando-os de forma estatística à saída futura (regularização) do cliente.
+* *Nota: o modo demo (`INAD_DEMO`/`--demo`), o botão "Modo Demo" na UI e este gerador foram removidos do projeto após esta validação — a seção abaixo documenta o estado da validação na época, não o comportamento atual.*
 
 ---
 

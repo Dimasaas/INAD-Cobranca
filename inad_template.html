@@ -37,8 +37,6 @@
       --sh-hover: 0 16px 40px rgba(0,0,0,0.5);
       --glass: blur(12px);
     }
-    .demo-banner{display:none;background:linear-gradient(90deg,rgba(245,158,11,.16),rgba(245,158,11,.06));border-bottom:1px solid rgba(245,158,11,.4);color:var(--amber);text-align:center;padding:7px 16px;font-size:12.5px;font-weight:700;letter-spacing:.4px}
-    .demo-banner.visible{display:block}
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     html{scroll-behavior:smooth}
     body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;line-height:1.6}
@@ -272,8 +270,6 @@
   </style>
 </head>
 <body>
-<div class="demo-banner" id="demo-banner">⚠ MODO DEMO — dados fictícios (inad_demo.db), não afeta o banco real</div>
-
 <div id="drop-overlay">
   <span style="font-size:48px;">📤</span>
   <h2 style="font-weight:700; color:var(--text)">Solte o relatório PDF aqui</h2>
@@ -304,7 +300,6 @@
     <button class="tab-btn active" id="tab-cobranca" onclick="switchTab('cobranca')">💬 Cobrança</button>
     <button class="tab-btn" id="tab-kpi" onclick="switchTab('kpi')">📈 Indicadores (KPIs)</button>
     <a class="tab-btn" href="inad_analytics.html" style="text-decoration:none" title="Análise avançada com segmentação e filtros por período">🔬 Analytics</a>
-    <button class="tab-btn" id="btn-demo" onclick="launchDemo()" title="Abre uma instância isolada com dados fictícios, sem afetar o banco real">🧪 Modo Demo</button>
   </div>
   
   <div class="top-actions">
@@ -601,55 +596,6 @@ function switchTab(tab) {
   }
   if (location.hash.replace('#', '') !== tab) {
     history.replaceState(null, '', `#${tab}`);
-  }
-}
-
-async function checkDemoMode() {
-  try {
-    const res = await fetch('/api/health');
-    if (!res.ok) return;
-    const h = await res.json();
-    if (h.demo) {
-      document.getElementById('demo-banner').classList.add('visible');
-      const btn = document.getElementById('btn-demo');
-      if (btn) btn.style.display = 'none'; // já estamos numa instância demo
-    }
-  } catch (e) { /* servidor offline: sem banner */ }
-}
-
-async function launchDemo() {
-  const btn = document.getElementById('btn-demo');
-  const original = btn.textContent;
-  btn.disabled = true;
-  btn.textContent = '⏳ Iniciando...';
-  try {
-    const res = await fetch('/api/demo/launch', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: '{}',
-    });
-    const data = await res.json();
-    if (!res.ok || data.error) throw new Error(data.error || 'Falha ao iniciar o servidor demo.');
-
-    btn.textContent = data.already_running ? '⏳ Abrindo...' : '⏳ Gerando dados...';
-
-    // Aguarda a instância demo responder antes de abrir a aba
-    let ready = false;
-    for (let i = 0; i < 20 && !ready; i++) {
-      await new Promise(r => setTimeout(r, 400));
-      try {
-        const h = await fetch(data.health_url, { cache: 'no-store' });
-        ready = h.ok;
-      } catch (e) { /* ainda subindo */ }
-    }
-    if (!ready) throw new Error('O servidor demo demorou demais para responder.');
-
-    window.open(data.url, '_blank');
-  } catch (e) {
-    alert('Não foi possível iniciar o modo demo: ' + e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = original;
   }
 }
 
@@ -1739,16 +1685,6 @@ function parseLayoutText(text) {
   const blocks = parts.slice(1);
   
   const parsedClients = {};
-  
-  // Manual overrides for verified numbers
-  const overrides = {
-    "***PII REMOVIDO***": "***PII REMOVIDO***",
-    "***PII REMOVIDO***": "***PII REMOVIDO***",
-    "***PII REMOVIDO***": "***PII REMOVIDO***",
-    "***PII REMOVIDO***": "***PII REMOVIDO***",
-    "***PII REMOVIDO***": "***PII REMOVIDO***",
-    "***PII REMOVIDO***": "***PII REMOVIDO***"
-  };
 
   for (const block of blocks) {
     const lines = block.split('\n').filter(l => l.trim());
@@ -1926,13 +1862,6 @@ function parseLayoutText(text) {
     }
   }
   
-  // Apply manual overrides
-  for (const [name, cel] of Object.entries(overrides)) {
-    if (parsedClients[name]) {
-      parsedClients[name].cel = cel;
-    }
-  }
-  
   return parsedClients;
 }
 
@@ -2042,7 +1971,6 @@ async function toggleClientExclusion(clientName) {
 
 // Render initially
 initApp();
-checkDemoMode();
 </script>
 </body>
 </html>
