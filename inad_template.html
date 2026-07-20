@@ -1423,7 +1423,6 @@ function save(){
 }
 
 async function saveClients(parsedClients, reportName, reportDate) {
-  DATA = parsedClients;
   if (isServerActive) {
     try {
       const res = await fetch('/api/reports', {
@@ -1435,10 +1434,11 @@ async function saveClients(parsedClients, reportName, reportDate) {
           clients: parsedClients
         })
       });
-      if (!res.ok) throw new Error(res.statusText);
-      const resJson = await res.json();
+      const resJson = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(resJson.error || res.statusText);
+      DATA = parsedClients;
       const newReportId = resJson.report_id;
-      
+
       // Recarrega os dados do novo relatório vinculando as informações de risco calculadas
       if (newReportId) {
         try {
@@ -1450,14 +1450,15 @@ async function saveClients(parsedClients, reportName, reportDate) {
           console.error("Falha ao recarregar dados do novo relatório:", e);
         }
       }
-      
+
       await updateReportDropdown();
       await loadKPIs();
     } catch (e) {
       console.error("Erro ao salvar clientes no servidor:", e);
-      alert("Aviso: Falha ao salvar no servidor. Os dados foram atualizados na tela, mas podem não ter sido persistidos no disco do servidor.");
+      alert("Falha ao importar o relatório: " + e.message + "\n\nOs dados NÃO foram salvos — a tela não foi atualizada.");
     }
   } else {
+    DATA = parsedClients;
     localStorage.setItem('inad_clients_db', JSON.stringify(parsedClients));
   }
 }

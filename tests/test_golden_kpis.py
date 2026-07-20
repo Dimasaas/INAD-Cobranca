@@ -201,6 +201,43 @@ class GoldenKPITests(unittest.TestCase):
                 places=2, msg=f"reconciliação de total_value falhou em {s['report_name']}",
             )
 
+    def test_explicit_report_ids_match_default_path(self):
+        """K4: o caminho com report_ids explícito deve concordar com o
+        caminho default (sem filtro) quando a seleção é equivalente — antes,
+        o caminho explícito ignorava a deduplicação por report_date que o
+        caminho default aplicava, podendo divergir."""
+        id1 = _import_report("Relatorio A", "2026-01-01", {
+            "DANIEL PEREIRA": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "2026-01-10",
+                     "vencimento_full": "2026-01-10", "valor": 500.0},
+                ]}],
+            },
+        })
+        id2 = _import_report("Relatorio B", "2026-02-01", {
+            "DANIEL PEREIRA": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "2/2", "vencimento": "2026-02-10",
+                     "vencimento_full": "2026-02-10", "valor": 500.0},
+                ]}],
+            },
+            "ELIANE ROCHA": {
+                "cpf_cnpj": "2", "cel": "", "email": "",
+                "properties": [{"venda_id": "V2", "identifier": "Lote 2", "parcels": [
+                    {"parcela": "1/1", "vencimento": "2026-02-10",
+                     "vencimento_full": "2026-02-10", "valor": 700.0},
+                ]}],
+            },
+        })
+
+        default_kpis = run.get_kpis_data(None)
+        explicit_kpis = run.get_kpis_data([id1, id2])
+
+        self.assertEqual(default_kpis["evolution"], explicit_kpis["evolution"])
+        self.assertEqual(default_kpis["transitions"], explicit_kpis["transitions"])
+
     def test_report_date_br_is_normalized_to_iso(self):
         _import_report("Relatorio BR", "05/03/2026", {})
         row = run.get_conn().cursor().execute(

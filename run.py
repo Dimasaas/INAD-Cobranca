@@ -1034,22 +1034,20 @@ def get_kpis_data(report_ids=None):
     active_report_ids = [r["id"] for r in reports]
     evolution = [e for e in all_evolution if e["report_id"] in active_report_ids]
 
-    # Busca todos os clientes dos relatórios filtrados (filtrando excluídos)
-    if report_ids is not None:
-        if report_ids:
-            placeholders = ",".join("?" for _ in report_ids)
-            client_rows = cursor.execute(
-                f"SELECT report_id, name FROM clients WHERE report_id IN ({placeholders}) "
-                f"AND name NOT IN (SELECT client_name FROM kpi_exclusions)",
-                report_ids
-            ).fetchall()
-        else:
-            client_rows = []
+    # Busca clientes só dos relatórios em `active_report_ids` — o MESMO
+    # conjunto já deduplicado usado para `reports`/`evolution` acima, em
+    # ambos os caminhos (com ou sem report_ids explícito). Antes, o caminho
+    # com report_ids explícito buscava direto pela lista crua (sem dedup),
+    # podendo divergir do caminho default para uma seleção equivalente.
+    if active_report_ids:
+        placeholders = ",".join("?" for _ in active_report_ids)
+        client_rows = cursor.execute(
+            f"SELECT report_id, name FROM clients WHERE report_id IN ({placeholders}) "
+            f"AND name NOT IN (SELECT client_name FROM kpi_exclusions)",
+            active_report_ids
+        ).fetchall()
     else:
-        client_rows = cursor.execute("""
-            SELECT report_id, name FROM clients 
-            WHERE name NOT IN (SELECT client_name FROM kpi_exclusions)
-        """).fetchall()
+        client_rows = []
 
     client_sets = {}
     for row in client_rows:
@@ -2355,7 +2353,13 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             report_name = payload.get(
                 "report_name", f"Relatório {time.strftime('%d/%m/%Y %H:%M')}"
             )
-            report_date = payload.get("report_date") or time.strftime("%Y-%m-%d")
+            report_date = payload.get("report_date")
+            if not report_date:
+                _json_response(self, {
+                    "error": "report_date é obrigatório (data de emissão do relatório, "
+                             "extraída do PDF) — não é permitido importar sem ela"
+                }, 400)
+                return
             clients     = payload.get("clients") or (
                 payload if "report_name" not in payload else {}
             )
