@@ -222,7 +222,8 @@ valores classicamente sujeitos a drift em float, incluindo o caminho
 novo+antigo do Analytics — 1 teste), K6 (recovery_rate inalterado +
 recovery_rate_confirmed reflete só quem tem 'pagou' registrado, em
 get_kpis_data e get_analytics_data — 1 teste) e S6 (`_log_access` grava
-e filtra corretamente em `access_audit` — 1 teste). 12 testes no total.
+e filtra corretamente em `access_audit` — 1 teste). 12 testes no total
+(depois da reforma de KPI abaixo, 20 testes no total).
 
 ## Decisões já tomadas pelo responsável (não perguntar de novo)
 
@@ -239,6 +240,57 @@ e filtra corretamente em `access_audit` — 1 teste). 12 testes no total.
 | §4.2 CSRF header | Já resolvido — `X-INAD-Token` custom + `?token=` fallback (ver S1-S3 acima). |
 | §4.10 Auditoria de acesso (S6a) | **Decidido e implementado** — tabela `access_audit` (queryable), não arquivo de log. Loga só `GET /api/clients/profile`. |
 | §4.10 Criptografia at-rest (S6b) | **Decidido: não implementar.** Confiar na criptografia de disco do SO (FileVault/BitLocker) em vez de SQLCipher. |
+
+## Reforma de KPI (INSTRUCOES_REFORMA_KPI.md) — implementada em cima do v3
+
+O responsável pediu uma reforma da v3 (não uma reescrita — a v4 em
+`inad-v4/` foi abandonada) depois de perceber que os KPIs misturavam dado
+factual do PDF com ajuste manual da equipe, sem nenhum aviso quando um
+relatório é parcial/filtrado (ex.: só 1-3 parcelas) e sem legenda dos
+números. `INSTRUCOES_REFORMA_KPI.md` é a especificação completa; resumo do
+que foi implementado:
+
+- **Completude/escopo de relatório** — `reports` ganhou `escopo`
+  (`completo`/`parcial`/`nao_confirmado`), `escopo_motivo`, `escopo_origem`
+  (`declarado_usuario`/`heuristica`). `_relatorios_completos()` é a ÚNICA
+  fonte de série temporal (substituiu ~3 blocos de dedup duplicados em
+  `_calculate_reentries`, `_contact_effectiveness`, `get_kpis_data`,
+  `get_analytics_data` — mesma causa-raiz do K4 antigo). KPIs
+  ENTRE-relatórios (evolução, transições, recuperação) só usam
+  `escopo='completo'`; os demais aparecem em `meta.relatorios_excluidos`
+  (com motivo) e `meta.dados_insuficientes_para_transicoes` quando há
+  menos de 2 completos — nunca um erro, nunca um 0 silencioso.
+  `_classificar_escopo_heuristico()` sinaliza suspeita (nunca promove a
+  completo sozinha) via 4 sinais configuráveis na tabela `config`: nº
+  máx. de parcelas por cliente, queda de clientes/valor/atraso vs.
+  mediana de completos anteriores.
+- **Separação factual × operacional** — `/api/summary` reestruturado em
+  blocos `factual`/`operacional`; `get_kpis_data()`/`get_analytics_data()`
+  ganharam `meta.kpi_exclusions` (visível, não mais escondido dentro do
+  total). UI (painel principal e Analytics) tem seções rotuladas
+  "Indicadores do Relatório (factuais)" / "Indicadores Operacionais
+  (equipe)", com tag de cor em cada card/KPI.
+- **Dicionário de KPIs** — constante `KPI_DICIONARIO` em `run.py`, servida
+  em `GET /api/kpis/dicionario`; ícone "?" ao lado de cada KPI no
+  frontend abre um popover com definição/fórmula/universo/observações.
+- **Novos endpoints** — `GET`/`POST /api/reports/<id>/escopo` (consulta e
+  reclassificação manual); `GET /api/reports` agora inclui escopo.
+- **Import multi-arquivo preservado** — ganhou um passo de declaração de
+  escopo por arquivo (modal com heurística client-side de aviso), mas o
+  fluxo de selecionar/soltar vários PDFs de uma vez continua igual.
+- **Testes** — 8 novos golden tests em `tests/test_golden_kpis.py`
+  (classe `ReformaKPITests`): parcial excluído mas com dados intra-
+  relatório preservados, <2 completos nunca quebra, heurística de
+  parcelas, heurística nunca sobrescreve declaração explícita de
+  parcial, um desfecho operacional não muda nenhum KPI factual,
+  reclassificação recalcula na hora, e cobertura do dicionário (nenhum
+  KPI referenciado na UI sem legenda). 20 testes no total, todos verdes.
+
+**Pendências que dependem do responsável** (não bloqueiam o uso, ver §9 do
+`INSTRUCOES_REFORMA_KPI.md`): fornecer 1 PDF completo + 1 parcial reais
+para calibrar os limiares da heurística (hoje em valores de bom senso:
+≤3 parcelas, quedas de 40-50% vs. mediana) — ajustáveis a qualquer momento
+via tabela `config`, sem precisar mexer em código.
 
 ## O que falta (nesta ordem sugerida)
 

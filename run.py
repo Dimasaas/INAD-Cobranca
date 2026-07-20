@@ -139,6 +139,108 @@ OUTCOME_TYPES = ("prometeu_pagar", "negociacao", "pagou", "sem_resposta", "numer
 # nenhum passo legal — o estágio pre_juridico é apenas uma fila interna para triagem humana e entrega ao jurídico.
 # Isto não é aconselhamento jurídico.
 
+# ─── DICIONÁRIO DE KPIs (REFORMA_KPI §4) ─────────────────────────────────────
+# Toda métrica exibida na UI tem uma entrada aqui — servida via
+# GET /api/kpis/dicionario e consumida pelo ícone "?" ao lado de cada KPI.
+# `universo`: "factual" (só o PDF do relatório), "operacional" (depende de
+# registro da equipe) ou "derivado" (calculado a partir de ambos/heurístico).
+KPI_DICIONARIO = [
+    {
+        "id": "total_inadimplente", "nome": "Total inadimplente",
+        "definicao": "Soma de todas as parcelas vencidas no relatório, em reais.",
+        "formula": "Σ valor das parcelas vencidas", "universo": "factual",
+        "observacoes": "Só do relatório exibido.",
+    },
+    {
+        "id": "clientes_em_atraso", "nome": "Clientes em atraso",
+        "definicao": "Número de clientes distintos com ao menos uma parcela vencida no relatório.",
+        "formula": "COUNT(DISTINCT cliente) com parcela vencida", "universo": "factual",
+        "observacoes": "Identidade por nome normalizado (acento/caixa/espaço não contam como cliente diferente).",
+    },
+    {
+        "id": "parcelas_em_atraso", "nome": "Parcelas em atraso",
+        "definicao": "Contagem de parcelas vencidas no relatório.",
+        "formula": "COUNT(parcelas vencidas)", "universo": "factual", "observacoes": "",
+    },
+    {
+        "id": "dias_medios_atraso", "nome": "Dias médios de atraso",
+        "definicao": "Média, entre os clientes, do maior atraso de cada um "
+                      "(dias desde a parcela vencida mais antiga).",
+        "formula": "média(max(dias de atraso) por cliente)", "universo": "factual", "observacoes": "",
+    },
+    {
+        "id": "distribuicao_aging", "nome": "Distribuição por aging",
+        "definicao": "Nº de clientes e valor em cada faixa de atraso (0–30, 31–60, 61–90, 91–120, 121+ dias).",
+        "formula": "agrupamento por faixa de dias de atraso", "universo": "factual", "observacoes": "",
+    },
+    {
+        "id": "top_devedores", "nome": "Top devedores",
+        "definicao": "Clientes ordenados pelo total devido.",
+        "formula": "ORDER BY total_devido DESC", "universo": "factual", "observacoes": "",
+    },
+    {
+        "id": "evolucao", "nome": "Evolução",
+        "definicao": "Total devido / nº de clientes ao longo dos relatórios completos.",
+        "formula": "série temporal por relatório", "universo": "factual",
+        "observacoes": "Só relatórios com escopo='completo' entram na série — "
+                       "relatórios parciais/não confirmados aparecem à parte, como excluídos.",
+    },
+    {
+        "id": "taxa_recuperacao", "nome": "Taxa de recuperação (saiu da lista)",
+        "definicao": "% de clientes de um relatório completo que não aparecem no relatório completo seguinte.",
+        "formula": "count(clientes de Rn ausentes em Rn+1) / total em Rn × 100", "universo": "factual",
+        "observacoes": "\"Sumiu\" não é sinônimo de \"pagou\" — pode ser renegociação fora do sistema, "
+                       "encaminhamento ao jurídico, ou dado ausente. Para pagamento confirmado, ver "
+                       "'Recuperação confirmada' (operacional).",
+    },
+    {
+        "id": "reincidencia", "nome": "Reincidência",
+        "definicao": "Nº de vezes que o cliente saiu e voltou à lista entre relatórios completos.",
+        "formula": "contagem de reentradas por cliente", "universo": "factual", "observacoes": "",
+    },
+    {
+        "id": "segmentacao_novo_antigo", "nome": "Segmentação novo/antigo",
+        "definicao": "\"Novo\" = estreou na lista na data de corte ou depois; "
+                      "\"antigo\" = já aparecia antes.",
+        "formula": "primeira aparição do cliente vs. data de corte escolhida", "universo": "factual", "observacoes": "",
+    },
+    {
+        "id": "recuperacao_confirmada", "nome": "Recuperação confirmada",
+        "definicao": "% de clientes que saíram da lista e têm um desfecho 'pagou' registrado pela equipe.",
+        "formula": "count(saíram da lista E desfecho='pagou') / total em Rn × 100", "universo": "operacional",
+        "observacoes": "Subestima se a equipe não registrou todos os pagamentos.",
+    },
+    {
+        "id": "eficacia_contato", "nome": "Eficácia de contato",
+        "definicao": "% de clientes que regularizaram (sumiram do relatório completo seguinte) "
+                      "após um disparo de WhatsApp registrado.",
+        "formula": "regularizados após contato / total contatado × 100", "universo": "operacional",
+        "observacoes": "Depende de registro da equipe — pode estar subestimado.",
+    },
+    {
+        "id": "promessas_feitas_cumpridas", "nome": "Promessas feitas / cumpridas",
+        "definicao": "Nº de desfechos 'prometeu_pagar' e, destes, quantos o cliente saiu da lista "
+                      "no relatório completo seguinte.",
+        "formula": "COUNT(desfecho='prometeu_pagar'); subconjunto que saiu da lista depois",
+        "universo": "operacional", "observacoes": "",
+    },
+    {
+        "id": "clientes_excluidos_kpis", "nome": "Clientes excluídos dos KPIs",
+        "definicao": "Nº de clientes que a equipe marcou para ignorar manualmente nos cálculos.",
+        "formula": "COUNT(kpi_exclusions)", "universo": "operacional",
+        "observacoes": "Ajuste operacional — mostrado ao lado dos KPIs factuais, para transparência "
+                       "sobre o que foi excluído e por quê.",
+    },
+    {
+        "id": "score_risco", "nome": "Score de risco (0–100)",
+        "definicao": "Ordenador da fila de cobrança — prioriza quem contatar primeiro.",
+        "formula": "45%·min(valor/P90,1) + 35%·min(atraso/180d,1) + 20%·min(reincidência/3,1)",
+        "universo": "derivado",
+        "observacoes": "Heurístico de priorização, não probabilidade de pagamento. Pesos configuráveis. "
+                       "Os três componentes são exibidos junto do número, para ser explicável.",
+    },
+]
+
 # ─── BANCO DE DADOS ───────────────────────────────────────────────────────────
 # Conexão thread-safe: cada thread reutiliza a sua própria conexão.
 _local = threading.local()
@@ -259,6 +361,13 @@ def init_db():
             accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        -- 10. Configuração ajustável (pesos do score, limiares de heurística
+        -- de escopo) — ver REFORMA_KPI: _config_get()/_config_seed_defaults().
+        CREATE TABLE IF NOT EXISTS config (
+            chave TEXT PRIMARY KEY,
+            valor TEXT NOT NULL
+        );
+
         CREATE INDEX IF NOT EXISTS idx_clients_name         ON clients(name);
         CREATE INDEX IF NOT EXISTS idx_clients_report_id    ON clients(report_id);
         CREATE INDEX IF NOT EXISTS idx_properties_client_id ON properties(client_id);
@@ -292,7 +401,28 @@ def init_db():
         cursor.execute("UPDATE parcels SET valor_centavos = CAST(ROUND(valor * 100) AS INTEGER)")
         print("[MIGRAÇÃO] Coluna valor_centavos adicionada e populada a partir de valor (R$ → centavos).")
 
+    # Migração REFORMA_KPI: completude/escopo do relatório (ver
+    # INSTRUCOES_REFORMA_KPI.md §2). 'nao_confirmado' é o default seguro —
+    # nunca assumir 'completo' silenciosamente para relatórios já existentes.
+    existing_report_cols = {row[1] for row in cursor.execute("PRAGMA table_info(reports)")}
+    if "escopo" not in existing_report_cols:
+        cursor.execute("ALTER TABLE reports ADD COLUMN escopo TEXT DEFAULT 'nao_confirmado'")
+        cursor.execute("ALTER TABLE reports ADD COLUMN escopo_motivo TEXT DEFAULT ''")
+        cursor.execute("ALTER TABLE reports ADD COLUMN escopo_origem TEXT DEFAULT ''")
+        # Backfill: relatórios pré-existentes ficam 'nao_confirmado' (o
+        # ALTER TABLE já aplica o default a todas as linhas). A heurística
+        # roda em seguida para sinalizar os suspeitos e pré-marcar o resto.
+        cursor.execute("SELECT id FROM reports ORDER BY id")
+        report_ids_legado = [r[0] for r in cursor.fetchall()]
+        print(f"[MIGRAÇÃO] Colunas de escopo adicionadas à tabela reports "
+              f"({len(report_ids_legado)} relatório(s) existente(s) marcados 'nao_confirmado').")
+        conn.commit()
+        for rid in report_ids_legado:
+            _classificar_escopo_heuristico(cursor, conn, rid)
+
     conn.commit()
+
+    _config_seed_defaults(cursor, conn)
 
     _migrate_legacy_files(cursor, conn)
 
@@ -337,6 +467,161 @@ def init_db():
         print(f"[MIGRAÇÃO] Erro no backfill de valores de parcelas: {exc}")
 
     _apply_kpi_exclusions_seed(cursor, conn)
+
+
+def _config_get(cursor, chave, default=None, cast=str):
+    """Lê um valor de config (pesos do score, limiares de heurística de
+    escopo); `cast` converte pro tipo esperado (str/int/float)."""
+    row = cursor.execute("SELECT valor FROM config WHERE chave = ?", (chave,)).fetchone()
+    if row is None:
+        return default
+    try:
+        return cast(row[0])
+    except (TypeError, ValueError):
+        return default
+
+
+def _config_seed_defaults(cursor, conn):
+    """Popula config com os padrões na primeira execução — nunca sobrescreve
+    um valor já definido (INSERT OR IGNORE)."""
+    defaults = {
+        "peso_valor": "45", "peso_aging": "35", "peso_reincidencia": "20",
+        "prejuridico_dias": "120",
+        "heuristica_parcelas_max": "3",
+        "heuristica_queda_clientes_pct": "40",
+        "heuristica_queda_valor_pct": "50",
+        "heuristica_queda_atraso_pct": "50",
+    }
+    added = 0
+    for chave, valor in defaults.items():
+        cursor.execute("INSERT OR IGNORE INTO config (chave, valor) VALUES (?, ?)", (chave, valor))
+        added += cursor.rowcount
+    if added:
+        conn.commit()
+
+
+def _classificar_escopo_heuristico(cursor, conn, report_id):
+    """REFORMA_KPI §2.2(c) — heurísticas de completude sobre um relatório
+    (recém-importado ou legado, na migração).
+
+    NUNCA promove um relatório a 'completo' automaticamente — só o usuário
+    faz isso (declaração no import ou reclassificação manual). Só sinaliza
+    suspeita de incompletude: se algum sinal dispara, marca/mantém
+    'nao_confirmado' com o motivo, inclusive rebaixando um 'completo'
+    declarado pelo usuário, como checagem de proteção. Se o relatório já é
+    'parcial' (declaração explícita), não mexe — já está corretamente
+    classificado, e nenhuma heurística sobrepõe uma declaração explícita.
+    """
+    row = cursor.execute(
+        "SELECT COALESCE(NULLIF(report_date, ''), DATE(imported_at)), escopo FROM reports WHERE id = ?",
+        (report_id,),
+    ).fetchone()
+    if not row:
+        return
+    rdate, escopo_atual = row
+    if escopo_atual == "parcial":
+        return
+
+    stats = cursor.execute("""
+        SELECT COUNT(DISTINCT c.id),
+               COALESCE(SUM(pa.valor_centavos), 0),
+               CAST(julianday(?) - julianday(MIN(pa.vencimento_full)) AS INTEGER)
+        FROM clients c
+        LEFT JOIN properties p ON p.client_id = c.id
+        LEFT JOIN parcels pa   ON pa.property_id = p.id
+        WHERE c.report_id = ?
+    """, (rdate, report_id)).fetchone()
+    n_clientes, total_centavos, max_atraso = stats
+    max_atraso = max_atraso or 0
+    if not n_clientes:
+        return  # relatório vazio — nada a avaliar
+
+    parcelas_por_cliente = cursor.execute("""
+        SELECT COUNT(pa.id)
+        FROM clients c
+        LEFT JOIN properties p ON p.client_id = c.id
+        LEFT JOIN parcels pa   ON pa.property_id = p.id
+        WHERE c.report_id = ?
+        GROUP BY c.id
+    """, (report_id,)).fetchall()
+    max_parcelas_um_cliente = max((r[0] for r in parcelas_por_cliente), default=0)
+
+    limiar_parcelas = _config_get(cursor, "heuristica_parcelas_max", 3, int)
+    motivos = []
+    if 0 < max_parcelas_um_cliente <= limiar_parcelas:
+        motivos.append(
+            f"possível filtro de parcelas: nenhum cliente tem mais de "
+            f"{limiar_parcelas} parcela(s) neste relatório"
+        )
+
+    # Baseline de comparação: relatórios já confirmados 'completo' antes
+    # desta data (usa a mesma fonte única que os KPIs temporais usam).
+    completos_anteriores = [
+        r for r in _relatorios_completos(cursor)["completos"] if r["report_date"] < rdate
+    ]
+    if completos_anteriores:
+        import statistics
+        ids_anteriores = [r["id"] for r in completos_anteriores]
+        placeholders = ",".join("?" for _ in ids_anteriores)
+        linhas = cursor.execute(f"""
+            SELECT c.report_id,
+                   COALESCE(NULLIF(r.report_date, ''), DATE(r.imported_at)) AS rid_date,
+                   COUNT(DISTINCT c.id),
+                   COALESCE(SUM(pa.valor_centavos), 0),
+                   MIN(pa.vencimento_full)
+            FROM clients c
+            JOIN reports r ON r.id = c.report_id
+            LEFT JOIN properties p ON p.client_id = c.id
+            LEFT JOIN parcels pa   ON pa.property_id = p.id
+            WHERE c.report_id IN ({placeholders})
+            GROUP BY c.report_id
+        """, ids_anteriores).fetchall()
+        n_clis, totais, atrasos = [], [], []
+        for _rid, rid_date, n_cli, total_val, min_venc in linhas:
+            n_clis.append(n_cli)
+            totais.append(total_val)
+            if min_venc:
+                dias = cursor.execute(
+                    "SELECT CAST(julianday(?) - julianday(?) AS INTEGER)", (rid_date, min_venc)
+                ).fetchone()[0]
+                if dias is not None:
+                    atrasos.append(dias)
+
+        queda_cli_pct = _config_get(cursor, "heuristica_queda_clientes_pct", 40, float)
+        queda_val_pct = _config_get(cursor, "heuristica_queda_valor_pct", 50, float)
+        queda_atr_pct = _config_get(cursor, "heuristica_queda_atraso_pct", 50, float)
+
+        if n_clis:
+            mediana_cli = statistics.median(n_clis)
+            if mediana_cli > 0 and n_clientes < mediana_cli * (1 - queda_cli_pct / 100):
+                motivos.append(
+                    f"queda de {round((1 - n_clientes / mediana_cli) * 100)}% no nº de "
+                    f"clientes vs. mediana de relatórios completos anteriores ({int(mediana_cli)})"
+                )
+        if totais:
+            mediana_val = statistics.median(totais)
+            if mediana_val > 0 and total_centavos < mediana_val * (1 - queda_val_pct / 100):
+                motivos.append(
+                    f"valor total (R$ {total_centavos/100:.2f}) muito abaixo da mediana de "
+                    f"relatórios completos anteriores (R$ {mediana_val/100:.2f})"
+                )
+        if atrasos:
+            mediana_atr = statistics.median(atrasos)
+            if mediana_atr > 0 and max_atraso < mediana_atr * (1 - queda_atr_pct / 100):
+                motivos.append(
+                    f"atraso máximo ({max_atraso}d) muito menor que a mediana histórica "
+                    f"({int(mediana_atr)}d) — possível corte por data recente"
+                )
+
+    if motivos:
+        motivo_txt = "; ".join(motivos)
+        cursor.execute(
+            "UPDATE reports SET escopo = 'nao_confirmado', escopo_motivo = ?, "
+            "escopo_origem = 'heuristica' WHERE id = ?",
+            (motivo_txt, report_id),
+        )
+        conn.commit()
+        print(f"[ESCOPO] Relatório #{report_id}: suspeita de incompletude — {motivo_txt}")
 
 
 def _apply_kpi_exclusions_seed(cursor, conn):
@@ -594,7 +879,13 @@ def _backup_report_before_delete(cursor, rid):
 # ─── FUNÇÕES AUXILIARES OPERACIONAIS E DE RISCO (v3.0.0) ──────────────────────
 
 def _dedup_latest_report_id(cursor):
-    """Retorna o ID do relatório mais recente deduplicado por data."""
+    """Retorna o ID do relatório mais recente deduplicado por data.
+
+    Usado pelas telas OPERACIONAIS do dia (fila, worklist, resumo "atual") —
+    essas são KPIs INTRA-relatório (REFORMA_KPI §2.3): podem rodar sobre
+    qualquer relatório, inclusive parcial, desde que a UI mostre o escopo
+    dele. Para comparações ENTRE relatórios, usar sempre
+    `_relatorios_completos()`, nunca este helper."""
     rows = cursor.execute("""
         SELECT id, COALESCE(NULLIF(report_date, ''), DATE(imported_at)) AS rdate
         FROM   reports
@@ -609,6 +900,50 @@ def _dedup_latest_report_id(cursor):
             seen_dates.add(rdate)
             latest_ids.append(rid)
     return latest_ids[0] if latest_ids else None
+
+
+def _relatorios_completos(cursor):
+    """Fonte ÚNICA da série de relatórios usada por TODO KPI ENTRE-relatórios
+    (REFORMA_KPI §2.3, §7 item 2) — substitui a lógica de dedup-por-data que
+    antes estava duplicada em ~5 lugares (get_kpis_data, get_analytics_data,
+    _calculate_reentries, _contact_effectiveness, get_system_context).
+
+    Deduplica por data real (mantém o relatório de MAIOR id em cada data,
+    igual ao comportamento anterior) e separa em:
+      - "completos": só escopo='completo' — os únicos que entram em cálculos
+        temporais (recuperação, evolução, migração de aging, reincidência).
+      - "excluidos": parciais e não-confirmados, com motivo, para a UI
+        avisar quais relatórios ficaram de fora e por quê.
+      - "todos_dedup": os dois juntos, deduplicados — para exibição (tabela
+        de relatórios, gráfico com marcador distinto para não-completos).
+    """
+    rows = cursor.execute("""
+        SELECT id, report_name,
+               COALESCE(NULLIF(report_date, ''), DATE(imported_at)) AS rdate,
+               imported_at, escopo, escopo_motivo
+        FROM   reports
+        ORDER  BY rdate ASC, id ASC
+    """).fetchall()
+
+    by_date = {}
+    for rid, rname, rdate, imported_at, escopo, escopo_motivo in rows:
+        by_date[rdate] = (rid, rname, rdate, imported_at, escopo, escopo_motivo)
+
+    dedup = sorted(by_date.values(), key=lambda r: (r[2], r[0]))
+
+    completos, excluidos, todos_dedup = [], [], []
+    for rid, rname, rdate, imported_at, escopo, escopo_motivo in dedup:
+        escopo = escopo or "nao_confirmado"
+        item = {"id": rid, "report_name": rname, "report_date": rdate,
+                "imported_at": imported_at, "escopo": escopo,
+                "escopo_motivo": escopo_motivo or ""}
+        todos_dedup.append(item)
+        if escopo == "completo":
+            completos.append(item)
+        else:
+            excluidos.append(item)
+
+    return {"completos": completos, "excluidos": excluidos, "todos_dedup": todos_dedup}
 
 
 def _client_financials(cursor, report_id, ref_date):
@@ -679,28 +1014,28 @@ def _stage_for_days(days):
 def _calculate_reentries(cursor):
     """
     Mapeia o número de reentradas e timeline cronológica de todos os clientes.
-    """
-    report_rows = cursor.execute("""
-        SELECT id, COALESCE(NULLIF(report_date, ''), DATE(imported_at)) AS rdate
-        FROM   reports
-        ORDER  BY rdate ASC, id ASC
-    """).fetchall()
 
-    rdate_to_latest_id = {}
-    for rid, rdate in report_rows:
-        rdate_to_latest_id[rdate] = rid
-    deduped_reports = sorted(
-        [{"id": rid, "date": rdate} for rdate, rid in rdate_to_latest_id.items()],
-        key=lambda x: x["date"]
-    )
+    REFORMA_KPI §2.3: reentrada é um KPI ENTRE-relatórios (compara presença ao
+    longo do tempo) — só relatórios 'completo' entram na timeline. Um
+    relatório parcial simplesmente não existe para este cálculo (não conta
+    como "ausência", pra não gerar reentrada espúria por um cliente que só
+    ficou de fora de um relatório filtrado).
+    """
+    deduped_reports = [
+        {"id": r["id"], "date": r["report_date"]}
+        for r in _relatorios_completos(cursor)["completos"]
+    ]
 
     if not deduped_reports:
         return {}
 
-    presence_rows = cursor.execute("""
+    completos_ids = [r["id"] for r in deduped_reports]
+    placeholders = ",".join("?" for _ in completos_ids)
+    presence_rows = cursor.execute(f"""
         SELECT report_id, name FROM clients
-        WHERE normalize_name(name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
-    """).fetchall()
+        WHERE report_id IN ({placeholders})
+          AND normalize_name(name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
+    """, completos_ids).fetchall()
 
     # Chave por identidade normalizada (K2): variações de grafia/acento do
     # mesmo cliente entre relatórios se unem numa só presença/timeline, em
@@ -767,19 +1102,13 @@ def _contact_effectiveness(cursor):
     """
     Calcula eficácia dos envios e promessas cumpridas.
     """
-    report_rows = cursor.execute("""
-        SELECT id, COALESCE(NULLIF(report_date, ''), DATE(imported_at)) AS rdate
-        FROM   reports
-        ORDER  BY rdate ASC, id ASC
-    """).fetchall()
-
-    rdate_to_latest_id = {}
-    for rid, rdate in report_rows:
-        rdate_to_latest_id[rdate] = rid
-    deduped_reports = sorted(
-        [{"id": rid, "date": rdate} for rdate, rid in rdate_to_latest_id.items()],
-        key=lambda x: x["date"]
-    )
+    # REFORMA_KPI §2.3: "regularizou" só é confiável comparando contra um
+    # relatório seguinte COMPLETO — senão o cliente "sumir" pode só significar
+    # que o relatório seguinte veio filtrado, não que ele pagou.
+    deduped_reports = [
+        {"id": r["id"], "date": r["report_date"]}
+        for r in _relatorios_completos(cursor)["completos"]
+    ]
 
     report_clients = {}
     for r in deduped_reports:
@@ -1048,17 +1377,24 @@ def get_kpis_data(report_ids=None):
     """
     Calcula a evolução histórica e as transições de conversão.
     Otimizado: usa GROUP BY em vez de N queries separadas por relatório.
+
+    REFORMA_KPI §2.3: `evolution`/`transitions` (KPIs ENTRE-relatórios) usam
+    só relatórios escopo='completo' — `all_evolution` continua mostrando
+    TODOS os relatórios (com o escopo de cada um, pra UI badge/tooltip), mas
+    o que alimenta a série/gráfico e as transições é sempre o subconjunto
+    seguro. Ver `_relatorios_completos()`.
     """
     cursor = get_conn().cursor()
-    # Relatórios ordenados pela data real do PDF (Todos)
+    # Relatórios ordenados pela data real do PDF (Todos, incl. duplicados)
     all_report_rows = cursor.execute("""
         SELECT id, report_name,
                COALESCE(NULLIF(report_date, ''), DATE(imported_at)) AS rdate,
-               imported_at
+               imported_at, escopo, escopo_motivo
         FROM   reports
         ORDER  BY rdate ASC, id ASC
     """).fetchall()
-    all_reports = [{"id": r[0], "name": r[1], "report_date": r[2], "imported_at": r[3]}
+    all_reports = [{"id": r[0], "name": r[1], "report_date": r[2], "imported_at": r[3],
+                    "escopo": r[4] or "nao_confirmado", "escopo_motivo": r[5] or ""}
                    for r in all_report_rows]
 
     # Uma única query GROUP BY para stats de todos os relatórios (filtrando excluídos)
@@ -1091,10 +1427,16 @@ def get_kpis_data(report_ids=None):
             "report_name": r["name"],
             "report_date": r["report_date"],
             "is_duplicate": r["id"] not in active_ids_global,
+            "escopo": r["escopo"],
+            "escopo_motivo": r["escopo_motivo"],
             **all_stats_map.get(r["id"], {"clients": 0, "properties": 0, "parcels": 0, "total_value": 0.0}),
         }
         for r in all_reports
     ]
+
+    # Conjunto de relatórios 'completo' (fonte única — REFORMA_KPI §2.3): só
+    # eles alimentam `evolution`/`transitions` (KPIs ENTRE-relatórios).
+    completos_ids_globais = {r["id"] for r in _relatorios_completos(cursor)["completos"]}
 
     # Aplica o filtro de IDs selecionados, se fornecido
     if report_ids is not None:
@@ -1107,8 +1449,17 @@ def get_kpis_data(report_ids=None):
     selected_deduped = {}
     for r in selected_reports:
         selected_deduped[r["report_date"]] = r
-    
-    reports = sorted(selected_deduped.values(), key=lambda x: (x["report_date"], x["id"]))
+
+    # Dos selecionados, só 'completo' entra em evolution/transitions; os
+    # demais ficam em relatorios_excluidos, com motivo, pra UI avisar.
+    todos_selecionados = sorted(selected_deduped.values(), key=lambda x: (x["report_date"], x["id"]))
+    reports = [r for r in todos_selecionados if r["id"] in completos_ids_globais]
+    relatorios_excluidos = [
+        {"id": r["id"], "report_name": r["name"], "report_date": r["report_date"],
+         "escopo": r["escopo"], "escopo_motivo": r["escopo_motivo"]}
+        for r in todos_selecionados if r["id"] not in completos_ids_globais
+    ]
+
     active_report_ids = [r["id"] for r in reports]
     evolution = [e for e in all_evolution if e["report_id"] in active_report_ids]
 
@@ -1164,10 +1515,22 @@ def get_kpis_data(report_ids=None):
             "recovery_rate_confirmed":     recovery_rate_confirmed,
         })
 
+    # Ajuste operacional (equipe) sobre os números factuais acima — visível,
+    # não escondido dentro do total (REFORMA_KPI §3.1, ponto 4).
+    kpi_exclusions_names = [r[0] for r in cursor.execute(
+        "SELECT client_name FROM kpi_exclusions ORDER BY client_name"
+    ).fetchall()]
+
     return {
         "evolution": evolution,
         "transitions": transitions,
-        "all_evolution": all_evolution
+        "all_evolution": all_evolution,
+        "meta": {
+            "relatorios_completos_considerados": len(reports),
+            "relatorios_excluidos": relatorios_excluidos,
+            "dados_insuficientes_para_transicoes": len(reports) < 2,
+            "kpi_exclusions": {"count": len(kpi_exclusions_names), "names": kpi_exclusions_names},
+        },
     }
 
 
@@ -1204,11 +1567,12 @@ def get_analytics_data(start=None, end=None, report_ids=None,
     all_report_rows = cursor.execute("""
         SELECT id, report_name,
                COALESCE(NULLIF(report_date, ''), DATE(imported_at)) AS rdate,
-               imported_at
+               imported_at, escopo, escopo_motivo
         FROM   reports
         ORDER  BY rdate ASC, id ASC
     """).fetchall()
-    all_reports = [{"id": r[0], "name": r[1], "report_date": r[2], "imported_at": r[3]}
+    all_reports = [{"id": r[0], "name": r[1], "report_date": r[2], "imported_at": r[3],
+                    "escopo": r[4] or "nao_confirmado", "escopo_motivo": r[5] or ""}
                    for r in all_report_rows]
 
     # Versão dos dados: muda sempre que um relatório é importado/excluído.
@@ -1226,6 +1590,9 @@ def get_analytics_data(start=None, end=None, report_ids=None,
                 "date_range": {"start": start, "end": end},
                 "available_date_range": {"min": None, "max": None},
                 "data_version": data_version,
+                "relatorios_excluidos": [],
+                "dados_insuficientes_para_transicoes": True,
+                "kpi_exclusions": {"count": 0, "names": []},
             },
             "series": [], "transitions": [],
             "segment_totals": {"novo": {}, "antigo": {}},
@@ -1257,6 +1624,18 @@ def get_analytics_data(start=None, end=None, report_ids=None,
     if report_ids is not None:
         selected = [r for r in selected if r["id"] in report_ids]
     selected.sort(key=lambda r: (r["report_date"], r["id"]))
+
+    # Escopo (INSTRUCOES_REFORMA_KPI.md §2): KPIs temporais (série/transições)
+    # nunca podem misturar relatórios completos com parciais/não-confirmados.
+    # Filtra para completos e devolve os excluídos como metadado visível.
+    completos_ids_globais = {r["id"] for r in _relatorios_completos(cursor)["completos"]}
+    todos_selecionados = selected
+    selected = [r for r in todos_selecionados if r["id"] in completos_ids_globais]
+    relatorios_excluidos = [
+        {"id": r["id"], "report_name": r["name"], "report_date": r["report_date"],
+         "escopo": r["escopo"], "escopo_motivo": r["escopo_motivo"]}
+        for r in todos_selecionados if r["id"] not in completos_ids_globais
+    ]
 
     # Agregados por relatório × segmento (uma query só)
     seg_rows = cursor.execute(_FIRST_SEEN_CTE + """
@@ -1386,6 +1765,12 @@ def get_analytics_data(start=None, end=None, report_ids=None,
     else:
         segment_totals = {"novo": {}, "antigo": {}}
 
+    # Ajuste operacional (equipe) sobre os números factuais acima — visível,
+    # não escondido dentro do total (REFORMA_KPI §3.1, ponto 4).
+    kpi_exclusions_names = [r[0] for r in cursor.execute(
+        "SELECT client_name FROM kpi_exclusions ORDER BY client_name"
+    ).fetchall()]
+
     return {
         "meta": {
             "cutoff_date": cutoff_date,
@@ -1395,6 +1780,9 @@ def get_analytics_data(start=None, end=None, report_ids=None,
             "date_range": {"start": start, "end": end},
             "available_date_range": available_range,
             "data_version": data_version,
+            "relatorios_excluidos": relatorios_excluidos,
+            "dados_insuficientes_para_transicoes": len(selected) < 2,
+            "kpi_exclusions": {"count": len(kpi_exclusions_names), "names": kpi_exclusions_names},
         },
         "series": series,
         "transitions": transitions,
@@ -1777,12 +2165,40 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             rows   = cursor.execute("""
                 SELECT id, report_name,
                        COALESCE(NULLIF(report_date,''), DATE(imported_at)) AS rdate,
-                       imported_at
+                       imported_at, escopo, escopo_motivo, escopo_origem
                 FROM   reports ORDER BY rdate DESC, id DESC
             """).fetchall()
             _json_response(self, [{"id": r[0], "report_name": r[1],
-                                    "report_date": r[2], "imported_at": r[3]}
+                                    "report_date": r[2], "imported_at": r[3],
+                                    "escopo": r[4] or "nao_confirmado",
+                                    "escopo_motivo": r[5] or "",
+                                    "escopo_origem": r[6] or ""}
                                    for r in rows])
+
+        elif path.startswith("/api/reports/") and path.endswith("/escopo"):
+            # REFORMA_KPI §2/§5: consulta o escopo declarado/heurístico de um
+            # relatório — usado pela tela de "revisão em lote" no import.
+            try:
+                rid = int(path[len("/api/reports/"):-len("/escopo")].rstrip("/"))
+            except ValueError:
+                _json_response(self, {"error": "ID inválido"}, 400)
+                return
+            cursor = get_conn().cursor()
+            row = cursor.execute("""
+                SELECT id, report_name,
+                       COALESCE(NULLIF(report_date,''), DATE(imported_at)) AS rdate,
+                       escopo, escopo_motivo, escopo_origem
+                FROM   reports WHERE id = ?
+            """, (rid,)).fetchone()
+            if not row:
+                _json_response(self, {"error": "Relatório não encontrado"}, 404)
+                return
+            _json_response(self, {
+                "id": row[0], "report_name": row[1], "report_date": row[2],
+                "escopo": row[3] or "nao_confirmado",
+                "escopo_motivo": row[4] or "",
+                "escopo_origem": row[5] or "",
+            })
 
         elif path.startswith("/api/reports/"):
             try:
@@ -1874,6 +2290,11 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             cursor = get_conn().cursor()
             rows = cursor.execute("SELECT client_name FROM kpi_exclusions").fetchall()
             _json_response(self, [r[0] for r in rows])
+
+        elif path == "/api/kpis/dicionario":
+            # REFORMA_KPI §4: legenda de todo KPI exibido na UI, servida pra
+            # alimentar o ícone "?" ao lado de cada indicador.
+            _json_response(self, {"kpis": KPI_DICIONARIO})
 
         elif path == "/api/health":
             _json_response(self, {"status": "ok", "port": PORT,
@@ -2378,21 +2799,31 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             })
 
         elif path == "/api/summary":
+            # REFORMA_KPI §3.1/§3.2: resposta em dois blocos claramente
+            # rotulados — `factual` (só o PDF do relatório mais recente) e
+            # `operacional` (depende do que a equipe registrou). Nunca um
+            # número só mistura as duas fontes.
             import datetime
             cursor = get_conn().cursor()
             ref_date = datetime.date.today().isoformat()
-            
+
             report_id = _dedup_latest_report_id(cursor)
             if not report_id:
                 _json_response(self, {
-                    "meta": {"reference_date": ref_date, "report_id": None, "report_date": None, "data_version": "0::"},
-                    "current": {"clients": 0, "total_owed": 0.0, "avg_days_overdue": 0},
-                    "trend": {"vs_previous_report": {"clients_delta": 0, "value_delta": 0.0, "direction": "estavel"}},
-                    "aging_distribution": {},
-                    "pre_juridico": {"count": 0, "value": 0.0, "new_this_report": 0},
-                    "top_debtors": [],
-                    "effectiveness": {"contacted": 0, "regularized_after_contact": 0, "rate": 0.0, "promises_made": 0, "promises_kept": 0, "promises_kept_rate": 0.0},
-                    "worklist_counts": {"promessas_vencidas": 0, "sem_resposta": 0, "novos_pre_juridico": 0}
+                    "meta": {"reference_date": ref_date, "report_id": None, "report_date": None,
+                             "escopo": None, "escopo_motivo": "", "data_version": "0::"},
+                    "factual": {
+                        "current": {"clients": 0, "total_owed": 0.0, "avg_days_overdue": 0},
+                        "trend": {"vs_previous_report": {"clients_delta": 0, "value_delta": 0.0, "direction": "estavel"}},
+                        "aging_distribution": {},
+                        "pre_juridico": {"count": 0, "value": 0.0, "new_this_report": 0},
+                        "top_debtors": [],
+                        "kpi_exclusions": {"count": 0, "names": []},
+                    },
+                    "operacional": {
+                        "effectiveness": {"contacted": 0, "regularized_after_contact": 0, "rate": 0.0, "promises_made": 0, "promises_kept": 0, "promises_kept_rate": 0.0},
+                        "worklist_counts": {"promessas_vencidas": 0, "sem_resposta": 0, "novos_pre_juridico": 0},
+                    },
                 })
                 return
 
@@ -2401,10 +2832,13 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             ).fetchone()
             data_version = f"{ver_row[0]}:{ver_row[2]}:{ver_row[1]}"
 
-            rep_date_row = cursor.execute(
-                "SELECT COALESCE(NULLIF(report_date, ''), DATE(imported_at)) FROM reports WHERE id = ?", (report_id,)
+            rep_row = cursor.execute(
+                "SELECT COALESCE(NULLIF(report_date, ''), DATE(imported_at)), escopo, escopo_motivo "
+                "FROM reports WHERE id = ?", (report_id,)
             ).fetchone()
-            report_date_str = rep_date_row[0] if rep_date_row else None
+            report_date_str = rep_row[0] if rep_row else None
+            report_escopo = (rep_row[1] or "nao_confirmado") if rep_row else "nao_confirmado"
+            report_escopo_motivo = (rep_row[2] or "") if rep_row else ""
 
             cf_all = _client_financials(cursor, report_id, ref_date)
             total_clients = len(cf_all)
@@ -2479,20 +2913,33 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 "novos_pre_juridico": len(w_data["novos_pre_juridico"])
             }
 
+            # Ajuste operacional (equipe) sobre números factuais — visível,
+            # não escondido dentro do total (REFORMA_KPI §3.1, ponto 4).
+            excluded_names = [r[0] for r in cursor.execute(
+                "SELECT client_name FROM kpi_exclusions ORDER BY client_name"
+            ).fetchall()]
+
             _json_response(self, {
                 "meta": {
                     "reference_date": ref_date,
                     "report_id": report_id,
                     "report_date": report_date_str,
+                    "escopo": report_escopo,
+                    "escopo_motivo": report_escopo_motivo,
                     "data_version": data_version
                 },
-                "current": {"clients": total_clients, "total_owed": total_value, "avg_days_overdue": avg_days},
-                "trend": {"vs_previous_report": {"clients_delta": clients_delta, "value_delta": value_delta, "direction": direction}},
-                "aging_distribution": aging_distribution,
-                "pre_juridico": {"count": pre_juridico_count, "value": pre_juridico_value, "new_this_report": w_counts["novos_pre_juridico"]},
-                "top_debtors": top_debtors,
-                "effectiveness": eff_data,
-                "worklist_counts": w_counts
+                "factual": {
+                    "current": {"clients": total_clients, "total_owed": total_value, "avg_days_overdue": avg_days},
+                    "trend": {"vs_previous_report": {"clients_delta": clients_delta, "value_delta": value_delta, "direction": direction}},
+                    "aging_distribution": aging_distribution,
+                    "pre_juridico": {"count": pre_juridico_count, "value": pre_juridico_value, "new_this_report": w_counts["novos_pre_juridico"]},
+                    "top_debtors": top_debtors,
+                    "kpi_exclusions": {"count": len(excluded_names), "names": excluded_names},
+                },
+                "operacional": {
+                    "effectiveness": eff_data,
+                    "worklist_counts": w_counts,
+                },
             })
 
         elif path in _STATIC_ALLOWLIST:
@@ -2556,6 +3003,28 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                              "extraída do PDF) — não é permitido importar sem ela"
                 }, 400)
                 return
+
+            # REFORMA_KPI §2.1/§2.2(a): declaração de escopo no import — a
+            # fonte mais confiável, já que quem emitiu o PDF sabe o filtro
+            # usado. Opcional (retrocompat com clientes antigos da API e com
+            # a migração legada); se ausente, fica 'nao_confirmado' e a
+            # heurística (abaixo) tenta sinalizar suspeita sozinha.
+            escopo = payload.get("escopo")
+            escopo_motivo = (payload.get("escopo_motivo") or "").strip()
+            if escopo is not None and escopo not in ("completo", "parcial", "nao_confirmado"):
+                _json_response(self, {
+                    "error": "escopo deve ser 'completo', 'parcial' ou 'nao_confirmado'"
+                }, 400)
+                return
+            if escopo == "parcial" and not escopo_motivo:
+                _json_response(self, {
+                    "error": "escopo_motivo é obrigatório quando escopo='parcial' "
+                             "(ex.: 'filtrado 1-3 parcelas', 'corte por data')"
+                }, 400)
+                return
+            escopo_origem = "declarado_usuario" if escopo else ""
+            escopo = escopo or "nao_confirmado"
+
             clients     = payload.get("clients") or (
                 payload if "report_name" not in payload else {}
             )
@@ -2564,12 +3033,17 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 report_date = _normalize_date(report_date)
                 cursor = conn.cursor()
                 cursor.execute(
-                    "INSERT INTO reports (report_name, report_date) VALUES (?, ?)",
-                    (report_name, report_date),
+                    "INSERT INTO reports (report_name, report_date, escopo, escopo_motivo, escopo_origem) "
+                    "VALUES (?, ?, ?, ?, ?)",
+                    (report_name, report_date, escopo, escopo_motivo, escopo_origem),
                 )
                 report_id = cursor.lastrowid
                 _insert_clients(cursor, report_id, clients)
                 conn.commit()
+                # Heurística roda sempre por cima da declaração: nunca promove a
+                # 'completo' sozinha, mas pode rebaixar um 'completo' declarado
+                # se achar sinal forte de incompletude (checagem de proteção).
+                _classificar_escopo_heuristico(cursor, conn, report_id)
                 print(f"[API] Novo relatório importado com sucesso: '{report_name}' (ID: {report_id})")
                 _json_response(self, {"status": "success", "report_id": report_id})
             except ValueError as exc:
@@ -2578,6 +3052,44 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             except Exception as exc:
                 conn.rollback()
                 _error_response(self, exc, 500)
+
+        elif path.startswith("/api/reports/") and path.endswith("/escopo"):
+            # REFORMA_KPI §2.2(a)/§5: reclassificação manual do escopo de um
+            # relatório já importado (tela de "revisão em lote" da migração,
+            # ou correção pontual). Sempre marca escopo_origem='declarado_
+            # usuario' — uma reclassificação humana nunca é sobrescrita pela
+            # heurística (ver _classificar_escopo_heuristico).
+            try:
+                rid = int(path[len("/api/reports/"):-len("/escopo")].rstrip("/"))
+            except ValueError:
+                _json_response(self, {"error": "ID inválido"}, 400)
+                return
+            conn = get_conn()
+            cursor = conn.cursor()
+            exists = cursor.execute("SELECT 1 FROM reports WHERE id = ?", (rid,)).fetchone()
+            if not exists:
+                _json_response(self, {"error": "Relatório não encontrado"}, 404)
+                return
+            escopo = payload.get("escopo")
+            escopo_motivo = (payload.get("escopo_motivo") or "").strip()
+            if escopo not in ("completo", "parcial", "nao_confirmado"):
+                _json_response(self, {
+                    "error": "escopo deve ser 'completo', 'parcial' ou 'nao_confirmado'"
+                }, 400)
+                return
+            if escopo == "parcial" and not escopo_motivo:
+                _json_response(self, {
+                    "error": "escopo_motivo é obrigatório quando escopo='parcial' "
+                             "(ex.: 'filtrado 1-3 parcelas', 'corte por data')"
+                }, 400)
+                return
+            cursor.execute(
+                "UPDATE reports SET escopo = ?, escopo_motivo = ?, escopo_origem = 'declarado_usuario' "
+                "WHERE id = ?",
+                (escopo, escopo_motivo, rid),
+            )
+            conn.commit()
+            _json_response(self, {"status": "success", "id": rid, "escopo": escopo, "escopo_motivo": escopo_motivo})
 
         elif path in ("/api/actions/sent", "/api/sent"):
             try:

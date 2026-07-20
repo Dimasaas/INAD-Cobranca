@@ -36,18 +36,30 @@ def _fresh_db(tmp_dir, name="test.db"):
     run.init_db()
 
 
-def _import_report(name, date, clients):
+def _import_report(name, date, clients, escopo="completo", escopo_motivo="", run_heuristic=False):
     """Insere um relatório + árvore de clientes usando o caminho real de
-    ingestão de run.py (_normalize_date/_insert_clients), igual à API."""
+    ingestão de run.py (_normalize_date/_insert_clients), igual à API.
+
+    REFORMA_KPI: por padrão marca escopo='completo' — as fixtures deste
+    arquivo são datasets pequenos, mas deliberadamente completos (calculados
+    à mão pelo autor do teste, não um recorte real de PDF); é o mesmo que um
+    operador confiante declarando escopo no import. `run_heuristic=True` é só
+    para os testes que verificam a própria heurística de detecção (ela pode
+    rebaixar o escopo declarado — não usar nos demais testes, que dependem
+    de evolution/transitions não-vazios)."""
     conn = run.get_conn()
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO reports (report_name, report_date) VALUES (?, ?)",
-        (name, run._normalize_date(date)),
+        "INSERT INTO reports (report_name, report_date, escopo, escopo_motivo, escopo_origem) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (name, run._normalize_date(date), escopo, escopo_motivo,
+         "declarado_usuario" if escopo else ""),
     )
     report_id = cursor.lastrowid
     run._insert_clients(cursor, report_id, clients)
     conn.commit()
+    if run_heuristic:
+        run._classificar_escopo_heuristico(cursor, conn, report_id)
     return report_id
 
 
@@ -562,6 +574,304 @@ class LargeDatasetReconciliationTests(unittest.TestCase):
             self.assertEqual(evo["clients"], s["total"]["clients"])
             self.assertEqual(evo["parcels"], s["total"]["parcels"])
             self.assertAlmostEqual(evo["total_value"], s["total"]["total_value"], places=2)
+
+
+class ReformaKPITests(unittest.TestCase):
+    """Golden tests do INSTRUCOES_REFORMA_KPI.md §6 — completude/escopo de
+    relatório, separação factual×operacional e cobertura do dicionário de
+    KPIs. Datasets pequenos, calculados à mão, num banco temporário isolado."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="inad_reforma_")
+        _fresh_db(self.tmpdir)
+
+    def tearDown(self):
+        if hasattr(run._local, "conn") and run._local.conn is not None:
+            run._local.conn.close()
+            run._local.conn = None
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_partial_report_excluded_from_temporal_kpis_but_not_from_worklist(self):
+        """Completo -> parcial (só 1-3 parcelas) -> a recuperação não conta
+        os clientes ausentes do parcial (ele nem entra na comparação); o
+        parcial aparece em meta.relatorios_excluidos com o motivo; os dados
+        intra-relatório do parcial (all_evolution) continuam disponíveis."""
+        _import_report("Relatorio Completo", "2026-01-01", {
+            "ANA SILVA": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 1000.0},
+                ]}],
+            },
+            "BRUNO COSTA": {
+                "cpf_cnpj": "2", "cel": "", "email": "",
+                "properties": [{"venda_id": "V2", "identifier": "Lote 2", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 2000.0},
+                ]}],
+            },
+        }, escopo="completo")
+
+        partial_id = _import_report("Relatorio Parcial (1-3 parcelas)", "2026-02-01", {
+            # Só Ana aparece — um extrato filtrado só mostraria isso; se
+            # contasse como "recuperação", Bruno pareceria ter sumido/pago
+            # quando na verdade só está fora do recorte do relatório.
+            "ANA SILVA": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "2/2", "vencimento": "10/02/2026",
+                     "vencimento_full": "2026-02-10", "valor": 1000.0},
+                ]}],
+            },
+        }, escopo="parcial", escopo_motivo="filtrado 1-3 parcelas")
+
+        kpis = run.get_kpis_data(None)
+
+        # Nenhum relatório completo seguinte -> nada para comparar ainda.
+        self.assertEqual(kpis["transitions"], [])
+        self.assertTrue(kpis["meta"]["dados_insuficientes_para_transicoes"])
+        self.assertEqual(kpis["meta"]["relatorios_completos_considerados"], 1)
+
+        excluidos = kpis["meta"]["relatorios_excluidos"]
+        self.assertEqual(len(excluidos), 1)
+        self.assertEqual(excluidos[0]["id"], partial_id)
+        self.assertEqual(excluidos[0]["escopo"], "parcial")
+        self.assertEqual(excluidos[0]["escopo_motivo"], "filtrado 1-3 parcelas")
+
+        # Dados intra-relatório do parcial continuam acessíveis (não é
+        # apagado nem escondido — só fica fora de evolution/transitions).
+        all_evo_by_id = {e["report_id"]: e for e in kpis["all_evolution"]}
+        self.assertIn(partial_id, all_evo_by_id)
+        self.assertEqual(all_evo_by_id[partial_id]["clients"], 1)
+        self.assertEqual(all_evo_by_id[partial_id]["total_value"], 1000.0)
+        self.assertEqual(all_evo_by_id[partial_id]["escopo"], "parcial")
+
+        # Analytics segue a mesma regra (mesma fonte única).
+        analytics = run.get_analytics_data(cutoff_last_n=1)
+        self.assertEqual(analytics["transitions"], [])
+        self.assertTrue(analytics["meta"]["dados_insuficientes_para_transicoes"])
+        self.assertEqual(len(analytics["meta"]["relatorios_excluidos"]), 1)
+        self.assertEqual(analytics["meta"]["relatorios_excluidos"][0]["id"], partial_id)
+
+    def test_fewer_than_two_completos_never_crashes_returns_dados_insuficientes(self):
+        """<2 relatórios completos -> KPIs temporais voltam 'dados
+        insuficientes' (metadado explícito), nunca uma exceção nem um 0/vazio
+        silencioso sem explicação. Cobre 0 e 1 relatório completo."""
+        # 0 relatórios
+        kpis_empty = run.get_kpis_data(None)
+        self.assertEqual(kpis_empty["evolution"], [])
+        self.assertEqual(kpis_empty["transitions"], [])
+        self.assertTrue(kpis_empty["meta"]["dados_insuficientes_para_transicoes"])
+
+        analytics_empty = run.get_analytics_data(cutoff_last_n=1)
+        self.assertEqual(analytics_empty["series"], [])
+        self.assertTrue(analytics_empty["meta"]["dados_insuficientes_para_transicoes"])
+
+        # 1 relatório completo
+        _import_report("Único Completo", "2026-01-01", {
+            "ANA SILVA": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 500.0},
+                ]}],
+            },
+        }, escopo="completo")
+
+        kpis_one = run.get_kpis_data(None)
+        self.assertEqual(len(kpis_one["evolution"]), 1)   # série existe (1 ponto)
+        self.assertEqual(kpis_one["transitions"], [])      # mas sem transição possível
+        self.assertTrue(kpis_one["meta"]["dados_insuficientes_para_transicoes"])
+        self.assertEqual(kpis_one["meta"]["relatorios_completos_considerados"], 1)
+
+    def test_heuristic_flags_low_parcela_count_as_suspect(self):
+        """Heurística '<=3 parcelas': mesmo com escopo='completo' declarado
+        pelo usuário, se TODOS os clientes têm poucas parcelas o relatório é
+        rebaixado a 'nao_confirmado' com o motivo registrado — proteção
+        contra declaração equivocada, nunca promove a 'completo' sozinha."""
+        report_id = _import_report("Relatorio Suspeito", "2026-01-01", {
+            "ANA SILVA": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/2", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 500.0},
+                ]}],
+            },
+            "BRUNO COSTA": {
+                "cpf_cnpj": "2", "cel": "", "email": "",
+                "properties": [{"venda_id": "V2", "identifier": "Lote 2", "parcels": [
+                    {"parcela": "1/2", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 300.0},
+                ]}],
+            },
+        }, escopo="completo", run_heuristic=True)
+
+        row = run.get_conn().cursor().execute(
+            "SELECT escopo, escopo_motivo, escopo_origem FROM reports WHERE id = ?",
+            (report_id,),
+        ).fetchone()
+        self.assertEqual(row[0], "nao_confirmado")
+        self.assertIn("filtro de parcelas", row[1])
+        self.assertEqual(row[2], "heuristica")
+
+        # E como consequência, some de evolution/transitions.
+        kpis = run.get_kpis_data(None)
+        self.assertEqual(kpis["evolution"], [])
+        self.assertEqual(len(kpis["meta"]["relatorios_excluidos"]), 1)
+
+    def test_heuristic_never_overrides_explicit_partial_declaration(self):
+        """Um relatório já declarado 'parcial' pelo usuário não é mexido pela
+        heurística (ela só atua sobre 'completo'/'nao_confirmado')."""
+        report_id = _import_report("Relatorio Parcial Declarado", "2026-01-01", {
+            "ANA SILVA": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 500.0},
+                ]}],
+            },
+        }, escopo="parcial", escopo_motivo="corte manual do usuário", run_heuristic=True)
+
+        row = run.get_conn().cursor().execute(
+            "SELECT escopo, escopo_motivo FROM reports WHERE id = ?", (report_id,)
+        ).fetchone()
+        self.assertEqual(row[0], "parcial")
+        self.assertEqual(row[1], "corte manual do usuário")   # motivo do usuário preservado
+
+    def test_operational_outcome_does_not_change_factual_kpis(self):
+        """Separação factual x operacional: registrar um desfecho 'pagou'
+        (Universo B) não pode alterar nenhum KPI factual (total, nº de
+        clientes, recovery_rate bruta) — só o operacional (recovery_rate_
+        confirmed) muda. Mesma garantia de test_confirmed_recovery_*, mas
+        aqui comparando o ANTES e o DEPOIS byte a byte."""
+        _import_report("Relatorio 1", "2026-01-01", {
+            "ANA PERMANECE": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 100.0},
+                ]}],
+            },
+            "CARLA PAGOU": {
+                "cpf_cnpj": "2", "cel": "", "email": "",
+                "properties": [{"venda_id": "V2", "identifier": "Lote 2", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 300.0},
+                ]}],
+            },
+        })
+        _import_report("Relatorio 2", "2026-02-01", {
+            "ANA PERMANECE": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "2/2", "vencimento": "10/02/2026",
+                     "vencimento_full": "2026-02-10", "valor": 100.0},
+                ]}],
+            },
+        })
+
+        def _factual_snapshot():
+            kpis = run.get_kpis_data(None)
+            evo = [{k: v for k, v in e.items() if k != "escopo_motivo"} for e in kpis["evolution"]]
+            trans = [{k: v for k, v in t.items()
+                       if k not in ("recovered_confirmed_clients", "recovery_rate_confirmed")}
+                      for t in kpis["transitions"]]
+            return evo, trans
+
+        evo_before, trans_before = _factual_snapshot()
+
+        conn = run.get_conn()
+        conn.execute(
+            "INSERT INTO contact_outcomes (client_name, outcome) VALUES (?, 'pagou')",
+            ("CARLA PAGOU",),
+        )
+        conn.commit()
+
+        evo_after, trans_after = _factual_snapshot()
+
+        self.assertEqual(evo_before, evo_after,
+                          "registrar um desfecho não pode alterar os KPIs factuais de evolução")
+        self.assertEqual(trans_before, trans_after,
+                          "registrar um desfecho não pode alterar os campos factuais de transições")
+
+        # O operacional, por sua vez, DEVE mudar.
+        kpis_after = run.get_kpis_data(None)
+        self.assertEqual(kpis_after["transitions"][0]["recovered_confirmed_clients"], 1)
+
+    def test_reclassify_escopo_recalculates_temporal_kpis(self):
+        """Reclassificar o escopo de um relatório (equivalente ao POST
+        /api/reports/<id>/escopo) muda imediatamente quem entra em
+        evolution/transitions — sem precisar reimportar nada."""
+        _import_report("Relatorio 1", "2026-01-01", {
+            "ANA SILVA": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 500.0},
+                ]}],
+            },
+        }, escopo="completo")
+        report2_id = _import_report("Relatorio 2 (dúvida)", "2026-02-01", {
+            "ANA SILVA": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "2/2", "vencimento": "10/02/2026",
+                     "vencimento_full": "2026-02-10", "valor": 500.0},
+                ]}],
+            },
+        }, escopo="nao_confirmado")
+
+        kpis_before = run.get_kpis_data(None)
+        self.assertEqual(len(kpis_before["evolution"]), 1)   # só o Relatorio 1
+        self.assertTrue(kpis_before["meta"]["dados_insuficientes_para_transicoes"])
+
+        # Reclassifica (mesma operação SQL do endpoint POST /api/reports/<id>/escopo).
+        conn = run.get_conn()
+        conn.execute(
+            "UPDATE reports SET escopo = 'completo', escopo_motivo = '', "
+            "escopo_origem = 'declarado_usuario' WHERE id = ?",
+            (report2_id,),
+        )
+        conn.commit()
+
+        kpis_after = run.get_kpis_data(None)
+        self.assertEqual(len(kpis_after["evolution"]), 2)
+        self.assertFalse(kpis_after["meta"]["dados_insuficientes_para_transicoes"])
+        self.assertEqual(len(kpis_after["transitions"]), 1)
+        self.assertEqual(kpis_after["transitions"][0]["recovery_rate"], 0.0)  # Ana continua
+
+    def test_kpi_dictionary_covers_every_kpi_referenced_in_the_ui(self):
+        """Nenhum KPI órfão: todo id passado para toggleKpiInfo(...) no HTML/JS
+        do frontend precisa ter uma entrada correspondente em KPI_DICIONARIO
+        (senão o ícone '?' abriria um tooltip vazio, sem legenda)."""
+        import re
+        dict_ids = {k["id"] for k in run.KPI_DICIONARIO}
+        self.assertTrue(dict_ids, "KPI_DICIONARIO não pode estar vazio")
+
+        referenced_ids = set()
+        pattern = re.compile(r"toggleKpiInfo\([^,]+,\s*'([a-zA-Z0-9_]+)'\)")
+        for fname in ("inad_template.html", "inad_analytics.html", "analytics.js"):
+            fpath = os.path.join(PROJECT_DIR, fname)
+            with open(fpath, "r", encoding="utf-8") as f:
+                content = f.read()
+            found = pattern.findall(content)
+            referenced_ids.update(found)
+
+        self.assertTrue(referenced_ids, "nenhuma chamada a toggleKpiInfo() encontrada no frontend")
+        orphans = referenced_ids - dict_ids
+        self.assertEqual(
+            orphans, set(),
+            f"KPI(s) referenciado(s) na UI sem entrada no dicionário: {sorted(orphans)}",
+        )
+
+    def test_kpi_dictionary_endpoint_shape(self):
+        """Toda entrada do dicionário tem os campos exigidos por
+        INSTRUCOES_REFORMA_KPI.md §4.1 e um universo válido."""
+        for item in run.KPI_DICIONARIO:
+            for field in ("id", "nome", "definicao", "formula", "universo", "observacoes"):
+                self.assertIn(field, item, f"KPI {item.get('id')} sem campo '{field}'")
+            self.assertIn(item["universo"], ("factual", "operacional", "derivado"))
 
 
 if __name__ == "__main__":
