@@ -1008,6 +1008,19 @@ def _get_worklist_data(cursor, ref_date):
     }
 
 
+def _confirmed_paid_names(cursor):
+    """K6: identidades (normalizadas, ver K2) com ao menos um desfecho
+    'pagou' registrado em contact_outcomes — a qualquer momento, sem janela
+    de tempo. Usado para reportar 'recuperação confirmada' (recovery_rate_
+    confirmed) ao lado do sinal amplo existente (recovery_rate = 'saiu do
+    relatório seguinte'), sem substituí-lo — decisão do responsável (K6,
+    opção C): as duas métricas convivem, nenhuma é descartada."""
+    rows = cursor.execute(
+        "SELECT DISTINCT client_name FROM contact_outcomes WHERE outcome = 'pagou'"
+    ).fetchall()
+    return {_normalize_name(r[0]) for r in rows}
+
+
 def get_kpis_data(report_ids=None):
     """
     Calcula a evolução histórica e as transições de conversão.
@@ -1099,6 +1112,11 @@ def get_kpis_data(report_ids=None):
     for row in client_rows:
         client_sets.setdefault(row[0], set()).add(_normalize_name(row[1]))
 
+    # K6: "recuperação confirmada" — subconjunto de `recovered` com um
+    # desfecho 'pagou' registrado. Reportada ao lado de recovery_rate
+    # (não substitui) — ver _confirmed_paid_names().
+    paid_names = _confirmed_paid_names(cursor)
+
     transitions = []
     for i in range(len(reports) - 1):
         r_cur  = reports[i]
@@ -1110,6 +1128,8 @@ def get_kpis_data(report_ids=None):
 
         recovered = clients_cur - clients_next
         recovery_rate = round(len(recovered) / len(clients_cur) * 100, 1)
+        recovered_confirmed = {n for n in recovered if n in paid_names}
+        recovery_rate_confirmed = round(len(recovered_confirmed) / len(clients_cur) * 100, 1)
 
         transitions.append({
             "from_report":       r_cur["name"],
@@ -1117,6 +1137,8 @@ def get_kpis_data(report_ids=None):
             "total_clients":     len(clients_cur),
             "recovered_clients": len(recovered),
             "recovery_rate":     recovery_rate,
+            "recovered_confirmed_clients": len(recovered_confirmed),
+            "recovery_rate_confirmed":     recovery_rate_confirmed,
         })
 
     return {
@@ -1296,6 +1318,10 @@ def get_analytics_data(start=None, end=None, report_ids=None,
     def _rate(recovered, total):
         return round(len(recovered) / len(total) * 100, 1) if total else 0.0
 
+    # K6: "recuperação confirmada" reportada ao lado de recovery_rate, não
+    # em substituição a ele — ver _confirmed_paid_names().
+    paid_names = _confirmed_paid_names(cursor)
+
     transitions = []
     for i in range(len(selected) - 1):
         r_cur, r_next = selected[i], selected[i + 1]
@@ -1308,6 +1334,7 @@ def get_analytics_data(start=None, end=None, report_ids=None,
         recovered   = cur_names - set(nxt)
         cur_novo    = {n for n in cur_names if cur[n][0] == "novo"}
         cur_antigo  = cur_names - cur_novo
+        recovered_confirmed = {n for n in recovered if n in paid_names}
 
         transitions.append({
             "from_report":        r_cur["name"],
@@ -1320,6 +1347,8 @@ def get_analytics_data(start=None, end=None, report_ids=None,
             "recovery_rate_novo":   _rate(recovered & cur_novo,   cur_novo),
             "recovery_rate_antigo": _rate(recovered & cur_antigo, cur_antigo),
             "recovered_value":    _cents_to_reais(sum(cur[n][1] for n in recovered)),
+            "recovered_confirmed_clients": len(recovered_confirmed),
+            "recovery_rate_confirmed":     _rate(recovered_confirmed, cur_names),
         })
 
     # Totais do segmento no relatório mais recente do período
@@ -1465,14 +1494,17 @@ def get_system_context():
                 "Clientes em kpi_exclusions são ignorados em todos os cálculos de KPI."
             ),
             "recovery_rate": (
-                "Taxa = clientes em R_n que NÃO aparecem em R_{n+1} / total em R_n × 100"
+                "Taxa = clientes em R_n que NÃO aparecem em R_{n+1} / total em R_n × 100 "
+                "('saiu do relatório' — sinal amplo, não implica pagamento confirmado). "
+                "recovery_rate_confirmed (K6) reporta, ao lado, a fração desses que têm "
+                "um desfecho 'pagou' registrado em contact_outcomes — as duas métricas "
+                "convivem, nenhuma substitui a outra."
             ),
             "client_segmentation": (
                 "Cliente é 'novo' se sua primeira aparição em qualquer relatório "
-                "(por nome exato) ocorreu na data de corte ou depois; senão 'antigo'. "
-                "Corte configurável por data (cutoff) ou N últimos relatórios "
-                "(cutoff_last_n). Limitação: variações de grafia/acento no nome "
-                "contam como clientes distintos."
+                "(identidade via normalize_name(), K2 — acento/caixa/espaço não distinguem "
+                "clientes) ocorreu na data de corte ou depois; senão 'antigo'. "
+                "Corte configurável por data (cutoff) ou N últimos relatórios (cutoff_last_n)."
             ),
             "risk_score_explainable": (
                 "Score (0-100) = 45% valor normalizado + 35% envelhecimento da divida "

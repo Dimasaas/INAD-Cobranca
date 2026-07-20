@@ -417,6 +417,69 @@ class GoldenKPITests(unittest.TestCase):
         self.assertEqual(last["antigo"]["total_value"], 2.10)
         self.assertEqual(last["total"]["total_value"], 3.80)   # soma em centavos — sem double-rounding
 
+    def test_confirmed_recovery_reported_alongside_recovery_rate(self):
+        """K6 (opção C, decisão do responsável): recovery_rate ('saiu do
+        relatório') continua existindo sem mudança de comportamento — mas
+        recovery_rate_confirmed passa a reportar, ao lado, a fração desses
+        que tem um desfecho 'pagou' registrado. As duas convivem; nenhuma
+        substitui a outra."""
+        _import_report("Relatorio 1", "2026-01-01", {
+            "ANA PERMANECE": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 100.0},
+                ]}],
+            },
+            "BRUNO SEM_OUTCOME": {
+                "cpf_cnpj": "2", "cel": "", "email": "",
+                "properties": [{"venda_id": "V2", "identifier": "Lote 2", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 200.0},
+                ]}],
+            },
+            "CARLA PAGOU": {
+                "cpf_cnpj": "3", "cel": "", "email": "",
+                "properties": [{"venda_id": "V3", "identifier": "Lote 3", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 300.0},
+                ]}],
+            },
+        })
+        _import_report("Relatorio 2", "2026-02-01", {
+            "ANA PERMANECE": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "2/2", "vencimento": "10/02/2026",
+                     "vencimento_full": "2026-02-10", "valor": 100.0},
+                ]}],
+            },
+            # BRUNO e CARLA somem do Relatorio 2 — mesmo sinal bruto (recovery_rate),
+            # mas só CARLA tem um desfecho 'pagou' registrado.
+        })
+        conn = run.get_conn()
+        conn.execute(
+            "INSERT INTO contact_outcomes (client_name, outcome) VALUES (?, 'pagou')",
+            ("CARLA PAGOU",),
+        )
+        conn.commit()
+
+        kpis = run.get_kpis_data(None)
+        self.assertEqual(len(kpis["transitions"]), 1)
+        trans = kpis["transitions"][0]
+        self.assertEqual(trans["total_clients"], 3)
+        self.assertEqual(trans["recovered_clients"], 2)              # Bruno + Carla sumiram
+        self.assertEqual(trans["recovery_rate"], 66.7)                # inalterado (sinal amplo)
+        self.assertEqual(trans["recovered_confirmed_clients"], 1)     # só Carla
+        self.assertEqual(trans["recovery_rate_confirmed"], 33.3)
+
+        analytics = run.get_analytics_data(cutoff_last_n=1)
+        a_trans = analytics["transitions"][0]
+        self.assertEqual(a_trans["recovered_clients"], 2)
+        self.assertEqual(a_trans["recovery_rate"], 66.7)
+        self.assertEqual(a_trans["recovered_confirmed_clients"], 1)
+        self.assertEqual(a_trans["recovery_rate_confirmed"], 33.3)
+
 
 class LargeDatasetReconciliationTests(unittest.TestCase):
     """Gera uma série sintética determinística de relatórios (random.Random(42),

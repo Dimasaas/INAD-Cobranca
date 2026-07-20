@@ -121,6 +121,30 @@ Todos os itens abaixo estão implementados, testados manualmente e/ou via
   `valor_centavos`) — backfill correto. Smoke test end-to-end via HTTP
   (import → kpis/summary/queue/profile) confirmado batendo exato ao
   centavo.
+- **K6 — `recovery_rate` redefinido (decisão do responsável: opção C,
+  "duas métricas lado a lado").** `recovery_rate` ("saiu do relatório
+  seguinte") continua existindo **sem nenhuma mudança de comportamento**
+  — retrocompatível com a aba KPI e o Analytics. Nova função
+  `_confirmed_paid_names(cursor)` retorna o conjunto de identidades
+  (normalizadas, K2) com ao menos um desfecho `outcome='pagou'` registrado
+  em `contact_outcomes` (sem janela de tempo — qualquer 'pagou' já
+  registrado conta). Dois campos novos, aditivos, em cada transição de
+  `get_kpis_data()` e `get_analytics_data()`:
+  `recovered_confirmed_clients` (contagem) e `recovery_rate_confirmed`
+  (%) — o subconjunto de "recovered" que tem 'pagou' confirmado. Nenhum
+  campo existente foi removido/renomeado (`GET /api/kpis` e
+  `GET /api/kpis/analytics` continuam retrocompatíveis). Teste golden novo
+  cobre um cenário com 1 cliente recuperado-sem-confirmação e 1
+  recuperado-confirmado, checando que `recovery_rate` não muda e
+  `recovery_rate_confirmed` reflete só o confirmado — em ambas as funções.
+  Smoke test HTTP confirmado. **Decisão explícita:** não há janela de
+  tempo entre o desfecho 'pagou' e a data do relatório onde o cliente
+  sumiu — qualquer 'pagou' já registrado pro cliente conta, o que é uma
+  simplificação deliberada (ver docstring de `_confirmed_paid_names`).
+  **Fora do escopo desta passada:** exibição na UI (`inad_template.html`/
+  `inad_analytics.html`/`analytics.js`) — os campos novos já estão na API,
+  mas nenhuma tela mostra `recovery_rate_confirmed` ainda. Próximo passo
+  natural se quiserem ver isso no painel.
 
 **Outros:**
 - **A1** — documentado que o servidor é single-thread de propósito
@@ -162,9 +186,11 @@ K4 (report_ids explícito == caminho default), reconciliação estrutural
 (soma dos segmentos novo+antigo == total) sobre um dataset sintético maior
 gerado no próprio arquivo de teste (determinístico, `random.Random(42)`,
 sem depender de nada externo), K2 (grafia diferente = mesmo cliente em
-recovery_rate/exclusões/reentradas — 3 testes) e K7 (soma cent-exata com
+recovery_rate/exclusões/reentradas — 3 testes), K7 (soma cent-exata com
 valores classicamente sujeitos a drift em float, incluindo o caminho
-novo+antigo do Analytics — 1 teste).
+novo+antigo do Analytics — 1 teste) e K6 (recovery_rate inalterado +
+recovery_rate_confirmed reflete só quem tem 'pagou' registrado, em
+get_kpis_data e get_analytics_data — 1 teste).
 
 ## Decisões já tomadas pelo responsável (não perguntar de novo)
 
@@ -173,7 +199,7 @@ novo+antigo do Analytics — 1 teste).
 | §4.1 Modelo de auth (S2) | **Por operador**, não token único compartilhado. |
 | §4.3 Dedup (K1) | **Exigir `report_date`** na importação (recusar sem ela) — não "tratar como distintas". |
 | §4.4 Normalização de nome (K2) | **Aprovado e implementado** — acento/caixa/espaço contam como o mesmo cliente. Abreviações ficam fora do escopo. |
-| §4.5 `recovery_rate` (K6) | **Manter como está por enquanto** — não implementar agora. Redefinir isso é uma decisão de negócio maior, tratar em sessão dedicada. |
+| §4.5 `recovery_rate` (K6) | **Decidido e implementado** — opção C: manter `recovery_rate` como está (retrocompat) e reportar `recovery_rate_confirmed` (baseado em outcome `pagou`) ao lado, sem substituir. |
 | §4.6 Fronteira 120/121 (K5) | Já resolvido sem mudar comportamento (ver acima). |
 | §4.7 Precisão monetária (K7) | **Migrado** para centavos inteiros (`valor_centavos`). |
 | §4.8 Telefone inválido (D5) | Já resolvido — esconde o link (ver acima). |
@@ -195,14 +221,15 @@ checklist original do K2 e tem impacto baixo — mas se for mexer em
 `_get_worklist_data()` de novo, considere normalizar essa comparação
 também (mesmo padrão usado em `_contact_effectiveness`).
 
-### 2. K6 — `recovery_rate` (mantido como está por enquanto — não mexer)
+### 2. K6 — exibir `recovery_rate_confirmed` na UI (opcional, natural próximo passo)
 
-Não implementar sem decisão explícita nova. Está documentado como
-limitação conhecida no próprio `get_system_context()` (`ai_guidelines`/
-`business_rules`). Se retomar isso no futuro, a pergunta em aberto é:
-"sumiu do relatório seguinte" continua contando como "recuperado", ou
-exigir sinal de pagamento/outcome registrado e reportar "saiu do
-relatório" separadamente?
+O backend já reporta as duas métricas lado a lado (ver acima). Nenhuma
+tela mostra a nova ainda: a aba KPI (`inad_template.html`) e o Analytics
+(`inad_analytics.html`/`analytics.js`) continuam exibindo só
+`recovery_rate`. Se quiserem ver isso no painel, é um trabalho de
+frontend (editar `inad_template.html`, regenerar `inad_whatsapp.html` via
+`add_pdf_importer.py`; e editar `analytics.js`/`analytics.css`
+diretamente, sem compilação) — não decidido/pedido ainda.
 
 ### 3. S6 — Auditoria de acesso / criptografia at-rest (não decidido)
 

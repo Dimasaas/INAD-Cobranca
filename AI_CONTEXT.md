@@ -191,7 +191,7 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 | `GET` | `/api/kpis/exclusions` | Lista clientes excluídos dos KPIs |
 | `POST` | `/api/kpis/exclusions` | `{client_name, exclude: true\|false}` |
 
-**Resposta de `/api/kpis`:** `evolution` (filtrada, sem duplicados), `all_evolution` (com flag `is_duplicate`), `transitions` (cruzamentos consecutivos). Cada entrada de evolução inclui `total_value` (soma R$ das parcelas).
+**Resposta de `/api/kpis`:** `evolution` (filtrada, sem duplicados), `all_evolution` (com flag `is_duplicate`), `transitions` (cruzamentos consecutivos). Cada entrada de evolução inclui `total_value` (soma R$ das parcelas). Cada transição traz `recovery_rate` ("saiu do relatório seguinte" — sinal amplo, não implica pagamento) e, ao lado, `recovery_rate_confirmed`/`recovered_confirmed_clients` (K6: subconjunto com desfecho `pagou` registrado) — as duas convivem, nenhuma substitui a outra.
 
 **`GET /api/kpis/analytics` — parâmetros (todos opcionais, combináveis):**
 
@@ -213,7 +213,8 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
                 "novo":   {...}, "antigo": {...} } ],
   "transitions": [ { "from_report","to_report","from_date","to_date",
                      "total_clients","recovered_clients","recovery_rate",
-                     "recovery_rate_novo","recovery_rate_antigo","recovered_value" } ],
+                     "recovery_rate_novo","recovery_rate_antigo","recovered_value",
+                     "recovered_confirmed_clients","recovery_rate_confirmed" } ],
   "segment_totals": { "novo": {"clients","total_value"}, "antigo": {...} }
 }
 ```
@@ -316,9 +317,11 @@ Relatórios com a mesma `report_date` são considerados duplicados. Mantém-se a
 
 $$\text{Taxa} = \frac{\text{Clientes em } R_n \text{ que NÃO constam em } R_{n+1}}{\text{Total de Clientes em } R_n} \times 100$$
 
+Este é o sinal **amplo** ("saiu do relatório seguinte") — não implica pagamento confirmado; o cliente pode ter renegociado fora do sistema, sido encaminhado ao jurídico, ou ter saído por um artefato de dado. **`recovery_rate_confirmed`** (K6, decisão do responsável: as duas métricas convivem, nenhuma substitui a outra) reporta ao lado a fração desse mesmo conjunto que tem um desfecho `pagou` registrado em `contact_outcomes` (`_confirmed_paid_names()` em `run.py`) — presente em `get_kpis_data()` e `get_analytics_data()`.
+
 ### Segmentação novo vs antigo
 
-Um cliente é **"novo"** se sua **primeira aparição em qualquer relatório do histórico** (`MIN(report_date)` por nome exato, CTE `first_seen` em `run.py`) ocorreu **na data de corte ou depois**; caso contrário é **"antigo"**. O corte é configurável por data (`cutoff`) ou pelos N últimos relatórios (`cutoff_last_n`).
+Um cliente é **"novo"** se sua **primeira aparição em qualquer relatório do histórico** (`MIN(report_date)` por identidade normalizada — `normalize_name()`, K2 — CTE `first_seen` em `run.py`) ocorreu **na data de corte ou depois**; caso contrário é **"antigo"**. O corte é configurável por data (`cutoff`) ou pelos N últimos relatórios (`cutoff_last_n`).
 
 **Regra crítica:** a primeira aparição é calculada sempre sobre **todo o histórico**, nunca restrita pelo filtro de datas da tela — senão clientes antigos seriam rotulados erroneamente como novos dentro de janelas recentes.
 
