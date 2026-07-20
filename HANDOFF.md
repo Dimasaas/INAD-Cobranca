@@ -141,10 +141,22 @@ Todos os itens abaixo estão implementados, testados manualmente e/ou via
   tempo entre o desfecho 'pagou' e a data do relatório onde o cliente
   sumiu — qualquer 'pagou' já registrado pro cliente conta, o que é uma
   simplificação deliberada (ver docstring de `_confirmed_paid_names`).
-  **Fora do escopo desta passada:** exibição na UI (`inad_template.html`/
-  `inad_analytics.html`/`analytics.js`) — os campos novos já estão na API,
-  mas nenhuma tela mostra `recovery_rate_confirmed` ainda. Próximo passo
-  natural se quiserem ver isso no painel.
+  **UI atualizada também** — painel principal (`inad_template.html`):
+  card "Taxa de Recuperação Média" ganhou um chip azul com a taxa
+  confirmada, e o gráfico "Histórico de Recuperação por Período"
+  (`drawComparisonChart`) ganhou uma barra fina azul + legenda abaixo do
+  título mostrando o subconjunto confirmado ao lado da barra verde
+  existente. Analytics (`inad_analytics.html`/`analytics.js`/
+  `analytics.css`): tile "Taxa de recuperação" ganhou uma linha `.tile-sub`
+  com a taxa confirmada, e o gráfico "Taxa de recuperação por transição"
+  ganhou uma 4ª série `Confirmado (pagou)` (cor teal, sempre visível,
+  independente do filtro de segmento novo/antigo/todos). Validado
+  visualmente com Playwright (screenshot + inspeção do DOM) contra o
+  servidor real com dados importados via API — sem erros de console novos
+  (os únicos erros de console são fontes do Google bloqueadas no sandbox
+  sem internet, pré-existentes, sem relação com a mudança). Lembrar de
+  rodar `python3 add_pdf_importer.py` depois de qualquer novo ajuste em
+  `inad_template.html` pra regenerar `inad_whatsapp.html`.
 
 **Outros:**
 - **A1** — documentado que o servidor é single-thread de propósito
@@ -221,17 +233,7 @@ checklist original do K2 e tem impacto baixo — mas se for mexer em
 `_get_worklist_data()` de novo, considere normalizar essa comparação
 também (mesmo padrão usado em `_contact_effectiveness`).
 
-### 2. K6 — exibir `recovery_rate_confirmed` na UI (opcional, natural próximo passo)
-
-O backend já reporta as duas métricas lado a lado (ver acima). Nenhuma
-tela mostra a nova ainda: a aba KPI (`inad_template.html`) e o Analytics
-(`inad_analytics.html`/`analytics.js`) continuam exibindo só
-`recovery_rate`. Se quiserem ver isso no painel, é um trabalho de
-frontend (editar `inad_template.html`, regenerar `inad_whatsapp.html` via
-`add_pdf_importer.py`; e editar `analytics.js`/`analytics.css`
-diretamente, sem compilação) — não decidido/pedido ainda.
-
-### 3. S6 — Auditoria de acesso / criptografia at-rest (não decidido)
+### 2. S6 — Auditoria de acesso / criptografia at-rest (não decidido)
 
 Com a autenticação por operador já existindo (S1-S3), a trilha de auditoria
 ("quem leu o CPF de qual cliente e quando") ficou tecnicamente viável —

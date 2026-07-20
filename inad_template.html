@@ -351,7 +351,8 @@
     <div class="kpi-card">
       <div class="kpi-card-title">Taxa de Recuperação Média</div>
       <div class="kpi-card-value" id="kpi-recovery-rate">—</div>
-      <div class="kpi-card-desc">Média de clientes que saíram da lista de inadimplência entre relatórios consecutivos.</div>
+      <div class="kpi-card-desc">Média de clientes que saíram da lista de inadimplência entre relatórios consecutivos — sumir não significa necessariamente que pagou (pode ser jurídico, renegociação fora do sistema, etc.).</div>
+      <span class="chip" id="kpi-recovery-confirmed" style="display:inline-block; margin-top:8px; background:var(--blue-bg); color:var(--blue); border:1px solid rgba(59,130,246,0.3); font-size:11px; font-weight:600;">— confirmada (pagamento registrado)</span>
     </div>
     <div class="kpi-card">
       <div class="kpi-card-title">Total Inadimplente (Atual)</div>
@@ -379,6 +380,10 @@
     </div>
     <div class="kpi-chart-box">
       <h3>📊 Histórico de Recuperação por Período</h3>
+      <div style="display:flex; gap:14px; font-size:10px; color:var(--text3); margin-bottom:8px;">
+        <span><span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:var(--green); margin-right:4px;"></span>Saiu da lista</span>
+        <span><span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:var(--blue); margin-right:4px;"></span>Confirmado (pagou)</span>
+      </div>
       <div id="chart-comparison" class="chart-container">
         <p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar o gráfico. Importe mais de um relatório.</p>
       </div>
@@ -737,10 +742,15 @@ async function loadKPIs() {
     }
     
     let totalRecoveryRate = "—";
-    
+    let totalRecoveryConfirmed = "— confirmada (pagamento registrado)";
+
     if (transitions.length > 0) {
       const sumRecovery = transitions.reduce((acc, curr) => acc + curr.recovery_rate, 0);
       totalRecoveryRate = (sumRecovery / transitions.length).toFixed(1) + "%";
+
+      const sumConfirmed = transitions.reduce((acc, curr) => acc + (curr.recovery_rate_confirmed || 0), 0);
+      const avgConfirmed = (sumConfirmed / transitions.length).toFixed(1);
+      totalRecoveryConfirmed = `${avgConfirmed}% confirmada (pagamento registrado)`;
     } else if (evolution.length > 0) {
       totalRecoveryRate = "Aguardando";
     }
@@ -757,6 +767,7 @@ async function loadKPIs() {
     }
     
     document.getElementById('kpi-recovery-rate').textContent = totalRecoveryRate;
+    document.getElementById('kpi-recovery-confirmed').textContent = totalRecoveryConfirmed;
     document.getElementById('kpi-active-value').textContent = latestValue;
     document.getElementById('kpi-active-clients').textContent = latestClients;
     document.getElementById('kpi-active-parcels').textContent = latestParcels;
@@ -984,17 +995,23 @@ function drawComparisonChart(transitions) {
   
   let barsHtml = '';
   transitions.forEach(trans => {
+    const confirmedRate = trans.recovery_rate_confirmed || 0;
+    const confirmedClients = trans.recovered_confirmed_clients || 0;
     barsHtml += `
-      <div style="margin-bottom: 16px;">
+      <div style="margin-bottom: 18px;">
         <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-weight:600; font-size:12px;">
           <span style="color:var(--text2)">${escapeHtml(trans.from_report)} ➔ ${escapeHtml(trans.to_report)}</span>
-          <span style="color:var(--green)">${trans.recovery_rate}% regularizados</span>
+          <span style="color:var(--green)">${trans.recovery_rate}% saíram da lista</span>
         </div>
         <div style="width:100%; height:12px; background:var(--border); border-radius:6px; overflow:hidden;">
           <div style="width:${trans.recovery_rate}%; height:100%; background:linear-gradient(90deg, var(--green), #4ade80); border-radius:6px;"></div>
         </div>
-        <div style="font-size:10px; color:var(--text3); margin-top:2px;">
-          ${trans.recovered_clients} de ${trans.total_clients} clientes regularizados (saíram da lista de atrasos)
+        <div style="width:100%; height:6px; background:var(--border); border-radius:4px; overflow:hidden; margin-top:4px;" title="Subconjunto com pagamento confirmado (outcome 'pagou')">
+          <div style="width:${confirmedRate}%; height:100%; background:var(--blue); border-radius:4px;"></div>
+        </div>
+        <div style="font-size:10px; color:var(--text3); margin-top:4px; display:flex; justify-content:space-between; gap:8px;">
+          <span>${trans.recovered_clients} de ${trans.total_clients} saíram da lista de atrasos</span>
+          <span style="color:var(--blue); font-weight:600; white-space:nowrap;">${confirmedClients} confirmados (pagou) · ${confirmedRate}%</span>
         </div>
       </div>
     `;

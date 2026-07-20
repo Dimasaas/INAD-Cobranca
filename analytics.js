@@ -25,11 +25,12 @@ let debounceTimer = null;
 let lastFetchTime = null;
 
 const COLORS = {
-  novo:   '#4f8dff',
-  antigo: '#a855f7',
-  total:  '#636b85',
-  value:  '#6c63ff',
-  green:  '#22c55e',
+  novo:      '#4f8dff',
+  antigo:    '#a855f7',
+  total:     '#636b85',
+  value:     '#6c63ff',
+  green:     '#22c55e',
+  confirmed: '#14b8a6',
 };
 
 const fmtBRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -224,7 +225,11 @@ function render(data) {
   const tSets = [];
   if (state.segment !== 'antigo') tSets.push({ label: 'Novos', data: transitions.map(t => t.recovery_rate_novo), backgroundColor: COLORS.novo });
   if (state.segment !== 'novo') tSets.push({ label: 'Antigos', data: transitions.map(t => t.recovery_rate_antigo), backgroundColor: COLORS.antigo });
-  if (state.segment === 'all') tSets.push({ label: 'Geral', data: transitions.map(t => t.recovery_rate), backgroundColor: COLORS.green });
+  if (state.segment === 'all') tSets.push({ label: 'Geral (saiu da lista)', data: transitions.map(t => t.recovery_rate), backgroundColor: COLORS.green });
+  // K6: só existe no agregado geral (não quebrado por novo/antigo) — sempre
+  // visível, pra deixar claro que "saiu da lista" e "pagamento confirmado"
+  // são leituras diferentes do mesmo evento.
+  tSets.push({ label: 'Confirmado (pagou)', data: transitions.map(t => t.recovery_rate_confirmed), backgroundColor: COLORS.confirmed });
   upsertChart('chart-recovery', {
     type: 'bar',
     data: { labels: tLabels, datasets: tSets },
@@ -291,6 +296,16 @@ function renderTiles(series, transitions) {
   const rates = transitions.map(t => t[rateKey]).filter(r => r > 0 || transitions.length);
   const avg = rates.length ? (rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(1) : '—';
   setTile('tile-recovery', avg === '—' ? '—' : `${avg}%`, ['média das transições', 'neutral']);
+
+  // K6: recovery_rate mede "saiu do relatório" (sinal amplo) — só existe por
+  // segmento geral, não quebrado por novo/antigo, então mostramos sempre a
+  // confirmação geral ao lado, independente do filtro de segmento ativo.
+  const confirmedRates = transitions.map(t => t.recovery_rate_confirmed).filter(r => r > 0 || transitions.length);
+  const avgConfirmed = confirmedRates.length
+    ? (confirmedRates.reduce((a, b) => a + b, 0) / confirmedRates.length).toFixed(1)
+    : null;
+  document.getElementById('tile-recovery-confirmed-d').textContent =
+    avgConfirmed === null ? '' : `${avgConfirmed}% confirmada (pagou)`;
 }
 
 function renderDetailTable(series) {
