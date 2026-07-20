@@ -135,7 +135,7 @@ CREATE INDEX idx_outcomes_client      ON contact_outcomes(client_name);
 CREATE INDEX idx_outcomes_created     ON contact_outcomes(created_at);
 ```
 
-> **Identidade de cliente:** não existe tabela canônica de clientes — a identidade é por **string exata de `name`** entre relatórios. Variações de grafia/acento (ex.: "GONCALVES" vs "GONÇALVES") são tratadas como clientes distintos. Limitação conhecida e aceita.
+> **Identidade de cliente:** não existe tabela canônica de clientes — o `name`/`client_name` original (como veio do PDF ou foi digitado) é sempre preservado para exibição. Para **comparações de identidade** entre relatórios/tabelas (dedup, recovery_rate, segmentação novo/antigo, exclusões de KPI, reentradas), todo o sistema usa `normalize_name()` (`run.py`): remove acentos, colapsa espaços e uniformiza caixa — "GONÇALVES" e "Goncalves " contam como o mesmo cliente. Abreviações (ex.: "Ma." vs "Maria") continuam fora do escopo dessa normalização puramente textual.
 
 ---
 

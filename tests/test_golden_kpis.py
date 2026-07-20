@@ -249,6 +249,174 @@ class GoldenKPITests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _import_report("Relatorio Invalido", "31/02/2026", {})
 
+    def test_name_normalization_treats_variant_spelling_as_same_client(self):
+        """K2: acento/caixa/espaço não podem fazer um cliente aparecer como
+        'recuperado' (sumiu) só porque a grafia mudou de relatório pra
+        relatório — critério de aceitação do item K2 do HANDOFF."""
+        _import_report("Relatorio 1", "2026-01-01", {
+            "JOSÉ DA SILVA": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 800.0},
+                ]}],
+            },
+        })
+        _import_report("Relatorio 2", "2026-02-01", {
+            # mesma pessoa: sem acento, caixa diferente, espaço extra no fim
+            "Jose da Silva ": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "2/2", "vencimento": "10/02/2026",
+                     "vencimento_full": "2026-02-10", "valor": 800.0},
+                ]}],
+            },
+        })
+
+        kpis = run.get_kpis_data(None)
+        self.assertEqual(len(kpis["transitions"]), 1)
+        trans = kpis["transitions"][0]
+        self.assertEqual(trans["total_clients"], 1)
+        self.assertEqual(trans["recovered_clients"], 0)   # não sumiu — é o mesmo cliente
+        self.assertEqual(trans["recovery_rate"], 0.0)
+
+        analytics = run.get_analytics_data(cutoff_last_n=1)
+        self.assertEqual(len(analytics["transitions"]), 1)
+        a_trans = analytics["transitions"][0]
+        self.assertEqual(a_trans["total_clients"], 1)
+        self.assertEqual(a_trans["recovered_clients"], 0)
+        self.assertEqual(a_trans["recovery_rate"], 0.0)
+
+    def test_name_normalization_applies_to_kpi_exclusions(self):
+        """K2: exclusão de KPI cadastrada com uma grafia deve excluir o
+        cliente mesmo se a grafia no relatório for diferente (acento/caixa)."""
+        _import_report("Relatorio 1", "2026-01-01", {
+            "MARIA DA CONCEIÇÃO": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 500.0},
+                ]}],
+            },
+            "OUTRO CLIENTE": {
+                "cpf_cnpj": "2", "cel": "", "email": "",
+                "properties": [{"venda_id": "V2", "identifier": "Lote 2", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 300.0},
+                ]}],
+            },
+        })
+        conn = run.get_conn()
+        conn.execute(
+            "INSERT INTO kpi_exclusions (client_name) VALUES (?)",
+            ("maria da conceicao",),   # grafia diferente da armazenada em clients.name
+        )
+        conn.commit()
+
+        kpis = run.get_kpis_data(None)
+        evo = kpis["evolution"][0]
+        self.assertEqual(evo["clients"], 1)          # só "OUTRO CLIENTE" conta
+        self.assertEqual(evo["total_value"], 300.0)
+
+    def test_name_normalization_applies_to_reentry_tracking(self):
+        """K2: reentradas/timeline (usadas em fila, perfil e worklist) devem
+        unir a presença do cliente entre relatórios mesmo com grafia
+        diferente, em vez de tratar cada grafia como um cliente à parte."""
+        _import_report("Relatorio 1", "2026-01-01", {
+            "APARECIDA GONÇALVES": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 400.0},
+                ]}],
+            },
+        })
+        _import_report("Relatorio 2", "2026-02-01", {
+            "OUTRO CLIENTE": {
+                "cpf_cnpj": "2", "cel": "", "email": "",
+                "properties": [{"venda_id": "V2", "identifier": "Lote 2", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/02/2026",
+                     "vencimento_full": "2026-02-10", "valor": 100.0},
+                ]}],
+            },
+        })
+        _import_report("Relatorio 3", "2026-03-01", {
+            # mesma pessoa do Relatorio 1, sem cedilha/acento
+            "Aparecida Goncalves": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "2/2", "vencimento": "10/03/2026",
+                     "vencimento_full": "2026-03-10", "valor": 400.0},
+                ]}],
+            },
+        })
+
+        reentries_map = run._calculate_reentries(run.get_conn().cursor())
+        key = run._normalize_name("APARECIDA GONÇALVES")
+        self.assertEqual(key, run._normalize_name("Aparecida Goncalves"))
+        info = reentries_map[key]
+        self.assertEqual(info["reentries"], 1)
+        self.assertTrue(info["currently_present"])
+        self.assertEqual(info["first_seen"], "2026-01-01")
+        self.assertEqual(
+            [t["present"] for t in info["timeline"]], [True, False, True]
+        )
+
+    def test_monetary_totals_are_cent_exact(self):
+        """K7: soma de parcelas com valores classicamente sujeitos a drift de
+        ponto flutuante em float puro (0.10 + 0.20 == 0.30000000000000004)
+        precisa bater EXATAMENTE ao centavo em todo agregado monetário —
+        cliente, evolução de KPI e série/segmentos de Analytics (novo e
+        antigo, e a soma novo+antigo). Critério de aceitação original do K7
+        (HANDOFF.md): soma de centavos inteiros, sem drift."""
+        self.assertNotEqual(0.10 + 0.20, 0.30)  # sanity: o drift clássico existe em float puro
+
+        def _drift_prone_parcels(n_a, n_b, prefix):
+            parcels = []
+            for i in range(n_a):
+                parcels.append({"parcela": f"{prefix}A{i}", "vencimento": "10/01/2026",
+                                 "vencimento_full": "2026-01-10", "valor": 0.10})
+            for i in range(n_b):
+                parcels.append({"parcela": f"{prefix}B{i}", "vencimento": "10/01/2026",
+                                 "vencimento_full": "2026-01-10", "valor": 0.20})
+            return parcels
+
+        _import_report("Relatorio 1", "2026-01-01", {
+            "CLIENTE ANTIGO": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1",
+                                 "parcels": _drift_prone_parcels(7, 7, "R1")}],
+            },
+        })
+        _import_report("Relatorio 2", "2026-02-01", {
+            "CLIENTE ANTIGO": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1",
+                                 "parcels": _drift_prone_parcels(7, 7, "R2")}],
+            },
+            "CLIENTE NOVO": {
+                "cpf_cnpj": "2", "cel": "", "email": "",
+                "properties": [{"venda_id": "V2", "identifier": "Lote 2",
+                                 "parcels": _drift_prone_parcels(11, 3, "R2N")}],
+            },
+        })
+
+        cursor = run.get_conn().cursor()
+        report2_id = run._dedup_latest_report_id(cursor)
+        cf = run._client_financials(cursor, report2_id, "2026-02-01")
+        self.assertEqual(cf["CLIENTE ANTIGO"]["total_owed"], 2.10)   # 7*0.10 + 7*0.20
+        self.assertEqual(cf["CLIENTE NOVO"]["total_owed"], 1.70)     # 11*0.10 + 3*0.20
+
+        kpis = run.get_kpis_data(None)
+        evo_by_name = {e["report_name"]: e for e in kpis["evolution"]}
+        self.assertEqual(evo_by_name["Relatorio 2"]["total_value"], 3.80)  # 2.10 + 1.70
+
+        analytics = run.get_analytics_data(cutoff_last_n=1)
+        last = analytics["series"][-1]
+        self.assertEqual(last["novo"]["total_value"], 1.70)
+        self.assertEqual(last["antigo"]["total_value"], 2.10)
+        self.assertEqual(last["total"]["total_value"], 3.80)   # soma em centavos — sem double-rounding
+
 
 class LargeDatasetReconciliationTests(unittest.TestCase):
     """Gera uma série sintética determinística de relatórios (random.Random(42),

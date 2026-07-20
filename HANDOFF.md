@@ -79,6 +79,48 @@ Todos os itens abaixo estão implementados, testados manualmente e/ou via
   "Telefone a verificar" e não oferece o link.
 - **K10** — corrigido off-by-one de fuso nos atalhos de período do
   Analytics (`toLocalISODate()` em vez de `toISOString()`).
+- **K2 — Normalização de nome aplicada** (estava só o esqueleto —
+  `normalize_name()` existia mas não era usada em nenhuma comparação). Agora
+  todo ponto de identidade de cliente entre relatórios/tabelas normaliza os
+  dois lados da comparação: `kpi_exclusions` (todas as ocorrências —
+  `_client_financials`, `get_kpis_data`, `get_analytics_data` x2,
+  `get_system_context`), `_FIRST_SEEN_CTE` (GROUP BY/JOIN da segmentação
+  novo/antigo), `client_sets`/`per_report` (recovery_rate em
+  `get_kpis_data` e `get_analytics_data`), `_calculate_reentries`
+  (reentradas/timeline — resultado agora é indexado por
+  `_normalize_name(name)`, callers em `_get_worklist_data`/`/api/queue`/
+  `/api/clients/profile` já ajustados) e `_contact_effectiveness`
+  (`report_clients`). O nome de EXIBIÇÃO nunca muda — só a comparação de
+  identidade. 3 testes golden novos travam o critério de aceitação (mesmo
+  cliente, grafias diferentes, conta como o mesmo em recovery_rate,
+  exclusões e reentradas).
+  **Gap residual conhecido, fora do escopo desta passada** (não estava no
+  checklist original): a detecção de "novos_pre_juridico" em
+  `_get_worklist_data()` compara `prev_cf.get(name)` (nome exato do
+  relatório anterior) — se a grafia mudar entre os dois relatórios mais
+  recentes, essa transição específica pode não ser detectada. Baixo
+  impacto (só afeta 1 categoria da worklist, só no boundary exato de 2
+  relatórios consecutivos), mas documentado para não ser esquecido.
+- **K7 — Precisão monetária migrada para centavos inteiros.** Nova coluna
+  `parcels.valor_centavos INTEGER` (migração idempotente automática em
+  `init_db()`, backfill via `ROUND(valor*100)` a partir da coluna `valor`
+  existente). `valor` (REAL) continua existindo e sendo gravada — é a
+  fonte de verdade para exibição do valor de UMA parcela — mas nenhuma
+  agregação soma mais `valor` diretamente: `_client_financials`,
+  `get_kpis_data`, `get_analytics_data` (série por segmento E transições),
+  e o acúmulo por bucket em `/api/clients/profile` somam
+  `valor_centavos` (inteiro, soma exata) e só convertem pra reais uma
+  única vez ao final via `_cents_to_reais()`. Isso elimina especificamente
+  o double-rounding do achado original em `get_analytics_data`
+  (`round(novo + antigo, 2)` sobre valores já arredondados individualmente
+  — agora a soma novo_centavos+antigo_centavos é uma soma de inteiros,
+  exata por construção). Teste golden novo usa valores classicamente
+  sujeitos a drift em float puro (0.10+0.20) e confere igualdade EXATA
+  (não `assertAlmostEqual`) em cliente/KPI/Analytics. Migração validada
+  manualmente num banco simulando o estado pré-K7 (só `valor`, sem
+  `valor_centavos`) — backfill correto. Smoke test end-to-end via HTTP
+  (import → kpis/summary/queue/profile) confirmado batendo exato ao
+  centavo.
 
 **Outros:**
 - **A1** — documentado que o servidor é single-thread de propósito
@@ -112,14 +154,17 @@ Todos os itens abaixo estão implementados, testados manualmente e/ou via
   não precisam de reescrita de histórico.
   Repositório é **privado** no GitHub (confirmado via API, 404 sem auth).
 
-**Testes:** `tests/test_golden_kpis.py` — 6 testes, `python -m unittest
+**Testes:** `tests/test_golden_kpis.py` — 10 testes, `python -m unittest
 discover -s tests -v`. Roda inteiramente em SQLite temporário, nunca toca
 `inad_database.db`. Cobre: recovery_rate/dedup/somas com fixture pequena
 calculada à mão, validação de data (BR→ISO, formato inválido rejeitado),
 K4 (report_ids explícito == caminho default), reconciliação estrutural
 (soma dos segmentos novo+antigo == total) sobre um dataset sintético maior
 gerado no próprio arquivo de teste (determinístico, `random.Random(42)`,
-sem depender de nada externo).
+sem depender de nada externo), K2 (grafia diferente = mesmo cliente em
+recovery_rate/exclusões/reentradas — 3 testes) e K7 (soma cent-exata com
+valores classicamente sujeitos a drift em float, incluindo o caminho
+novo+antigo do Analytics — 1 teste).
 
 ## Decisões já tomadas pelo responsável (não perguntar de novo)
 
@@ -127,10 +172,10 @@ sem depender de nada externo).
 |---|---|
 | §4.1 Modelo de auth (S2) | **Por operador**, não token único compartilhado. |
 | §4.3 Dedup (K1) | **Exigir `report_date`** na importação (recusar sem ela) — não "tratar como distintas". |
-| §4.4 Normalização de nome (K2) | **Aprovado** — acento/caixa/espaço contam como o mesmo cliente. Abreviações ficam fora do escopo. |
+| §4.4 Normalização de nome (K2) | **Aprovado e implementado** — acento/caixa/espaço contam como o mesmo cliente. Abreviações ficam fora do escopo. |
 | §4.5 `recovery_rate` (K6) | **Manter como está por enquanto** — não implementar agora. Redefinir isso é uma decisão de negócio maior, tratar em sessão dedicada. |
 | §4.6 Fronteira 120/121 (K5) | Já resolvido sem mudar comportamento (ver acima). |
-| §4.7 Precisão monetária (K7) | **Migrar agora** para centavos inteiros/Decimal. |
+| §4.7 Precisão monetária (K7) | **Migrado** para centavos inteiros (`valor_centavos`). |
 | §4.8 Telefone inválido (D5) | Já resolvido — esconde o link (ver acima). |
 | §4.9 Reescrita de histórico git (S9) | Já feita (ver acima). |
 | §4.2 CSRF header | Já resolvido — `X-INAD-Token` custom + `?token=` fallback (ver S1-S3 acima). |
@@ -138,79 +183,19 @@ sem depender de nada externo).
 
 ## O que falta (nesta ordem sugerida)
 
-### 1. K2 — Normalização de nome (APROVADO, mas só o esqueleto foi feito)
+### 1. Gap residual do K2 — "novos_pre_juridico" (opcional, baixo impacto)
 
-Já existe em `run.py`:
-- `_normalize_name(name)` — remove acentos (via `unicodedata`), colapsa
-  espaços, uppercase. Só para comparação, nunca para exibição.
-- Registrada como função SQL: `conn.create_function("normalize_name", 1,
-  _normalize_name)` dentro de `get_conn()` — ou seja, dá pra usar
-  `normalize_name(coluna)` direto em qualquer query SQL.
+`_get_worklist_data()` categoriza a transição pra pré-jurídico comparando
+`prev_cf.get(name)` (nome exato do relatório anterior, não normalizado).
+Se a grafia do cliente mudar exatamente entre os dois relatórios mais
+recentes, essa categoria específica da worklist pode não detectar a
+transição (o cliente ainda aparece em `queue`/no relatório normal, só não
+é sinalizado como "acabou de entrar no pré-jurídico"). Não estava no
+checklist original do K2 e tem impacto baixo — mas se for mexer em
+`_get_worklist_data()` de novo, considere normalizar essa comparação
+também (mesmo padrão usado em `_contact_effectiveness`).
 
-**Isso ainda NÃO foi aplicado em nenhuma comparação/JOIN/GROUP BY.** Precisa
-envolver com `normalize_name(...)` (nos DOIS lados da comparação) em pelo
-menos estes pontos (buscar por `c.name`, `client_name`, `GROUP BY.*name`,
-`ON fs.name` em `run.py` pra achar todos):
-
-- Toda ocorrência de `... NOT IN (SELECT client_name FROM kpi_exclusions)`
-  — há várias: `get_kpis_data`, `get_analytics_data` (dentro da CTE
-  `_FIRST_SEEN_CTE` e nas duas queries que a usam), `_client_financials`,
-  `get_system_context` (contagem de pré-jurídico).
-- `_FIRST_SEEN_CTE` (`GROUP BY c.name`, `JOIN first_seen fs ON fs.name =
-  c.name`) — usada em `get_analytics_data` pra segmentação novo/antigo.
-- `get_kpis_data()`: `client_sets` é construído em Python a partir de
-  `(report_id, name)` — os nomes usados como chave do `set()` (linha com
-  `client_sets.setdefault(row[0], set()).add(row[1])`) precisam virar
-  `_normalize_name(row[1])` para que `clients_cur - clients_next`
-  (recovered) compare identidade normalizada, não string exata.
-- `_get_worklist_data()`: `report_clients[r["id"]] = {row[0] for row in
-  rows}` (nomes vindos de `clients`) e os `if name not in
-  report_clients[...]` — mesma lógica, normalizar as duas pontas.
-- `_contact_effectiveness()` e `_calculate_reentries()`: qualquer
-  comparação de nome entre `action_logs`/`contact_outcomes` e `clients`.
-- Rotas de exclusão (`POST /api/kpis/exclusions`) e outcomes/action_logs:
-  decidir se a comparação na hora de marcar "excluído"/"desfecho" também
-  deve normalizar contra o que já existe (provavelmente sim, para achar o
-  cliente certo mesmo se o operador digitar com grafia diferente da do PDF).
-
-**Depois de aplicar**, adicionar um teste golden que importe o mesmo
-cliente com grafias diferentes em dois relatórios (ex.: "JOSÉ DA SILVA" e
-"Jose da Silva ") e confirme que conta como o MESMO cliente em
-`recovery_rate`/exclusões — isso é o critério de aceitação do item.
-
-⚠️ Cuidado de performance: `normalize_name()` é uma função Python chamada
-por linha via SQLite `create_function` — não é indexável. Para o volume de
-dados de um CRM local isso é aceitável (correção > performance aqui), mas
-não adicionar isso em loops muito grandes sem necessidade.
-
-### 2. K7 — Precisão monetária (APROVADO — migrar para centavos/Decimal)
-
-**Não iniciado.** Precisa:
-- Decidir a representação: coluna `INTEGER` (centavos) é mais simples de
-  somar em SQL sem drift do que `Decimal` (que o SQLite não tem tipo nativo,
-  exigiria serializar como TEXT). Centavos inteiros é a rota mais direta.
-- Migração de schema: `parcels.valor` é hoje `REAL DEFAULT 0.0`
-  (`run.py`, `CREATE TABLE parcels` dentro de `init_db()`). Precisa de uma
-  migração idempotente (no padrão `PRAGMA table_info` + `ALTER TABLE` já
-  usado no arquivo) que converta os valores existentes: `valor_centavos =
-  ROUND(valor * 100)`, e decidir se mantém a coluna antiga por
-  compatibilidade ou remove.
-- Todo lugar que soma/arredonda `valor` precisa ser revisto:
-  ingestão (`_insert_clients`, hoje `float(parc.get("valor") or ...)`),
-  `_client_financials`, `get_kpis_data`, `get_analytics_data` (o
-  double-rounding do achado original está nas linhas que fazem `round(novo[k]
-  + antigo[k], 2)` sobre valores JÁ arredondados individualmente).
-  Em centavos inteiros, somas ficam exatas (`SUM` de inteiros não tem
-  drift); só formatar como reais na apresentação (`valor_centavos / 100`,
-  formatado com 2 casas).
-- **Isso muda os totais exibidos em centavos** (arredondamentos que hoje
-  acumulam erro passam a bater exato) — o responsável já aprovou essa
-  variação esperada.
-- Adicionar teste golden com N parcelas de valores conhecidos e conferir
-  que a soma bate exatamente ao centavo (esse é o critério de aceitação
-  original do achado K7).
-
-### 3. K6 — `recovery_rate` (mantido como está por enquanto — não mexer)
+### 2. K6 — `recovery_rate` (mantido como está por enquanto — não mexer)
 
 Não implementar sem decisão explícita nova. Está documentado como
 limitação conhecida no próprio `get_system_context()` (`ai_guidelines`/
@@ -219,7 +204,7 @@ limitação conhecida no próprio `get_system_context()` (`ai_guidelines`/
 exigir sinal de pagamento/outcome registrado e reportar "saiu do
 relatório" separadamente?
 
-### 4. S6 — Auditoria de acesso / criptografia at-rest (não decidido)
+### 3. S6 — Auditoria de acesso / criptografia at-rest (não decidido)
 
 Com a autenticação por operador já existindo (S1-S3), a trilha de auditoria
 ("quem leu o CPF de qual cliente e quando") ficou tecnicamente viável —

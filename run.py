@@ -200,6 +200,7 @@ def init_db():
             vencimento      TEXT    NOT NULL,
             vencimento_full TEXT    NOT NULL,
             valor           REAL    DEFAULT 0.0,
+            valor_centavos  INTEGER DEFAULT 0,
             FOREIGN KEY(property_id) REFERENCES properties(id) ON DELETE CASCADE
         );
 
@@ -258,6 +259,16 @@ def init_db():
         cursor.execute("ALTER TABLE parcels ADD COLUMN valor REAL DEFAULT 0.0")
         print("[MIGRAÇÃO] Coluna valor adicionada à tabela parcels.")
 
+    # Migração K7: adiciona valor_centavos (INTEIRO) e faz backfill a partir
+    # de valor (R$ → centavos, ROUND(valor*100)). Todo SUM/AVG monetário do
+    # sistema passa a usar valor_centavos (soma de inteiros não tem drift de
+    # ponto flutuante) — valor (REAL) continua existindo só para exibição do
+    # valor individual de UMA parcela, nunca mais usado em agregações.
+    if "valor_centavos" not in existing_parcel_cols:
+        cursor.execute("ALTER TABLE parcels ADD COLUMN valor_centavos INTEGER DEFAULT 0")
+        cursor.execute("UPDATE parcels SET valor_centavos = CAST(ROUND(valor * 100) AS INTEGER)")
+        print("[MIGRAÇÃO] Coluna valor_centavos adicionada e populada a partir de valor (R$ → centavos).")
+
     conn.commit()
 
     _migrate_legacy_files(cursor, conn)
@@ -293,10 +304,10 @@ def init_db():
             for pa_id, c_name, p_ident, pa_num in db_parcels:
                 val = values_map.get((c_name, p_ident, pa_num))
                 if val:
-                    updates.append((val, pa_id))
-            
+                    updates.append((val, round(val * 100), pa_id))
+
             if updates:
-                cursor.executemany("UPDATE parcels SET valor = ? WHERE id = ?", updates)
+                cursor.executemany("UPDATE parcels SET valor = ?, valor_centavos = ? WHERE id = ?", updates)
                 conn.commit()
                 print(f"[MIGRAÇÃO] {len(updates)} parcelas atualizadas com o valor real.")
     except Exception as exc:
@@ -460,6 +471,13 @@ def _normalize_date(value):
     return candidate
 
 
+def _cents_to_reais(cents):
+    """Converte centavos inteiros (base exata de soma/agregação, K7) para
+    reais (float) — só na apresentação. Nunca somar o resultado desta função
+    de novo; some `valor_centavos` (inteiro) e converta uma única vez ao final."""
+    return round((cents or 0) / 100.0, 2)
+
+
 def _insert_clients(cursor, report_id, clients):
     """Insere em batch todos os clientes, imóveis e parcelas de um relatório."""
     for c_name, c_data in clients.items():
@@ -476,12 +494,13 @@ def _insert_clients(cursor, report_id, clients):
             )
             property_id = cursor.lastrowid
             for parc in prop.get("parcels", []):
+                valor = float(parc.get("valor") or parc.get("valor_total") or parc.get("valor_parcela") or 0.0)
                 cursor.execute(
-                    "INSERT INTO parcels (property_id, parcela, vencimento, vencimento_full, valor) "
-                    "VALUES (?,?,?,?,?)",
+                    "INSERT INTO parcels (property_id, parcela, vencimento, vencimento_full, valor, valor_centavos) "
+                    "VALUES (?,?,?,?,?,?)",
                     (property_id, parc.get("parcela", ""),
                      parc.get("vencimento", ""), _normalize_date(parc.get("vencimento_full", "")),
-                     float(parc.get("valor") or parc.get("valor_total") or parc.get("valor_parcela") or 0.0)),
+                     valor, round(valor * 100)),
                 )
 
 
@@ -578,15 +597,15 @@ def _client_financials(cursor, report_id, ref_date):
         SELECT c.name, c.cel, c.email,
                COUNT(DISTINCT p.id)                          AS n_properties,
                COUNT(pa.id)                                  AS n_parcels,
-               COALESCE(SUM(pa.valor), 0.0)                  AS total_owed,
-               COALESCE(AVG(pa.valor), 0.0)                  AS avg_parcel,
+               COALESCE(SUM(pa.valor_centavos), 0)           AS total_owed_centavos,
+               COALESCE(AVG(pa.valor_centavos), 0.0)         AS avg_parcel_centavos,
                MIN(pa.vencimento_full)                       AS oldest_due,
                CAST(julianday(?) - julianday(MIN(pa.vencimento_full)) AS INTEGER) AS max_days_overdue
         FROM clients c
         LEFT JOIN properties p ON p.client_id = c.id
         LEFT JOIN parcels pa   ON pa.property_id = p.id AND pa.vencimento_full <= ?
         WHERE c.report_id = ?
-          AND c.name NOT IN (SELECT client_name FROM kpi_exclusions)
+          AND normalize_name(c.name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
         GROUP BY c.name
     """, (ref_date, ref_date, report_id)).fetchall()
 
@@ -603,8 +622,8 @@ def _client_financials(cursor, report_id, ref_date):
             "email": r[2] or "",
             "n_properties": r[3],
             "n_parcels": r[4],
-            "total_owed": round(r[5], 2),
-            "avg_parcel": round(r[6], 2),
+            "total_owed": _cents_to_reais(r[5]),
+            "avg_parcel": _cents_to_reais(r[6]),
             "oldest_due": oldest_due,
             "max_days_overdue": max_days
         }
@@ -657,17 +676,22 @@ def _calculate_reentries(cursor):
 
     presence_rows = cursor.execute("""
         SELECT report_id, name FROM clients
-        WHERE name NOT IN (SELECT client_name FROM kpi_exclusions)
+        WHERE normalize_name(name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
     """).fetchall()
 
+    # Chave por identidade normalizada (K2): variações de grafia/acento do
+    # mesmo cliente entre relatórios se unem numa só presença/timeline, em
+    # vez de contarem como reentradas espúrias. Callers devem consultar este
+    # dict com _normalize_name(name), nunca com o nome de exibição cru.
     client_presence = {}
     for rid, name in presence_rows:
-        if name not in client_presence:
-            client_presence[name] = set()
-        client_presence[name].add(rid)
+        key = _normalize_name(name)
+        if key not in client_presence:
+            client_presence[key] = set()
+        client_presence[key].add(rid)
 
     results = {}
-    for name, rids in client_presence.items():
+    for key, rids in client_presence.items():
         timeline = []
         first_seen = None
         present_seq = []
@@ -690,7 +714,7 @@ def _calculate_reentries(cursor):
                     reentry_count += 1
                 last_state = state
 
-        results[name] = {
+        results[key] = {
             "reentries": reentry_count,
             "timeline": timeline,
             "first_seen": first_seen,
@@ -737,7 +761,7 @@ def _contact_effectiveness(cursor):
     report_clients = {}
     for r in deduped_reports:
         rows = cursor.execute("SELECT name FROM clients WHERE report_id = ?", (r["id"],)).fetchall()
-        report_clients[r["id"]] = {row[0] for row in rows}
+        report_clients[r["id"]] = {_normalize_name(row[0]) for row in rows}
 
     contacts = cursor.execute("""
         SELECT client_name, MAX(sent_at) FROM action_logs
@@ -755,7 +779,7 @@ def _contact_effectiveness(cursor):
                 break
         if subsequent_report_id is not None:
             contacted += 1
-            if name not in report_clients[subsequent_report_id]:
+            if _normalize_name(name) not in report_clients[subsequent_report_id]:
                 regularized += 1
 
     promises = cursor.execute("""
@@ -772,7 +796,7 @@ def _contact_effectiveness(cursor):
                 subsequent_report_id = r["id"]
                 break
         if subsequent_report_id is not None:
-            if name not in report_clients[subsequent_report_id]:
+            if _normalize_name(name) not in report_clients[subsequent_report_id]:
                 promises_kept += 1
 
     rate = round(regularized / contacted * 100, 1) if contacted > 0 else 0.0
@@ -878,7 +902,7 @@ def _get_worklist_data(cursor, ref_date):
     categorized_clients = set()
 
     for name, cf in cf_all.items():
-        reentries = reentries_map.get(name, {}).get("reentries", 0)
+        reentries = reentries_map.get(_normalize_name(name), {}).get("reentries", 0)
         score_info = _calculate_risk_score(cf["total_owed"], cf["max_days_overdue"], reentries, p90)
         bucket = _bucketize(cf["max_days_overdue"])
         stage = _stage_for_days(cf["max_days_overdue"])
@@ -1007,14 +1031,14 @@ def get_kpis_data(report_ids=None):
                COUNT(DISTINCT c.id)   AS clients,
                COUNT(DISTINCT p.id)   AS properties,
                COUNT(pa.id)           AS parcels,
-               COALESCE(SUM(pa.valor), 0.0) AS total_value
+               COALESCE(SUM(pa.valor_centavos), 0) AS total_value_centavos
         FROM   clients   c
         LEFT JOIN properties p  ON p.client_id   = c.id
         LEFT JOIN parcels    pa ON pa.property_id = p.id
-        WHERE  c.name NOT IN (SELECT client_name FROM kpi_exclusions)
+        WHERE  normalize_name(c.name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
         GROUP  BY c.report_id
     """).fetchall()
-    all_stats_map = {r[0]: {"clients": r[1], "properties": r[2], "parcels": r[3], "total_value": round(r[4], 2)}
+    all_stats_map = {r[0]: {"clients": r[1], "properties": r[2], "parcels": r[3], "total_value": _cents_to_reais(r[4])}
                      for r in all_stats_rows}
 
     # Identifica o ID do relatório mais recente para cada data real (Deduplicação Global)
@@ -1061,15 +1085,19 @@ def get_kpis_data(report_ids=None):
         placeholders = ",".join("?" for _ in active_report_ids)
         client_rows = cursor.execute(
             f"SELECT report_id, name FROM clients WHERE report_id IN ({placeholders}) "
-            f"AND name NOT IN (SELECT client_name FROM kpi_exclusions)",
+            f"AND normalize_name(name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)",
             active_report_ids
         ).fetchall()
     else:
         client_rows = []
 
+    # Chave por identidade normalizada (K2): "recovered" (clients_cur -
+    # clients_next) precisa comparar quem é o mesmo cliente de verdade,
+    # não a string exata — variação de grafia/acento entre relatórios não
+    # pode aparecer como se o cliente tivesse "sumido".
     client_sets = {}
     for row in client_rows:
-        client_sets.setdefault(row[0], set()).add(row[1])
+        client_sets.setdefault(row[0], set()).add(_normalize_name(row[1]))
 
     transitions = []
     for i in range(len(reports) - 1):
@@ -1107,12 +1135,14 @@ _FIRST_SEEN_CTE = """
         FROM   reports
     ),
     first_seen AS (
-        SELECT c.name AS name, MIN(rd.rdate) AS first_date
+        SELECT normalize_name(c.name) AS name, MIN(rd.rdate) AS first_date
         FROM   clients c
         JOIN   report_dates rd ON rd.id = c.report_id
-        GROUP  BY c.name
+        GROUP  BY normalize_name(c.name)
     )
 """
+# `first_seen.name` é a identidade NORMALIZADA (K2) — nunca comparar/juntar
+# com c.name puro sem passar por normalize_name(c.name) do outro lado.
 
 
 def get_analytics_data(start=None, end=None, report_ids=None,
@@ -1120,8 +1150,9 @@ def get_analytics_data(start=None, end=None, report_ids=None,
     """
     Dados agregados para a página de Analytics: série temporal por segmento
     (novo/antigo/total), transições com taxa de recuperação por segmento e
-    totais do período. Identidade de cliente é por nome exato (limitação
-    conhecida: variações de grafia/acento contam como clientes distintos).
+    totais do período. Identidade de cliente usa normalize_name() (K2):
+    variação de acento/caixa/espaço entre relatórios conta como o mesmo
+    cliente; abreviações continuam fora do escopo.
     """
     cursor = get_conn().cursor()
 
@@ -1189,31 +1220,46 @@ def get_analytics_data(start=None, end=None, report_ids=None,
                COUNT(DISTINCT c.id)         AS clients,
                COUNT(DISTINCT p.id)         AS properties,
                COUNT(pa.id)                 AS parcels,
-               COALESCE(SUM(pa.valor), 0.0) AS total_value
+               COALESCE(SUM(pa.valor_centavos), 0) AS total_value_centavos
         FROM   clients c
-        JOIN   first_seen fs    ON fs.name = c.name
+        JOIN   first_seen fs    ON fs.name = normalize_name(c.name)
         LEFT JOIN properties p  ON p.client_id   = c.id
         LEFT JOIN parcels    pa ON pa.property_id = p.id
-        WHERE  c.name NOT IN (SELECT client_name FROM kpi_exclusions)
+        WHERE  normalize_name(c.name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
         GROUP  BY c.report_id, segment
     """, (cutoff_date,)).fetchall()
 
-    _empty = {"clients": 0, "properties": 0, "parcels": 0, "total_value": 0.0}
-    seg_map = {}   # report_id -> {"novo": {...}, "antigo": {...}}
-    for rid, seg, n_cli, n_prop, n_parc, val in seg_rows:
+    # K7: soma em centavos inteiros (sem drift de ponto flutuante) — "total"
+    # é derivado somando novo_centavos + antigo_centavos (soma de inteiros é
+    # exata) e só convertido pra reais uma única vez ao final, evitando o
+    # double-rounding do achado original (round(novo+antigo,2) sobre valores
+    # já individualmente arredondados).
+    _empty_centavos = {"clients": 0, "properties": 0, "parcels": 0, "total_value_centavos": 0}
+    seg_map = {}   # report_id -> {"novo": {...}, "antigo": {...}} (valores em centavos)
+    for rid, seg, n_cli, n_prop, n_parc, val_centavos in seg_rows:
         seg_map.setdefault(rid, {})[seg] = {
             "clients": n_cli, "properties": n_prop,
-            "parcels": n_parc, "total_value": round(val, 2),
+            "parcels": n_parc, "total_value_centavos": val_centavos,
+        }
+
+    def _finalize_segment(seg_dict):
+        return {
+            "clients": seg_dict["clients"], "properties": seg_dict["properties"],
+            "parcels": seg_dict["parcels"],
+            "total_value": _cents_to_reais(seg_dict["total_value_centavos"]),
         }
 
     series = []
     for r in selected:
-        novo   = seg_map.get(r["id"], {}).get("novo",   dict(_empty))
-        antigo = seg_map.get(r["id"], {}).get("antigo", dict(_empty))
-        total  = {k: round(novo[k] + antigo[k], 2) for k in _empty}
-        total["clients"]    = novo["clients"] + antigo["clients"]
-        total["properties"] = novo["properties"] + antigo["properties"]
-        total["parcels"]    = novo["parcels"] + antigo["parcels"]
+        novo_c   = seg_map.get(r["id"], {}).get("novo",   dict(_empty_centavos))
+        antigo_c = seg_map.get(r["id"], {}).get("antigo", dict(_empty_centavos))
+        total = {
+            "clients":     novo_c["clients"] + antigo_c["clients"],
+            "properties":  novo_c["properties"] + antigo_c["properties"],
+            "parcels":     novo_c["parcels"] + antigo_c["parcels"],
+            "total_value": _cents_to_reais(novo_c["total_value_centavos"] + antigo_c["total_value_centavos"]),
+        }
+        novo, antigo = _finalize_segment(novo_c), _finalize_segment(antigo_c)
         series.append({
             "report_id":   r["id"],
             "report_name": r["name"],
@@ -1228,21 +1274,24 @@ def get_analytics_data(start=None, end=None, report_ids=None,
     if sel_ids:
         placeholders = ",".join("?" for _ in sel_ids)
         client_rows = cursor.execute(_FIRST_SEEN_CTE + f"""
-            SELECT c.report_id, c.name,
+            SELECT c.report_id, normalize_name(c.name) AS name,
                    CASE WHEN fs.first_date >= ? THEN 'novo' ELSE 'antigo' END AS segment,
-                   COALESCE(SUM(pa.valor), 0.0) AS value
+                   COALESCE(SUM(pa.valor_centavos), 0) AS value_centavos
             FROM   clients c
-            JOIN   first_seen fs    ON fs.name = c.name
+            JOIN   first_seen fs    ON fs.name = normalize_name(c.name)
             LEFT JOIN properties p  ON p.client_id   = c.id
             LEFT JOIN parcels    pa ON pa.property_id = p.id
             WHERE  c.report_id IN ({placeholders})
-              AND  c.name NOT IN (SELECT client_name FROM kpi_exclusions)
-            GROUP  BY c.report_id, c.name
+              AND  normalize_name(c.name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
+            GROUP  BY c.report_id, normalize_name(c.name)
         """, [cutoff_date] + sel_ids).fetchall()
 
-    per_report = {}   # report_id -> {name: (segment, value)}
-    for rid, name, seg, val in client_rows:
-        per_report.setdefault(rid, {})[name] = (seg, val)
+    # Chave por identidade normalizada (K2) — "recovered" entre relatórios
+    # consecutivos precisa comparar o mesmo cliente de verdade, não a
+    # string exata (mesma razão do client_sets em get_kpis_data).
+    per_report = {}   # report_id -> {normalized_name: (segment, value_centavos)}
+    for rid, name, seg, val_centavos in client_rows:
+        per_report.setdefault(rid, {})[name] = (seg, val_centavos)
 
     def _rate(recovered, total):
         return round(len(recovered) / len(total) * 100, 1) if total else 0.0
@@ -1270,7 +1319,7 @@ def get_analytics_data(start=None, end=None, report_ids=None,
             "recovery_rate":      _rate(recovered, cur_names),
             "recovery_rate_novo":   _rate(recovered & cur_novo,   cur_novo),
             "recovery_rate_antigo": _rate(recovered & cur_antigo, cur_antigo),
-            "recovered_value":    round(sum(cur[n][1] for n in recovered), 2),
+            "recovered_value":    _cents_to_reais(sum(cur[n][1] for n in recovered)),
         })
 
     # Totais do segmento no relatório mais recente do período
@@ -1328,7 +1377,7 @@ def get_system_context():
             LEFT JOIN properties p ON p.client_id = c.id
             LEFT JOIN parcels pa ON pa.property_id = p.id AND pa.vencimento_full <= ?
             WHERE c.report_id = ?
-              AND c.name NOT IN (SELECT client_name FROM kpi_exclusions)
+              AND normalize_name(c.name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
             GROUP BY c.name
             HAVING CAST(julianday(?) - julianday(MIN(pa.vencimento_full)) AS INTEGER) > {PREJURIDICO_DAYS}
         """, (ref_date, latest_rid, ref_date)).fetchall())
@@ -1859,7 +1908,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 
             queue = []
             for name, cf in cf_all.items():
-                reentries = reentries_map.get(name, {}).get("reentries", 0)
+                reentries = reentries_map.get(_normalize_name(name), {}).get("reentries", 0)
                 score_info = _calculate_risk_score(cf["total_owed"], cf["max_days_overdue"], reentries, p90)
                 
                 bucket = _bucketize(cf["max_days_overdue"])
@@ -1974,8 +2023,11 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 "91-120": {"parcels": 0, "value": 0.0},
                 "121+": {"parcels": 0, "value": 0.0}
             }
+            # K7: acumula em centavos inteiros (soma exata, sem drift de
+            # round() repetido a cada parcela) — converte pra reais só ao final.
+            bucket_cents = {k: 0 for k in buckets_data}
             properties_list = []
-            
+
             if is_present_latest:
                 latest_c_id = is_present_latest[0]
                 props_rows = cursor.execute("""
@@ -1985,7 +2037,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 for p_id, p_vid, p_ident in props_rows:
                     parcels_list = []
                     parc_rows = cursor.execute("""
-                        SELECT parcela, vencimento, vencimento_full, valor FROM parcels
+                        SELECT parcela, vencimento, vencimento_full, valor, valor_centavos FROM parcels
                         WHERE property_id = ?
                     """, (p_id,)).fetchall()
                     for pa in parc_rows:
@@ -2001,15 +2053,17 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                                 days = 0
                             b = _bucketize(days)
                             buckets_data[b]["parcels"] += 1
-                            buckets_data[b]["value"] = round(buckets_data[b]["value"] + pa_val, 2)
+                            bucket_cents[b] += pa[4]
                         except Exception:
                             pass
                     properties_list.append({
                         "venda_id": p_vid, "identifier": p_ident, "parcels": parcels_list
                     })
+                for b in buckets_data:
+                    buckets_data[b]["value"] = _cents_to_reais(bucket_cents[b])
 
             reentries_map = _calculate_reentries(cursor)
-            rec_info = reentries_map.get(name, {
+            rec_info = reentries_map.get(_normalize_name(name), {
                 "reentries": 0, "timeline": [], "first_seen": None, "currently_present": False
             })
 
