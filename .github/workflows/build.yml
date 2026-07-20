@@ -10,57 +10,8 @@ permissions:
 
 jobs:
   build:
-    name: Build ${{ matrix.label }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # ── Windows ──────────────────────────────────────────────────────────
-          - os: windows-latest
-            label: Windows
-            artifact_name: INAD_Cobranca.exe
-            zip_name: INAD_Cobranca-Windows.zip
-            pyinstaller_cmd: >
-              pyinstaller --onefile
-              --add-data "inad_whatsapp.html;."
-              --add-data "libs;libs"
-              --name INAD_Cobranca
-              run.py
-            package_cmd: >
-              Compress-Archive
-              -Path dist/INAD_Cobranca.exe, README.md, inad_whatsapp.html, AI_CONTEXT.md, libs
-              -DestinationPath INAD_Cobranca-Windows.zip
-
-          # ── macOS ─────────────────────────────────────────────────────────────
-          - os: macos-latest
-            label: macOS
-            artifact_name: INAD_Cobranca
-            zip_name: INAD_Cobranca-macOS.zip
-            pyinstaller_cmd: >
-              pyinstaller --onefile
-              --add-data "inad_whatsapp.html:."
-              --add-data "libs:libs"
-              --name INAD_Cobranca
-              run.py
-            package_cmd: >
-              zip -r INAD_Cobranca-macOS.zip
-              dist/INAD_Cobranca README.md inad_whatsapp.html AI_CONTEXT.md libs
-
-          # ── Linux / Servidor ─────────────────────────────────────────────────
-          - os: ubuntu-latest
-            label: Linux (Servidor)
-            artifact_name: INAD_Cobranca-linux
-            zip_name: INAD_Cobranca-Linux.zip
-            pyinstaller_cmd: >
-              pyinstaller --onefile
-              --add-data "inad_whatsapp.html:."
-              --add-data "libs:libs"
-              --name INAD_Cobranca-linux
-              run.py
-            package_cmd: >
-              zip -r INAD_Cobranca-Linux.zip
-              dist/INAD_Cobranca-linux README.md inad_whatsapp.html AI_CONTEXT.md libs
+    name: Build Windows
+    runs-on: windows-latest
 
     steps:
       - name: Checkout do repositório
@@ -80,30 +31,33 @@ jobs:
         run: python add_pdf_importer.py
 
       - name: Compilar executável com PyInstaller
-        run: ${{ matrix.pyinstaller_cmd }}
+        run: >
+          pyinstaller --onefile
+          --add-data "inad_whatsapp.html;."
+          --add-data "libs;libs"
+          --name INAD_Cobranca
+          run.py
 
       - name: Verificar que o executável foi gerado
         shell: bash
         run: |
-          if [ ! -f "dist/${{ matrix.artifact_name }}" ]; then
-            echo "ERRO: Executável não encontrado em dist/${{ matrix.artifact_name }}"
+          if [ ! -f "dist/INAD_Cobranca.exe" ]; then
+            echo "ERRO: Executável não encontrado em dist/INAD_Cobranca.exe"
             exit 1
           fi
-          echo "Executável gerado com sucesso: dist/${{ matrix.artifact_name }}"
+          echo "Executável gerado com sucesso: dist/INAD_Cobranca.exe"
 
-      - name: Empacotar artefato (Windows)
-        if: matrix.os == 'windows-latest'
+      - name: Empacotar artefato
         shell: pwsh
-        run: ${{ matrix.package_cmd }}
-
-      - name: Empacotar artefato (macOS / Linux)
-        if: matrix.os != 'windows-latest'
-        run: ${{ matrix.package_cmd }}
+        run: >
+          Compress-Archive
+          -Path dist/INAD_Cobranca.exe, README.md, TUTORIAL_INTRANET_WINDOWS.md, inad_whatsapp.html, inad_analytics.html, analytics.js, analytics.css, AI_CONTEXT.md, libs
+          -DestinationPath INAD_Cobranca-Windows.zip
 
       - name: Publicar artefatos na Release do GitHub
         uses: softprops/action-gh-release@v2
         with:
-          files: ${{ matrix.zip_name }}
+          files: INAD_Cobranca-Windows.zip
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

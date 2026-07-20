@@ -77,7 +77,17 @@ def _is_loopback_bind():
     return HOST in ("127.0.0.1", "localhost", "::1")
 
 
-DIRECTORY = os.path.dirname(os.path.abspath(__file__))
+# Pasta base do projeto. Em execução normal (`python run.py`), é a pasta do
+# próprio script. Num executável empacotado via PyInstaller `--onefile`,
+# `__file__` resolve para dentro da pasta TEMPORÁRIA de extração do
+# bootloader — que é apagada quando o processo termina. Sem este desvio,
+# o banco de dados (e tudo mais salvo via DIRECTORY) seria recriado do zero
+# a cada execução do .exe. `sys.executable` sempre aponta pra pasta real do
+# executável, mesmo em modo onefile — por isso é usado quando `sys.frozen`.
+if getattr(sys, "frozen", False):
+    DIRECTORY = os.path.dirname(os.path.abspath(sys.executable))
+else:
+    DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
 # Teto de tamanho do corpo de requisições POST (proteção contra DoS por corpo
 # gigante). Configurável via INAD_MAX_BODY_BYTES; padrão 20 MB.
