@@ -450,6 +450,27 @@ let selectedReportIds = new Set();
 let isFirstKPILoad = true;
 let excludedClients = new Set();
 
+async function linkQueueInfo(clientsData, reportId = null) {
+  if (!clientsData) return;
+  try {
+    let url = '/api/queue';
+    if (reportId) {
+      url += `?report_id=${reportId}`;
+    }
+    const queueRes = await fetch(url);
+    const queueJson = await queueRes.json();
+    if (queueJson && queueJson.queue) {
+      for(const q of queueJson.queue) {
+        if(clientsData[q.name]) {
+          clientsData[q.name].queue_info = q;
+        }
+      }
+    }
+  } catch(e) {
+    console.warn("Queue API indisponível ou falhou:", e);
+  }
+}
+
 async function initApp() {
   if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
     try {
@@ -470,23 +491,11 @@ async function initApp() {
         console.warn("Falha ao buscar exclusões de KPI:", exErr);
       }
       
-      try {
-        const queueRes = await fetch('/api/queue');
-        const queueJson = await queueRes.json();
-        if (queueJson && queueJson.queue && clientsData) {
-          for(const q of queueJson.queue) {
-            if(clientsData[q.name]) {
-              clientsData[q.name].queue_info = q;
-            }
-          }
-        }
-      } catch(e) {
-        console.warn("Queue API indisponível:", e);
-      }
+      isServerActive = true;
+      await linkQueueInfo(clientsData);
       
       if (clientsData && typeof clientsData === 'object') {
         DATA = Object.keys(clientsData).length > 0 ? clientsData : EMBEDDED_DATA;
-        isServerActive = true;
         console.log("Banco de dados sincronizado com o servidor.");
         
         // Show report selector elements
@@ -525,6 +534,15 @@ function loadLocalData() {
   isServerActive = false;
   document.getElementById('report-select-sep').style.display = 'none';
   document.getElementById('report-select').style.display = 'none';
+}
+
+function resetDatabase() {
+  if (confirm("Deseja restaurar a base de dados padrão? Todos os dados locais salvos no navegador serão apagados.")) {
+    localStorage.removeItem('inad_clients_db');
+    localStorage.removeItem('inad_sent');
+    localStorage.removeItem('inad_kpi_exclusions');
+    location.reload();
+  }
 }
 
 function normalizeData() {
@@ -635,7 +653,10 @@ async function changeReport(reportId) {
   try {
     const res = await fetch(`/api/reports/${reportId}`);
     const clientsData = await res.json();
-    pBar.style.width = '70%';
+    pBar.style.width = '60%';
+    
+    await linkQueueInfo(clientsData, reportId);
+    pBar.style.width = '85%';
     
     if (clientsData && typeof clientsData === 'object') {
       DATA = clientsData;
@@ -1425,6 +1446,20 @@ async function saveClients(parsedClients, reportName, reportDate) {
         })
       });
       if (!res.ok) throw new Error(res.statusText);
+      const resJson = await res.json();
+      const newReportId = resJson.report_id;
+      
+      // Recarrega os dados do novo relatório vinculando as informações de risco calculadas
+      if (newReportId) {
+        try {
+          const freshRes = await fetch(`/api/reports/${newReportId}`);
+          const freshData = await freshRes.json();
+          await linkQueueInfo(freshData, newReportId);
+          DATA = freshData;
+        } catch (e) {
+          console.error("Falha ao recarregar dados do novo relatório:", e);
+        }
+      }
       
       await updateReportDropdown();
       await loadKPIs();
