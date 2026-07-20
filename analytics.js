@@ -176,6 +176,7 @@ function render(data) {
   const { series, transitions, meta } = data;
   renderTiles(series, transitions);
   renderDetailTable(series);
+  renderScopeBanner(meta);
   document.getElementById('cutoff-info').textContent =
     `Corte "novo": estreia a partir de ${fmtDate(meta.cutoff_date)}`;
 
@@ -440,6 +441,95 @@ async function loadReportList() {
       document.getElementById('dd-count').textContent = `${state.reports.size}/${allReports.length}`;
     }
   } catch (e) { console.error('Erro ao listar relatórios:', e); }
+}
+
+// ─── REFORMA_KPI §2.4/§3.1: BANNER DE ESCOPO E EXCLUSÕES MANUAIS ───────────
+function renderScopeBanner(meta) {
+  const banner = document.getElementById('scope-banner');
+  const exclNote = document.getElementById('kpi-exclusions-note');
+  if (!banner) return;
+  const excluidos = meta.relatorios_excluidos || [];
+  const insuficiente = !!meta.dados_insuficientes_para_transicoes;
+
+  if (excluidos.length === 0 && !insuficiente) {
+    banner.style.display = 'none';
+    banner.innerHTML = '';
+  } else {
+    let html = '';
+    if (excluidos.length > 0) {
+      html += `<div>⚠ <strong>${excluidos.length} relatório(s) excluído(s)</strong> desta análise ` +
+        `(escopo parcial/não confirmado — nunca misturados com relatórios completos):</div><ul>`;
+      excluidos.forEach(r => {
+        const motivo = r.escopo_motivo ? ` — ${escapeHtml(r.escopo_motivo)}` : '';
+        const escopoTxt = r.escopo === 'parcial' ? 'parcial' : 'não confirmado';
+        html += `<li>${escapeHtml(r.report_name)} (#${r.id}, ${fmtDate(r.report_date)}): <em>${escopoTxt}</em>${motivo}</li>`;
+      });
+      html += `</ul>`;
+    }
+    if (insuficiente) {
+      html += `<div style="margin-top:${excluidos.length ? '10px' : '0'}">ℹ Menos de 2 relatórios completos no período — ` +
+        `série/transições ainda não podem ser calculadas.</div>`;
+    }
+    banner.innerHTML = html;
+    banner.style.display = 'block';
+  }
+
+  if (exclNote) {
+    const exclCount = (meta.kpi_exclusions && meta.kpi_exclusions.count) || 0;
+    exclNote.textContent = exclCount > 0
+      ? `ⓘ ${exclCount} cliente(s) excluído(s) manualmente dos KPIs pela equipe (ajuste operacional, não afeta o factual acima).`
+      : '';
+  }
+}
+
+// ─── REFORMA_KPI §4: DICIONÁRIO DE KPIs (TOOLTIP "?") ──────────────────────
+let kpiDictionary = null;
+async function loadKpiDictionary() {
+  if (kpiDictionary) return kpiDictionary;
+  kpiDictionary = {};
+  try {
+    const res = await fetch('/api/kpis/dicionario');
+    const data = await res.json();
+    (data.kpis || []).forEach(k => { kpiDictionary[k.id] = k; });
+  } catch (e) { console.error('Erro ao carregar dicionário de KPIs:', e); }
+  return kpiDictionary;
+}
+
+let openKpiPopover = null;
+function closeKpiInfo() {
+  if (openKpiPopover) { openKpiPopover.remove(); openKpiPopover = null; }
+  document.removeEventListener('click', closeKpiInfoOnOutsideClick);
+}
+function closeKpiInfoOnOutsideClick(e) {
+  if (openKpiPopover && !openKpiPopover.contains(e.target)) closeKpiInfo();
+}
+
+async function toggleKpiInfo(btn, kpiId) {
+  const wasOpenFor = openKpiPopover && openKpiPopover.dataset.kpiId === kpiId;
+  closeKpiInfo();
+  if (wasOpenFor) return;
+
+  const dict = await loadKpiDictionary();
+  const k = dict[kpiId];
+  const pop = document.createElement('div');
+  pop.className = 'kpi-info-popover';
+  pop.dataset.kpiId = kpiId;
+  pop.innerHTML = k ? `
+      <span class="universo-tag ${k.universo}">${escapeHtml(k.universo)}</span>
+      <div style="font-weight:700; color:var(--text); margin-bottom:4px;">${escapeHtml(k.nome)}</div>
+      <div>${escapeHtml(k.definicao)}</div>
+      ${k.formula ? `<div class="kf-formula">${escapeHtml(k.formula)}</div>` : ''}
+      ${k.observacoes ? `<div class="kf-obs">${escapeHtml(k.observacoes)}</div>` : ''}
+    ` : '<em>Definição não encontrada.</em>';
+  document.body.appendChild(pop);
+
+  const rect = btn.getBoundingClientRect();
+  let left = rect.left;
+  if (left + 270 > window.innerWidth - 12) left = window.innerWidth - 282;
+  pop.style.left = `${Math.max(8, left)}px`;
+  pop.style.top = `${rect.bottom + 6}px`;
+  openKpiPopover = pop;
+  setTimeout(() => document.addEventListener('click', closeKpiInfoOnOutsideClick), 0);
 }
 
 // ─── BOOT ────────────────────────────────────────────────────────────────────

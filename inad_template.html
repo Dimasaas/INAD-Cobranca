@@ -224,6 +224,38 @@
     .kpi-btn-del { border-color: rgba(239,68,68,.3); color: var(--red); }
     .kpi-btn-del:hover { border-color: var(--red); color: var(--red); background: rgba(239,68,68,.05); }
 
+    /* REFORMA_KPI §2/§3/§4: badges de escopo, banner de exclusão,
+       rótulos factual/operacional e tooltip do dicionário de KPIs. */
+    .escopo-badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;border:1px solid transparent;text-transform:uppercase;letter-spacing:.3px;white-space:nowrap}
+    .escopo-badge.completo{background:var(--green-bg);color:var(--green);border-color:rgba(16,185,129,.3)}
+    .escopo-badge.parcial{background:var(--amber-bg);color:var(--amber);border-color:rgba(245,158,11,.3)}
+    .escopo-badge.nao_confirmado{background:rgba(100,116,139,.15);color:var(--text3);border-color:rgba(100,116,139,.3)}
+    .escopo-select{background:var(--bg3);border:1px solid var(--border);color:var(--text2);font-family:inherit;font-size:10px;border-radius:6px;padding:2px 4px;cursor:pointer;margin-left:6px}
+
+    .kpi-scope-banner{display:none;background:var(--amber-bg);border:1px solid rgba(245,158,11,.3);border-radius:10px;padding:12px 16px;margin-bottom:18px;font-size:12.5px;color:var(--text2);line-height:1.5}
+    .kpi-scope-banner strong{color:var(--amber)}
+    .kpi-scope-banner ul{margin:6px 0 0 18px;padding:0}
+
+    .kpi-section-label{display:flex;align-items:center;gap:8px;margin:28px 0 4px;font-size:13px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.4px}
+    .kpi-section-label:first-child{margin-top:0}
+    .kpi-section-label .tag{font-size:10px;font-weight:700;padding:2px 8px;border-radius:10px;text-transform:none;letter-spacing:0}
+    .kpi-section-label .tag.factual{background:var(--blue-bg);color:var(--blue)}
+    .kpi-section-label .tag.operacional{background:var(--purple-bg);color:var(--purple)}
+    .kpi-section-desc{font-size:11.5px;color:var(--text3);margin:0 0 16px;max-width:680px;line-height:1.5}
+
+    .kpi-card.operacional::after{background:linear-gradient(180deg, var(--purple), var(--accent2))}
+
+    .kpi-info-btn{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;background:rgba(255,255,255,.06);color:var(--text3);font-size:10px;font-weight:700;cursor:pointer;border:1px solid var(--border);margin-left:5px;vertical-align:middle;user-select:none}
+    .kpi-info-btn:hover{color:var(--accent);border-color:var(--accent)}
+    .kpi-info-popover{position:fixed;z-index:1500;background:var(--bg2);border:1px solid var(--border);border-radius:10px;box-shadow:var(--sh);padding:14px 16px;width:280px;font-size:12px;color:var(--text2);line-height:1.5}
+    .kpi-info-popover .universo-tag{display:inline-block;font-size:10px;font-weight:700;padding:2px 7px;border-radius:8px;margin-bottom:6px;text-transform:uppercase}
+    .kpi-info-popover .universo-tag.factual{background:var(--blue-bg);color:var(--blue)}
+    .kpi-info-popover .universo-tag.operacional{background:var(--purple-bg);color:var(--purple)}
+    .kpi-info-popover .universo-tag.derivado{background:var(--amber-bg);color:var(--amber)}
+    .kpi-info-popover .kf-formula{font-family:monospace;font-size:11px;background:rgba(255,255,255,.03);padding:6px 8px;border-radius:6px;margin:6px 0;word-break:break-word}
+    .kpi-info-popover .kf-obs{color:var(--text3);font-size:11px;margin-top:6px}
+    .kpi-tag-inline{font-size:9px;font-weight:700;padding:1px 6px;border-radius:8px;text-transform:uppercase;background:var(--purple-bg);color:var(--purple);margin-left:6px;vertical-align:middle}
+
     /* ESTILOS DE EXCLUSÃO DE CLIENTES DOS KPIS */
     .btn-exclude-kpi {
       background: rgba(255,255,255,0.03);
@@ -283,6 +315,43 @@
     <div id="progress-bar" style="width:0%; height:100%; background:linear-gradient(90deg, var(--accent), var(--accent2)); transition:width 0.15s;"></div>
   </div>
   <p style="color:var(--text3)" id="loading-sub">Carregando páginas e mapeando clientes</p>
+</div>
+
+<!-- REFORMA_KPI §2/§7 passo 5: declaração de escopo por arquivo no import,
+     sem remover a possibilidade de importar vários PDFs de uma vez. -->
+<div id="escopo-overlay" style="display:none; position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(13,15,20,0.92); backdrop-filter:blur(10px); z-index:1002; align-items:center; justify-content:center;">
+  <div style="background:var(--card); border:1px solid var(--border); border-radius:var(--r); box-shadow:var(--sh); padding:26px 28px; width:min(460px, 92vw); max-height:88vh; overflow:auto;">
+    <h3 style="font-weight:700; color:var(--text); margin-bottom:4px;">Este relatório está completo?</h3>
+    <p style="color:var(--text3); font-size:13px; margin-bottom:14px;" id="escopo-file-name">arquivo.pdf</p>
+    <p style="color:var(--text2); font-size:12.5px; line-height:1.5; margin-bottom:16px;">
+      Isso define se o relatório entra nos KPIs de evolução/recuperação (que
+      comparam relatórios entre si) — um relatório parcial ou filtrado
+      distorceria essas comparações, então fica marcado e excluído delas
+      (mas continua disponível para a cobrança do dia a dia).
+    </p>
+    <div id="escopo-heuristic-hint" style="display:none; background:rgba(245,158,11,.08); border:1px solid rgba(245,158,11,.3); color:#f59e0b; font-size:12px; border-radius:8px; padding:8px 12px; margin-bottom:14px;"></div>
+    <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:14px;">
+      <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer; padding:10px 12px; border:1px solid var(--border); border-radius:8px;">
+        <input type="radio" name="escopo-choice" value="completo" style="margin-top:3px;">
+        <span><strong style="color:var(--text)">Completo</strong><br><span style="color:var(--text3); font-size:12px;">Tem todos os clientes inadimplentes, sem filtro de parcelas/data.</span></span>
+      </label>
+      <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer; padding:10px 12px; border:1px solid var(--border); border-radius:8px;">
+        <input type="radio" name="escopo-choice" value="parcial" style="margin-top:3px;">
+        <span><strong style="color:var(--text)">Parcial</strong><br><span style="color:var(--text3); font-size:12px;">Só um recorte (ex.: 1–3 parcelas, um bloco/quadra, uma faixa de data).</span></span>
+      </label>
+      <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer; padding:10px 12px; border:1px solid var(--border); border-radius:8px;">
+        <input type="radio" name="escopo-choice" value="nao_confirmado" style="margin-top:3px;" checked>
+        <span><strong style="color:var(--text)">Não sei / decidir depois</strong><br><span style="color:var(--text3); font-size:12px;">Importa normalmente, mas fica fora dos KPIs comparativos até você confirmar (em Indicadores → Relatórios).</span></span>
+      </label>
+    </div>
+    <div id="escopo-motivo-wrap" style="display:none; margin-bottom:14px;">
+      <label style="font-size:12px; color:var(--text3); display:block; margin-bottom:4px;">Motivo (obrigatório para "Parcial")</label>
+      <input type="text" id="escopo-motivo-input" placeholder="ex.: filtrado 1-3 parcelas" style="width:100%; background:var(--bg2); border:1px solid var(--border); border-radius:6px; padding:8px 10px; color:var(--text); font-family:inherit; font-size:13px;">
+    </div>
+    <div style="display:flex; justify-content:flex-end; gap:8px;">
+      <button class="btn" id="escopo-confirm-btn" style="background:var(--accent); color:#fff; border:none; padding:8px 18px; border-radius:8px; font-weight:600; cursor:pointer;">Continuar importação</button>
+    </div>
+  </div>
 </div>
 
 
@@ -347,25 +416,32 @@
 </div>
 
 <div class="kpi-screen" id="kpi-screen" style="display:none; padding: 22px 24px;">
+
+  <div id="kpi-scope-banner" class="kpi-scope-banner"></div>
+
+  <div class="kpi-section-label">📋 Indicadores do Relatório <span class="tag factual">factual</span></div>
+  <div class="kpi-section-desc">Calculados diretamente do PDF do ProUAU. Não dependem de nenhuma ação da equipe — só entram relatórios com escopo <strong>completo</strong> confirmado.</div>
+
   <div class="kpi-grid">
     <div class="kpi-card">
-      <div class="kpi-card-title">Taxa de Recuperação Média</div>
+      <div class="kpi-card-title">Taxa de Recuperação Média<span class="kpi-info-btn" onclick="event.stopPropagation(); toggleKpiInfo(this, 'taxa_recuperacao')">?</span></div>
       <div class="kpi-card-value" id="kpi-recovery-rate">—</div>
-      <div class="kpi-card-desc">Média de clientes que saíram da lista de inadimplência entre relatórios consecutivos — sumir não significa necessariamente que pagou (pode ser jurídico, renegociação fora do sistema, etc.).</div>
+      <div class="kpi-card-desc">Média de clientes que saíram da lista de inadimplência entre relatórios completos consecutivos — sumir não significa necessariamente que pagou (pode ser jurídico, renegociação fora do sistema, etc.).</div>
       <span class="chip" id="kpi-recovery-confirmed" style="display:inline-block; margin-top:8px; background:var(--blue-bg); color:var(--blue); border:1px solid rgba(59,130,246,0.3); font-size:11px; font-weight:600;">— confirmada (pagamento registrado)</span>
+      <span class="kpi-tag-inline" title="Depende de desfecho 'pagou' registrado pela equipe — ver seção Operacional">operacional</span>
     </div>
     <div class="kpi-card">
-      <div class="kpi-card-title">Total Inadimplente (Atual)</div>
+      <div class="kpi-card-title">Total Inadimplente (Atual)<span class="kpi-info-btn" onclick="event.stopPropagation(); toggleKpiInfo(this, 'total_inadimplente')">?</span></div>
       <div class="kpi-card-value" id="kpi-active-value">—</div>
       <div class="kpi-card-desc">Soma do valor de todas as parcelas vencidas no último relatório selecionado.</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-card-title">Clientes em Atraso (Atual)</div>
+      <div class="kpi-card-title">Clientes em Atraso (Atual)<span class="kpi-info-btn" onclick="event.stopPropagation(); toggleKpiInfo(this, 'clientes_em_atraso')">?</span></div>
       <div class="kpi-card-value" id="kpi-active-clients">—</div>
       <div class="kpi-card-desc">Total de clientes devedores ativos no último relatório selecionado.</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-card-title">Parcelas em Atraso (Atual)</div>
+      <div class="kpi-card-title">Parcelas em Atraso (Atual)<span class="kpi-info-btn" onclick="event.stopPropagation(); toggleKpiInfo(this, 'parcelas_em_atraso')">?</span></div>
       <div class="kpi-card-value" id="kpi-active-parcels">—</div>
       <div class="kpi-card-desc">Total de parcelas vencidas no último relatório selecionado.</div>
     </div>
@@ -373,20 +449,41 @@
 
   <div class="kpi-charts-row">
     <div class="kpi-chart-box">
-      <h3>📈 Evolução do Valor Inadimplente</h3>
+      <h3>📈 Evolução do Valor Inadimplente<span class="kpi-info-btn" onclick="toggleKpiInfo(this, 'evolucao')">?</span></h3>
       <div id="chart-evolution" class="chart-container">
-        <p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar o gráfico. Importe mais de um relatório.</p>
+        <p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar o gráfico. Importe mais de um relatório completo.</p>
       </div>
     </div>
     <div class="kpi-chart-box">
-      <h3>📊 Histórico de Recuperação por Período</h3>
+      <h3>📊 Histórico de Recuperação por Período<span class="kpi-info-btn" onclick="toggleKpiInfo(this, 'taxa_recuperacao')">?</span></h3>
       <div style="display:flex; gap:14px; font-size:10px; color:var(--text3); margin-bottom:8px;">
-        <span><span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:var(--green); margin-right:4px;"></span>Saiu da lista</span>
-        <span><span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:var(--blue); margin-right:4px;"></span>Confirmado (pagou)</span>
+        <span><span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:var(--green); margin-right:4px;"></span>Saiu da lista (factual)</span>
+        <span><span style="display:inline-block; width:8px; height:8px; border-radius:2px; background:var(--blue); margin-right:4px;"></span>Confirmado — pagou (operacional)</span>
       </div>
       <div id="chart-comparison" class="chart-container">
-        <p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar o gráfico. Importe mais de um relatório.</p>
+        <p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar o gráfico. Importe mais de um relatório completo.</p>
       </div>
+    </div>
+  </div>
+
+  <div class="kpi-section-label">🤝 Indicadores Operacionais (equipe) <span class="tag operacional">operacional</span></div>
+  <div class="kpi-section-desc">Dependem do que a equipe registrou (contatos, desfechos). Refletem o esforço de cobrança, não apenas o relatório — podem estar subestimados se algum registro deixou de ser feito.</div>
+
+  <div class="kpi-grid" style="margin-bottom:24px;">
+    <div class="kpi-card operacional">
+      <div class="kpi-card-title">Eficácia de Contato<span class="kpi-info-btn" onclick="event.stopPropagation(); toggleKpiInfo(this, 'eficacia_contato')">?</span></div>
+      <div class="kpi-card-value" id="kpi-op-effectiveness">—</div>
+      <div class="kpi-card-desc" id="kpi-op-effectiveness-desc">% de clientes contatados via WhatsApp que regularizaram depois.</div>
+    </div>
+    <div class="kpi-card operacional">
+      <div class="kpi-card-title">Promessas Cumpridas<span class="kpi-info-btn" onclick="event.stopPropagation(); toggleKpiInfo(this, 'promessas_feitas_cumpridas')">?</span></div>
+      <div class="kpi-card-value" id="kpi-op-promises">—</div>
+      <div class="kpi-card-desc" id="kpi-op-promises-desc">De todas as promessas de pagamento registradas, quantas o cliente cumpriu.</div>
+    </div>
+    <div class="kpi-card operacional">
+      <div class="kpi-card-title">Clientes Excluídos dos KPIs<span class="kpi-info-btn" onclick="event.stopPropagation(); toggleKpiInfo(this, 'clientes_excluidos_kpis')">?</span></div>
+      <div class="kpi-card-value" id="kpi-op-exclusions">—</div>
+      <div class="kpi-card-desc">Ajuste manual da equipe — lista completa ao lado, em "Clientes Ignorados nos KPIs".</div>
     </div>
   </div>
 
@@ -408,6 +505,7 @@
             <th>ID</th>
             <th>Identificação do Relatório</th>
             <th>Importado em</th>
+            <th>Escopo</th>
             <th>Clientes Inadimplentes</th>
             <th>Parcelas em Atraso</th>
             <th>Total Inadimplente</th>
@@ -416,7 +514,7 @@
         </thead>
         <tbody id="kpi-reports-tbody">
           <tr>
-            <td colspan="8" style="text-align:center; padding: 20px 0; color:var(--text3);">Nenhum relatório importado.</td>
+            <td colspan="9" style="text-align:center; padding: 20px 0; color:var(--text3);">Nenhum relatório importado.</td>
           </tr>
         </tbody>
       </table>
@@ -424,13 +522,13 @@
 
     <div class="kpi-exclusions-section" style="flex: 1; min-width: 300px; background:var(--card); padding:20px; border-radius:12px; border:1px solid var(--border);">
        <h3 style="margin-top:0; margin-bottom:16px; font-size:14px; font-weight:700; color:var(--text2);">Clientes Ignorados nos KPIs</h3>
-       
+
        <div style="display:flex; gap:8px; margin-bottom:16px;">
          <input type="text" id="kpi-exclude-input" list="kpi-clients-datalist" placeholder="Nome exato do cliente..." style="flex:1; background:rgba(255,255,255,0.03); border:1px solid var(--border); padding:8px 12px; border-radius:6px; color:var(--text); font-family:inherit; font-size:13px;">
          <datalist id="kpi-clients-datalist"></datalist>
          <button class="kpi-btn-action" onclick="addClientExclusionFromInput()" style="padding:8px 14px;">🚫 Ignorar</button>
        </div>
-       
+
        <div id="kpi-exclusions-list" style="display:flex; flex-direction:column; gap:8px; max-height:300px; overflow-y:auto; padding-right:4px;">
          <!-- List of excluded clients will be populated here -->
        </div>
@@ -724,7 +822,13 @@ async function loadKPIs() {
     const transitions = kpiData.transitions || [];
     const evolution = kpiData.evolution || [];
     const all_evolution = kpiData.all_evolution || [];
-    
+    const meta = kpiData.meta || {};
+
+    // REFORMA_KPI §2.4: banner visível de relatórios excluídos dos KPIs
+    // temporais (parcial/não confirmado) e de dados insuficientes — nunca
+    // silencioso, sempre com o motivo de cada exclusão.
+    renderScopeBanner(meta);
+
     // Inicialização da seleção na primeira carga (desmarca duplicados automaticamente)
     if (isFirstKPILoad && all_evolution.length > 0) {
       selectedReportIds = new Set(
@@ -771,12 +875,16 @@ async function loadKPIs() {
     document.getElementById('kpi-active-value').textContent = latestValue;
     document.getElementById('kpi-active-clients').textContent = latestClients;
     document.getElementById('kpi-active-parcels').textContent = latestParcels;
-    
+
+    const exclCount = (meta.kpi_exclusions && meta.kpi_exclusions.count) || 0;
+    document.getElementById('kpi-op-exclusions').textContent = exclCount;
+    loadOperationalSummary();
+
     const tbody = document.getElementById('kpi-reports-tbody');
     tbody.innerHTML = "";
     
     if (all_evolution.length === 0) {
-      tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:20px; color:var(--text3);">Nenhum relatório importado.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="9" style="text-align:center; padding:20px; color:var(--text3);">Nenhum relatório importado.</td></tr>';
     } else {
       [...all_evolution].reverse().forEach(rep => {
         const tr = document.createElement('tr');
@@ -802,10 +910,14 @@ async function loadKPIs() {
           tr.style.opacity = '0.65';
         }
         
-        const duplicateBadge = isDuplicate 
+        const duplicateBadge = isDuplicate
           ? `<span class="chip" style="background:var(--purple-bg); color:var(--purple); border-color:rgba(168,85,247,.2); margin-left:8px;">Duplicado (Ignorado)</span>`
           : '';
-        
+
+        const escopo = rep.escopo || 'nao_confirmado';
+        const escopoLabels = { completo: 'Completo', parcial: 'Parcial', nao_confirmado: 'Não confirmado' };
+        const escopoTitle = rep.escopo_motivo ? escapeHtml(rep.escopo_motivo) : 'Sem motivo registrado';
+
         tr.innerHTML = `
           <td style="text-align: center;">
             <input type="checkbox" class="report-checkbox" data-id="${rep.report_id}" ${isChecked ? 'checked' : ''} onchange="toggleReportSelection(${rep.report_id}, this.checked)" style="cursor:pointer; width:15px; height:15px;">
@@ -813,6 +925,15 @@ async function loadKPIs() {
           <td><strong>#${rep.report_id}</strong></td>
           <td>${escapeHtml(rep.report_name)} ${duplicateBadge}</td>
           <td>${formattedDate}</td>
+          <td>
+            <span class="escopo-badge ${escopo}" title="${escopoTitle}">${escopoLabels[escopo]}</span>
+            <select class="escopo-select" onchange="reclassifyEscopo(${rep.report_id}, this.value)" title="Reclassificar escopo deste relatório">
+              <option value="" disabled selected>alterar…</option>
+              <option value="completo">Completo</option>
+              <option value="parcial">Parcial</option>
+              <option value="nao_confirmado">Não confirmado</option>
+            </select>
+          </td>
           <td>${rep.clients} clientes</td>
           <td><span class="chip" style="background:var(--red-bg); color:var(--red); border-color:rgba(239,68,68,.2);">${rep.parcels} parcelas</span></td>
           <td><strong>${formatCurrency(rep.total_value || 0)}</strong></td>
@@ -860,6 +981,142 @@ async function loadKPIs() {
   } catch (e) {
     console.error("Erro ao carregar dados do dashboard de KPIs:", e);
   }
+}
+
+// ─── REFORMA_KPI §2.4: BANNER DE ESCOPO / RELATÓRIOS EXCLUÍDOS ─────────────
+function renderScopeBanner(meta) {
+  const banner = document.getElementById('kpi-scope-banner');
+  if (!banner) return;
+  const excluidos = meta.relatorios_excluidos || [];
+  const insuficiente = !!meta.dados_insuficientes_para_transicoes;
+
+  if (excluidos.length === 0 && !insuficiente) {
+    banner.style.display = 'none';
+    banner.innerHTML = '';
+    return;
+  }
+
+  let html = '';
+  if (excluidos.length > 0) {
+    html += `<div>⚠ <strong>${excluidos.length} relatório(s) excluído(s)</strong> dos KPIs de evolução/recuperação ` +
+      `(entram no relatório atual/cobrança, mas não em comparações entre relatórios):</div><ul>`;
+    excluidos.forEach(r => {
+      const motivo = r.escopo_motivo ? ` — ${escapeHtml(r.escopo_motivo)}` : '';
+      const escopoTxt = r.escopo === 'parcial' ? 'parcial' : 'não confirmado';
+      html += `<li>${escapeHtml(r.report_name)} (#${r.id}, ${escapeHtml(r.report_date || '')}): <em>${escopoTxt}</em>${motivo}</li>`;
+    });
+    html += `</ul>`;
+  }
+  if (insuficiente) {
+    html += `<div style="margin-top:${excluidos.length ? '10px' : '0'}">ℹ Menos de 2 relatórios completos disponíveis — ` +
+      `evolução e taxa de recuperação ainda não podem ser calculadas.</div>`;
+  }
+  banner.innerHTML = html;
+  banner.style.display = 'block';
+}
+
+async function reclassifyEscopo(reportId, newEscopo) {
+  if (!newEscopo) return;
+  let motivo = '';
+  if (newEscopo === 'parcial') {
+    motivo = prompt('Motivo do recorte (obrigatório para "Parcial"), ex.: "filtrado 1-3 parcelas":', '');
+    if (motivo === null) { loadKPIs(); return; }
+    motivo = motivo.trim();
+    if (!motivo) {
+      alert('É necessário informar um motivo para marcar um relatório como parcial.');
+      loadKPIs();
+      return;
+    }
+  }
+  try {
+    const res = await fetch(`/api/reports/${reportId}/escopo`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ escopo: newEscopo, escopo_motivo: motivo }),
+    });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || res.statusText);
+    await loadKPIs();
+  } catch (e) {
+    alert('Erro ao atualizar escopo do relatório: ' + e.message);
+    loadKPIs();
+  }
+}
+
+// ─── REFORMA_KPI §3: RESUMO OPERACIONAL (EQUIPE) NA ABA DE KPIs ────────────
+async function loadOperationalSummary() {
+  try {
+    const res = await fetch('/api/summary');
+    if (!res.ok) return;
+    const data = await res.json();
+    const op = data.operacional || {};
+    const eff = op.effectiveness || {};
+    const rate = typeof eff.rate === 'number' ? `${eff.rate.toFixed(1)}%` : '—';
+    document.getElementById('kpi-op-effectiveness').textContent = rate;
+    document.getElementById('kpi-op-effectiveness-desc').textContent =
+      `${eff.regularized_after_contact || 0} de ${eff.contacted || 0} clientes contatados regularizaram depois.`;
+
+    const promisesMade = eff.promises_made || 0;
+    const promisesKept = eff.promises_kept || 0;
+    document.getElementById('kpi-op-promises').textContent = promisesMade > 0
+      ? `${promisesKept}/${promisesMade}`
+      : '—';
+    document.getElementById('kpi-op-promises-desc').textContent = promisesMade > 0
+      ? `${(eff.promises_kept_rate || 0).toFixed(1)}% das promessas de pagamento foram cumpridas.`
+      : 'Nenhuma promessa de pagamento registrada ainda.';
+  } catch (e) {
+    console.error('Erro ao carregar resumo operacional:', e);
+  }
+}
+
+// ─── REFORMA_KPI §4: DICIONÁRIO DE KPIs (TOOLTIP "?") ──────────────────────
+let kpiDictionary = null;
+async function loadKpiDictionary() {
+  if (kpiDictionary) return kpiDictionary;
+  kpiDictionary = {};
+  try {
+    const res = await fetch('/api/kpis/dicionario');
+    const data = await res.json();
+    (data.kpis || []).forEach(k => { kpiDictionary[k.id] = k; });
+  } catch (e) { console.error('Erro ao carregar dicionário de KPIs:', e); }
+  return kpiDictionary;
+}
+
+let openKpiPopover = null;
+function closeKpiInfo() {
+  if (openKpiPopover) { openKpiPopover.remove(); openKpiPopover = null; }
+  document.removeEventListener('click', closeKpiInfoOnOutsideClick);
+}
+function closeKpiInfoOnOutsideClick(e) {
+  if (openKpiPopover && !openKpiPopover.contains(e.target)) closeKpiInfo();
+}
+
+async function toggleKpiInfo(btn, kpiId) {
+  const wasOpenFor = openKpiPopover && openKpiPopover.dataset.kpiId === kpiId;
+  closeKpiInfo();
+  if (wasOpenFor) return;
+
+  const dict = await loadKpiDictionary();
+  const k = dict[kpiId];
+  const pop = document.createElement('div');
+  pop.className = 'kpi-info-popover';
+  pop.dataset.kpiId = kpiId;
+  pop.innerHTML = k ? `
+      <span class="universo-tag ${k.universo}">${escapeHtml(k.universo)}</span>
+      <div style="font-weight:700; color:var(--text); margin-bottom:4px;">${escapeHtml(k.nome)}</div>
+      <div>${escapeHtml(k.definicao)}</div>
+      ${k.formula ? `<div class="kf-formula">${escapeHtml(k.formula)}</div>` : ''}
+      ${k.observacoes ? `<div class="kf-obs">${escapeHtml(k.observacoes)}</div>` : ''}
+    ` : '<em>Definição não encontrada.</em>';
+  document.body.appendChild(pop);
+
+  const rect = btn.getBoundingClientRect();
+  let left = rect.left;
+  if (left + 280 > window.innerWidth - 12) left = window.innerWidth - 292;
+  pop.style.left = `${Math.max(8, left)}px`;
+  pop.style.top = `${rect.bottom + 6}px`;
+  openKpiPopover = pop;
+  setTimeout(() => document.addEventListener('click', closeKpiInfoOnOutsideClick), 0);
 }
 
 // ─── AUXILIARES DE COMPARAÇÃO & EXCLUSÃO ───────────────────────────────────
@@ -1439,7 +1696,7 @@ function save(){
   saveSent();
 }
 
-async function saveClients(parsedClients, reportName, reportDate) {
+async function saveClients(parsedClients, reportName, reportDate, escopo, escopoMotivo) {
   if (isServerActive) {
     try {
       const res = await fetch('/api/reports', {
@@ -1448,7 +1705,9 @@ async function saveClients(parsedClients, reportName, reportDate) {
         body: JSON.stringify({
           report_name: reportName || "Relatório Avulso",
           report_date: reportDate,
-          clients: parsedClients
+          clients: parsedClients,
+          escopo: escopo || undefined,
+          escopo_motivo: escopoMotivo || undefined,
         })
       });
       const resJson = await res.json().catch(() => ({}));
@@ -1541,6 +1800,68 @@ function migrateSentData(){
 }
 // migrateSentData() is called inside initApp()
 
+// ─── REFORMA_KPI §2: DECLARAÇÃO DE ESCOPO POR ARQUIVO ────────────────────
+// Heurística client-side (espelha a do servidor, ver _classificar_escopo_
+// heuristico em run.py): se TODOS os clientes do arquivo têm poucas
+// parcelas, é provável que o relatório tenha sido emitido com um filtro
+// (ex.: "só 1 a 3 parcelas") — sinaliza, mas nunca decide sozinho.
+function _maxParcelasPorCliente(parsedClients) {
+  let max = 0;
+  for (const cData of Object.values(parsedClients)) {
+    let total = 0;
+    for (const prop of cData.properties || []) total += (prop.parcels || []).length;
+    if (total > max) max = total;
+  }
+  return max;
+}
+
+function askEscopoForFile(fileName, parsedClients) {
+  return new Promise(resolve => {
+    const overlay = document.getElementById('escopo-overlay');
+    const hint = document.getElementById('escopo-heuristic-hint');
+    const motivoWrap = document.getElementById('escopo-motivo-wrap');
+    const motivoInput = document.getElementById('escopo-motivo-input');
+    const confirmBtn = document.getElementById('escopo-confirm-btn');
+    const radios = overlay.querySelectorAll('input[name="escopo-choice"]');
+
+    document.getElementById('escopo-file-name').textContent = fileName;
+    motivoInput.value = '';
+    motivoWrap.style.display = 'none';
+
+    const maxParcelas = _maxParcelasPorCliente(parsedClients);
+    if (maxParcelas > 0 && maxParcelas <= 3) {
+      hint.style.display = 'block';
+      hint.textContent = `⚠ Todos os clientes deste arquivo têm no máximo ${maxParcelas} parcela(s) — ` +
+        `pode ser um relatório filtrado (parcial). Confirme antes de continuar.`;
+      radios.forEach(r => { r.checked = (r.value === 'parcial'); });
+      motivoWrap.style.display = 'block';
+      motivoInput.value = `Detectado automaticamente: todos os clientes com ≤${maxParcelas} parcela(s)`;
+    } else {
+      hint.style.display = 'none';
+      radios.forEach(r => { r.checked = (r.value === 'nao_confirmado'); });
+    }
+
+    radios.forEach(r => {
+      r.onchange = () => {
+        motivoWrap.style.display = (document.querySelector('input[name="escopo-choice"]:checked').value === 'parcial') ? 'block' : 'none';
+      };
+    });
+
+    overlay.style.display = 'flex';
+
+    confirmBtn.onclick = () => {
+      const chosen = overlay.querySelector('input[name="escopo-choice"]:checked').value;
+      const motivo = motivoInput.value.trim();
+      if (chosen === 'parcial' && !motivo) {
+        alert('Descreva o motivo do recorte (ex.: "filtrado 1-3 parcelas") antes de continuar.');
+        return;
+      }
+      overlay.style.display = 'none';
+      resolve({ escopo: chosen, escopo_motivo: motivo });
+    };
+  });
+}
+
 // ─── CLIENT-SIDE PDF PARSING & IMPORT ────────────────────────────────────
 async function handlePDFUpload(event) {
   const files = Array.from(event.target.files);
@@ -1602,7 +1923,14 @@ async function handlePDFUpload(event) {
         }
       }
 
-      await saveClients(parsedClients, reportName, extractedDate);
+      let escopo, escopoMotivo;
+      if (isServerActive) {
+        overlay.style.display = 'none';
+        ({ escopo, escopo_motivo: escopoMotivo } = await askEscopoForFile(file.name, parsedClients));
+        overlay.style.display = 'flex';
+      }
+
+      await saveClients(parsedClients, reportName, extractedDate, escopo, escopoMotivo);
       successCount++;
       totalClientsImported += Object.keys(parsedClients).length;
 

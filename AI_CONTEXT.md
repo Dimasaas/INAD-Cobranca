@@ -62,10 +62,13 @@ O banco é inicializado automaticamente pelo `run.py` (`inad_database.db`):
 ```sql
 -- 1. Relatórios Históricos
 CREATE TABLE reports (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    report_name TEXT    NOT NULL,
-    report_date TEXT,                  -- Data real do PDF (YYYY-MM-DD)
-    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    report_name   TEXT    NOT NULL,
+    report_date   TEXT,                          -- Data real do PDF (YYYY-MM-DD)
+    imported_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    escopo        TEXT    DEFAULT 'nao_confirmado', -- 'completo' | 'parcial' | 'nao_confirmado'
+    escopo_motivo TEXT    DEFAULT '',              -- obrigatório quando escopo='parcial'
+    escopo_origem TEXT    DEFAULT ''                -- 'declarado_usuario' | 'heuristica' | ''
 );
 
 -- 2. Clientes Inadimplentes
@@ -95,7 +98,9 @@ CREATE TABLE parcels (
     parcela         TEXT    NOT NULL,
     vencimento      TEXT    NOT NULL,
     vencimento_full TEXT    NOT NULL,
-    valor           REAL    DEFAULT 0.0,   -- Valor monetário (R$) da parcela
+    valor           REAL    DEFAULT 0.0,   -- Valor monetário (R$) da parcela — legado/exibição
+    valor_centavos  INTEGER DEFAULT 0,     -- Mesmo valor em centavos inteiros (K7) — fonte de
+                                            -- verdade pra somas/agregados (sem drift de float)
     FOREIGN KEY(property_id) REFERENCES properties(id) ON DELETE CASCADE
 );
 
@@ -146,6 +151,16 @@ CREATE TABLE access_audit (
     accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 10. Configuração ajustável (pesos do score de risco, limiares da
+-- heurística de completude de relatório) — ver _config_get()/
+-- _config_seed_defaults() e _classificar_escopo_heuristico() em run.py.
+-- Nunca sobrescrita automaticamente (INSERT OR IGNORE): editar a mão via
+-- SQL se quiser mudar um limiar sem tocar em código.
+CREATE TABLE config (
+    chave TEXT PRIMARY KEY,
+    valor TEXT NOT NULL
+);
+
 -- Índices (criados idempotentemente pelo init_db)
 CREATE INDEX idx_clients_name         ON clients(name);
 CREATE INDEX idx_clients_report_id    ON clients(report_id);
@@ -188,9 +203,11 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 
 | Método | Rota | Descrição |
 |--------|------|-----------|
-| `GET` | `/api/reports` | Lista relatórios `[{id, report_name, report_date, imported_at}]` |
+| `GET` | `/api/reports` | Lista relatórios `[{id, report_name, report_date, imported_at, escopo, escopo_motivo, escopo_origem}]` |
 | `GET` | `/api/reports/<id>` | Árvore de clientes/imóveis/parcelas (com `valor`) do relatório |
-| `POST` | `/api/reports` | Importa relatório `{report_name, report_date, clients: {...}}` |
+| `GET` | `/api/reports/<id>/escopo` | Consulta o escopo do relatório `{id, report_name, report_date, escopo, escopo_motivo, escopo_origem}` |
+| `POST` | `/api/reports/<id>/escopo` | Reclassifica escopo `{escopo, escopo_motivo}` — sempre marca `escopo_origem='declarado_usuario'` |
+| `POST` | `/api/reports` | Importa relatório `{report_name, report_date, clients: {...}, escopo?, escopo_motivo?}` — `escopo` opcional (padrão `'nao_confirmado'`; heurística roda por cima) |
 | `DELETE` | `/api/reports/<id>` | Exclui relatório (CASCADE em clientes, imóveis, parcelas) |
 | `GET` | `/api/clients` | Clientes do relatório mais recente |
 | `POST` | `/api/clients` | Alias de `POST /api/reports` |
@@ -213,8 +230,9 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 | `GET` | `/api/kpis/analytics` | Série temporal segmentada para a página de Analytics (ver abaixo) |
 | `GET` | `/api/kpis/exclusions` | Lista clientes excluídos dos KPIs |
 | `POST` | `/api/kpis/exclusions` | `{client_name, exclude: true\|false}` |
+| `GET` | `/api/kpis/dicionario` | Legenda de todo KPI exibido na UI: `{kpis: [{id, nome, definicao, formula, universo, observacoes}]}` — `universo` é `factual`\|`operacional`\|`derivado` |
 
-**Resposta de `/api/kpis`:** `evolution` (filtrada, sem duplicados), `all_evolution` (com flag `is_duplicate`), `transitions` (cruzamentos consecutivos). Cada entrada de evolução inclui `total_value` (soma R$ das parcelas). Cada transição traz `recovery_rate` ("saiu do relatório seguinte" — sinal amplo, não implica pagamento) e, ao lado, `recovery_rate_confirmed`/`recovered_confirmed_clients` (K6: subconjunto com desfecho `pagou` registrado) — as duas convivem, nenhuma substitui a outra.
+**Resposta de `/api/kpis`:** `evolution` (só relatórios `escopo='completo'` — REFORMA_KPI §2.3), `all_evolution` (TODOS os relatórios, com `escopo`/`escopo_motivo`/flag `is_duplicate`, para a UI mostrar badge/tooltip), `transitions` (cruzamentos consecutivos ENTRE completos). Cada entrada de evolução inclui `total_value` (soma R$ das parcelas). Cada transição traz `recovery_rate` ("saiu do relatório seguinte" — sinal amplo, não implica pagamento) e, ao lado, `recovery_rate_confirmed`/`recovered_confirmed_clients` (K6: subconjunto com desfecho `pagou` registrado) — as duas convivem, nenhuma substitui a outra. `meta` traz `relatorios_completos_considerados`, `relatorios_excluidos` (lista com `id`/`report_name`/`report_date`/`escopo`/`escopo_motivo` — os que ficaram de fora de `evolution`/`transitions`), `dados_insuficientes_para_transicoes` (bool — `true` quando há menos de 2 relatórios completos, em vez de um erro ou um resultado vazio silencioso) e `kpi_exclusions` (`{count, names}` — ajuste operacional visível, não escondido dentro dos totais).
 
 **`GET /api/kpis/analytics` — parâmetros (todos opcionais, combináveis):**
 
@@ -230,7 +248,10 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 ```json
 {
   "meta": { "cutoff_date", "cutoff_mode", "segment_filter", "date_range",
-            "available_date_range", "data_version" },
+            "available_date_range", "data_version",
+            "relatorios_excluidos": [ {"id","report_name","report_date","escopo","escopo_motivo"} ],
+            "dados_insuficientes_para_transicoes": false,
+            "kpi_exclusions": { "count", "names" } },
   "series": [ { "report_id", "report_name", "report_date", "is_duplicate",
                 "total":  {"clients","properties","parcels","total_value"},
                 "novo":   {...}, "antigo": {...} } ],
@@ -242,7 +263,7 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 }
 ```
 
-`meta.data_version` muda a cada importação/exclusão de relatório — o frontend faz polling barato disso para exibir "novos dados disponíveis".
+`meta.data_version` muda a cada importação/exclusão de relatório — o frontend faz polling barato disso para exibir "novos dados disponíveis". `series`/`transitions` só usam relatórios `escopo='completo'` (mesma regra de `/api/kpis`) — os excluídos aparecem em `meta.relatorios_excluidos`.
 
 ### 📊 Riscos, Fila e Alertas Operacionais (v3.0.0)
 
@@ -316,18 +337,35 @@ Categoriza clientes ativos sob regras de prioridades sequenciais (evitando dupli
 ```
 
 #### Formato JSON `/api/summary`
+
+REFORMA_KPI §3: a resposta é dividida em dois blocos rotulados — `factual`
+(só o PDF do relatório mais recente, nunca depende de ação da equipe) e
+`operacional` (depende do que a equipe registrou — contatos, desfechos).
+Nenhum campo mistura as duas fontes num mesmo número.
+
 ```json
 {
-  "meta": { "reference_date": "...", "report_id": 1, "report_date": "...", "data_version": "..." },
-  "current": {"clients": 87, "total_owed": 412300.5, "avg_days_overdue": 74},
-  "trend": {"vs_previous_report": {"clients_delta": -4, "value_delta": -18200.0, "direction": "melhora"}},
-  "aging_distribution": {"0-30": {"clients": 20, "value": 24000.0}, ..., "120+": {...}},
-  "pre_juridico": {"count": 12, "value": 98000.0, "new_this_report": 3},
-  "top_debtors": [ {"name": "ANA SILVA", "total_owed": 25000.0, "max_days_overdue": 145, "stage": "pre_juridico"} ],
-  "effectiveness": {"contacted": 60, "regularized_after_contact": 22, "rate": 36.7, "promises_made": 15, "promises_kept": 6},
-  "worklist_counts": {"promessas_vencidas": 4, "sem_resposta": 9, "novos_pre_juridico": 3}
+  "meta": { "reference_date": "...", "report_id": 1, "report_date": "...",
+            "escopo": "completo", "escopo_motivo": "", "data_version": "..." },
+  "factual": {
+    "current": {"clients": 87, "total_owed": 412300.5, "avg_days_overdue": 74},
+    "trend": {"vs_previous_report": {"clients_delta": -4, "value_delta": -18200.0, "direction": "melhora"}},
+    "aging_distribution": {"0-30": {"clients": 20, "value": 24000.0}, ..., "120+": {...}},
+    "pre_juridico": {"count": 12, "value": 98000.0, "new_this_report": 3},
+    "top_debtors": [ {"name": "ANA SILVA", "total_owed": 25000.0, "max_days_overdue": 145, "stage": "pre_juridico"} ],
+    "kpi_exclusions": {"count": 2, "names": ["FULANO DE TAL", "..."]}
+  },
+  "operacional": {
+    "effectiveness": {"contacted": 60, "regularized_after_contact": 22, "rate": 36.7, "promises_made": 15, "promises_kept": 6, "promises_kept_rate": 40.0},
+    "worklist_counts": {"promessas_vencidas": 4, "sem_resposta": 9, "novos_pre_juridico": 3}
+  }
 }
 ```
+
+`meta.escopo` é o escopo do relatório mais recente (`_dedup_latest_report_id`)
+— vale a pena checar antes de confiar em `factual.*` num contexto que exige
+completude (este endpoint em si não filtra por completo; é sempre "o
+relatório mais recente", igual ao resto do painel de cobrança do dia a dia).
 
 ---
 
@@ -356,6 +394,37 @@ Clientes presentes em `kpi_exclusions` são **ignorados** em todos os cálculos 
 ### Seleção de relatórios
 
 Na aba KPI e na página de Analytics, o usuário pode marcar/desmarcar relatórios individualmente (`?reports=1,3,5`).
+
+### Completude/escopo de relatório (REFORMA_KPI §2)
+
+Nem todo relatório importado representa a carteira inteira — pode ter sido
+emitido com um filtro (ex.: só clientes com 1-3 parcelas em atraso, um
+corte por data, um bloco/quadra específico). Comparar um relatório assim
+com um completo distorceria qualquer KPI temporal (evolução, recuperação,
+migração de aging). Por isso todo relatório tem um `escopo`:
+
+- **`completo`** — representa toda a carteira inadimplente. Só estes
+  entram em KPIs ENTRE-relatórios (`evolution`/`series`/`transitions`).
+- **`parcial`** — um recorte conhecido (`escopo_motivo` obrigatório).
+  Fica de fora dos KPIs temporais, mas continua disponível para a
+  cobrança do dia a dia (fila, worklist, perfil do cliente) e aparece em
+  `meta.relatorios_excluidos` com o motivo, nunca escondido.
+- **`nao_confirmado`** — ninguém confirmou ainda (padrão para relatórios
+  legados na migração, e para imports sem declaração explícita). Tratado
+  como `parcial` para fins de cálculo (fica de fora), mas sinaliza que
+  falta uma decisão humana, não uma classificação definitiva.
+
+`_relatorios_completos()` (`run.py`) é a ÚNICA fonte da série de
+relatórios "completos" — todo KPI temporal passa por ela (elimina lógica
+de dedup duplicada que já foi causa de bug). `_classificar_escopo_
+heuristico()` roda após todo import e pode rebaixar um `completo`
+declarado para `nao_confirmado` (nunca o contrário — a heurística jamais
+promove um relatório a `completo` sozinha) se detectar: nº máximo de
+parcelas por cliente muito baixo (configurável, `heuristica_parcelas_
+max`, padrão 3), ou queda de nº de clientes/valor total/atraso máximo vs.
+a mediana de relatórios completos anteriores (limiares em `config`).
+Menos de 2 relatórios completos → `meta.dados_insuficientes_para_
+transicoes = true` (nunca uma exceção, nunca um `0` sem explicação).
 
 ### Score de Risco (0 a 100)
 

@@ -82,24 +82,27 @@
   <div class="wrap">
     <p style="font-size:11.5px;color:var(--text3);margin-bottom:14px" id="cutoff-info"></p>
 
+    <div id="scope-banner" class="scope-banner"></div>
+    <p id="kpi-exclusions-note" class="kpi-exclusions-note"></p>
+
     <div class="tiles">
       <div class="tile t-blue">
-        <div class="tile-label">Clientes em atraso</div>
+        <div class="tile-label">Clientes em atraso<span class="kpi-info-btn" onclick="toggleKpiInfo(event.currentTarget, 'clientes_em_atraso')">?</span></div>
         <div class="tile-value" id="tile-clients-v">—</div>
         <div class="tile-delta neutral" id="tile-clients-d"></div>
       </div>
       <div class="tile t-purple">
-        <div class="tile-label">Parcelas em atraso</div>
+        <div class="tile-label">Parcelas em atraso<span class="kpi-info-btn" onclick="toggleKpiInfo(event.currentTarget, 'parcelas_em_atraso')">?</span></div>
         <div class="tile-value" id="tile-parcels-v">—</div>
         <div class="tile-delta neutral" id="tile-parcels-d"></div>
       </div>
       <div class="tile t-red">
-        <div class="tile-label">Valor total em atraso</div>
+        <div class="tile-label">Valor total em atraso<span class="kpi-info-btn" onclick="toggleKpiInfo(event.currentTarget, 'total_inadimplente')">?</span></div>
         <div class="tile-value" id="tile-value-v">—</div>
         <div class="tile-delta neutral" id="tile-value-d"></div>
       </div>
       <div class="tile t-green">
-        <div class="tile-label">Taxa de recuperação</div>
+        <div class="tile-label">Taxa de recuperação<span class="kpi-info-btn" onclick="toggleKpiInfo(event.currentTarget, 'taxa_recuperacao')">?</span></div>
         <div class="tile-value" id="tile-recovery-v">—</div>
         <div class="tile-delta neutral" id="tile-recovery-d"></div>
         <div class="tile-sub" id="tile-recovery-confirmed-d" title="Subconjunto com desfecho 'pagou' registrado — sumir do relatório não implica pagamento confirmado"></div>
@@ -108,17 +111,17 @@
 
     <div class="grid">
       <div class="chart-box full">
-        <h3>📈 Evolução da inadimplência (clientes por relatório)</h3>
+        <h3>📈 Evolução da inadimplência (clientes por relatório)<span class="kpi-info-btn" onclick="toggleKpiInfo(event.currentTarget, 'evolucao')">?</span></h3>
         <div class="chart-canvas-wrap"><canvas id="chart-evolution"></canvas></div>
       </div>
 
       <div class="chart-box">
-        <h3>💰 Tendência do valor em atraso (R$)</h3>
+        <h3>💰 Tendência do valor em atraso (R$)<span class="kpi-info-btn" onclick="toggleKpiInfo(event.currentTarget, 'total_inadimplente')">?</span></h3>
         <div class="chart-canvas-wrap"><canvas id="chart-value"></canvas></div>
       </div>
 
       <div class="chart-box">
-        <h3>✅ Taxa de recuperação por transição (%)</h3>
+        <h3>✅ Taxa de recuperação por transição (%)<span class="kpi-info-btn" onclick="toggleKpiInfo(event.currentTarget, 'taxa_recuperacao')">?</span></h3>
         <div class="chart-canvas-wrap"><canvas id="chart-recovery"></canvas></div>
       </div>
 
