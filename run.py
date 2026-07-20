@@ -30,6 +30,7 @@ import re
 import hashlib
 import hmac
 import secrets
+import unicodedata
 
 # Windows: garante UTF-8 no console/redirecionamento (evita crash do banner
 # com caracteres Unicode sob cp1252)
@@ -133,11 +134,28 @@ OUTCOME_TYPES = ("prometeu_pagar", "negociacao", "pagou", "sem_resposta", "numer
 _local = threading.local()
 
 
+def _normalize_name(name):
+    """Chave normalizada para casar a IDENTIDADE de um cliente entre
+    relatórios/exclusões/desfechos: remove acentos, colapsa espaços e
+    uniformiza caixa. Nunca usada para exibição — o `name`/`client_name`
+    original (como veio do PDF) é sempre preservado nas colunas; isto só
+    entra em comparações (JOIN/WHERE/GROUP BY) via normalize_name() no SQL.
+    Abreviações (\"Ma.\" vs \"Maria\") ficam fora do escopo — fora de alcance
+    de uma normalização puramente textual."""
+    if not name:
+        return ""
+    n = unicodedata.normalize("NFKD", name)
+    n = "".join(c for c in n if not unicodedata.combining(c))
+    n = re.sub(r"\s+", " ", n).strip()
+    return n.upper()
+
+
 def get_conn():
     """Retorna a conexão SQLite da thread atual, criando uma nova se necessário."""
     if not hasattr(_local, "conn") or _local.conn is None:
         conn = sqlite3.connect(DB_PATH, check_same_thread=False)
         conn.row_factory = sqlite3.Row
+        conn.create_function("normalize_name", 1, _normalize_name)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")   # Leituras paralelas sem lock
         _local.conn = conn
