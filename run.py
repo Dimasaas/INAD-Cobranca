@@ -7,6 +7,11 @@ Uso:
   INAD_PORT=9090 python3 run.py     → Usa a porta 9090
   INAD_HEADLESS=1 python3 run.py    → Modo servidor (sem abrir o navegador)
   python3 run.py --headless         → Igual ao modo servidor
+
+Padrão: bind em 127.0.0.1 (só local), sem autenticação. Para expor na rede:
+  INAD_HOST=0.0.0.0 python3 run.py --add-operator "Nome"   → cadastra operador (uma vez)
+  INAD_HOST=0.0.0.0 python3 run.py                          → sobe exigindo token
+  python3 run.py --list-operators / --revoke-operator "Nome"
 """
 
 import http.server
@@ -22,6 +27,9 @@ import signal
 import platform
 import socket
 import re
+import hashlib
+import hmac
+import secrets
 
 # Windows: garante UTF-8 no console/redirecionamento (evita crash do banner
 # com caracteres Unicode sob cp1252)
@@ -52,6 +60,21 @@ for _i, _arg in enumerate(sys.argv):
             PORT = int(_arg.split("=", 1)[1])
         except ValueError:
             pass
+
+# Endereço de bind. Padrão 127.0.0.1 (só local) — expor na rede é opt-in
+# explícito via INAD_HOST/--host, e exige operadores cadastrados (ver
+# _authenticate() e --add-operator mais abaixo).
+HOST = os.environ.get("INAD_HOST", "127.0.0.1")
+for _i, _arg in enumerate(sys.argv):
+    if _arg == "--host" and _i + 1 < len(sys.argv):
+        HOST = sys.argv[_i + 1]
+    elif _arg.startswith("--host="):
+        HOST = _arg.split("=", 1)[1]
+
+
+def _is_loopback_bind():
+    return HOST in ("127.0.0.1", "localhost", "::1")
+
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
@@ -186,6 +209,16 @@ def init_db():
             created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         );
 
+        -- 8. Operadores (autenticação mínima — só relevante quando exposto
+        -- além de localhost; ver _authenticate()/--add-operator)
+        CREATE TABLE IF NOT EXISTS operators (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT    NOT NULL UNIQUE,
+            token_hash TEXT    NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            active     INTEGER NOT NULL DEFAULT 1
+        );
+
         CREATE INDEX IF NOT EXISTS idx_clients_name         ON clients(name);
         CREATE INDEX IF NOT EXISTS idx_clients_report_id    ON clients(report_id);
         CREATE INDEX IF NOT EXISTS idx_properties_client_id ON properties(client_id);
@@ -280,6 +313,53 @@ def _apply_kpi_exclusions_seed(cursor, conn):
             print(f"[KPI] {added} exclusão(ões) aplicada(s) de kpi_exclusions.json.")
     except Exception as exc:
         print(f"[KPI] Erro ao carregar kpi_exclusions.json: {exc}")
+
+
+# ─── OPERADORES (autenticação mínima para exposição em rede) ─────────────────
+# Autenticação só é exigida quando o servidor não está em bind loopback (ver
+# _is_loopback_bind()/_authenticate() mais abaixo). Cada operador tem seu
+# próprio token — nunca armazenado em claro, só o hash SHA-256 dele.
+
+def _hash_token(token):
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _add_operator(name):
+    """Cria um operador novo com um token aleatório. Retorna o token em claro
+    (só existe neste retorno — não fica gravado em lugar nenhum)."""
+    name = name.strip()
+    if not name:
+        raise ValueError("Nome do operador não pode ser vazio.")
+    token = secrets.token_urlsafe(32)
+    conn = get_conn()
+    conn.execute(
+        "INSERT INTO operators (name, token_hash, active) VALUES (?, ?, 1)",
+        (name, _hash_token(token)),
+    )
+    conn.commit()
+    return token
+
+
+def _list_operators():
+    rows = get_conn().cursor().execute(
+        "SELECT name, created_at, active FROM operators ORDER BY created_at"
+    ).fetchall()
+    return [{"name": r[0], "created_at": r[1], "active": bool(r[2])} for r in rows]
+
+
+def _revoke_operator(name):
+    conn = get_conn()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE operators SET active = 0 WHERE name = ?", (name.strip(),))
+    conn.commit()
+    return cursor.rowcount > 0
+
+
+def _has_active_operators():
+    row = get_conn().cursor().execute(
+        "SELECT 1 FROM operators WHERE active = 1 LIMIT 1"
+    ).fetchone()
+    return row is not None
 
 
 def _migrate_legacy_files(cursor, conn):
@@ -1376,12 +1456,15 @@ def get_system_context():
 # ─── HANDLER HTTP ─────────────────────────────────────────────────────────────
 
 def _json_response(handler, data, status=200):
-    """Envia resposta JSON com os headers CORS corretos."""
+    """Envia resposta JSON. Sem CORS: o frontend é servido pelo mesmo
+    servidor (same-origin), então requisições cross-origin não precisam
+    funcionar — e não devem (evita que outro site consulte/altere dados)."""
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type",   "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
-    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("X-Content-Type-Options", "nosniff")
+    handler.send_header("X-Frame-Options", "DENY")
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -1422,6 +1505,59 @@ def _read_body(handler):
         return None
 
 
+# Único endpoint acessível sem token mesmo com o servidor exposto na rede
+# (monitoramento/health-check).
+_PUBLIC_PATHS = {"/api/health"}
+
+
+def _request_token(handler):
+    """Token do operador: header X-INAD-Token, ou query string ?token=
+    (necessário para o carregamento inicial da página, que o navegador faz
+    sem headers customizados — o bootstrap no HTML lê ?token= uma vez e passa
+    a mandar o header em todas as chamadas fetch() seguintes)."""
+    token = handler.headers.get("X-INAD-Token", "")
+    if token:
+        return token
+    if "?" in handler.path:
+        from urllib.parse import parse_qs
+        params = parse_qs(handler.path.split("?", 1)[1])
+        return params.get("token", [""])[0]
+    return ""
+
+
+def _authenticate(handler):
+    """Retorna (autorizado: bool, operador: str|None).
+    Em bind loopback (padrão local), sempre autorizado — autenticação só é
+    exigida quando o servidor está exposto além de localhost (ver
+    _is_loopback_bind() e a checagem de boot em __main__)."""
+    if _is_loopback_bind():
+        return True, "local"
+    path = handler.path.split("?")[0]
+    if path in _PUBLIC_PATHS:
+        return True, None
+    token = _request_token(handler)
+    if not token:
+        return False, None
+    token_hash = _hash_token(token)
+    rows = get_conn().cursor().execute(
+        "SELECT name, token_hash FROM operators WHERE active = 1"
+    ).fetchall()
+    for name, stored_hash in rows:
+        if hmac.compare_digest(token_hash, stored_hash):
+            return True, name
+    return False, None
+
+
+# Únicos arquivos estáticos servidos pelo fallback do SimpleHTTPRequestHandler
+# — qualquer outro caminho (incluindo run.py, *.db, .git/*, scripts/*, etc.,
+# que de outra forma o SimpleHTTPRequestHandler serviria sem restrição) recebe 404.
+_STATIC_ALLOWLIST = {
+    "/inad_template.html", "/inad_whatsapp.html", "/inad_analytics.html",
+    "/analytics.css", "/analytics.js",
+    "/libs/chart.umd.min.js", "/libs/pdf.min.js", "/libs/pdf.worker.min.js",
+}
+
+
 class INADHandler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=DIRECTORY, **kwargs)
@@ -1429,15 +1565,23 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass   # Silencia logs de acesso HTTP
 
-    # ── CORS pre-flight ───────────────────────────────────────────────────────
     def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin",  "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        # Sem suporte a CORS cross-origin (ver _json_response) — respondemos
+        # 204 só para não quebrar clientes que mandem um preflight à toa.
+        self.send_response(204)
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def _redirect(self, location):
+        # Preserva ?token= no destino, senão o bootstrap da página seguinte
+        # nunca recebe o token e o operador cai em 401. O token precisa entrar
+        # ANTES de um eventual #fragmento (ex.: /inad_whatsapp.html#kpi) —
+        # tudo depois de "#" é fragmento, não query string.
+        token = _request_token(self)
+        if token and "token=" not in location:
+            base, _, frag = location.partition("#")
+            sep = "&" if "?" in base else "?"
+            location = f"{base}{sep}token={token}" + (f"#{frag}" if frag else "")
         self.send_response(302)
         self.send_header("Location", location)
         self.end_headers()
@@ -1446,10 +1590,15 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         """
         Ponto de entrada para todas as requisições HTTP do tipo GET.
-        Implementa um wrapper global de tratamento de erros para capturar qualquer exceção 
+        Implementa um wrapper global de tratamento de erros para capturar qualquer exceção
         e gravar o rastreamento completo (stack trace) no arquivo 'inad_errors.log'.
         """
         try:
+            ok, operator = _authenticate(self)
+            if not ok:
+                _json_response(self, {"error": "Não autorizado"}, 401)
+                return
+            self.operator_name = operator
             self._do_GET_unwrapped()
         except Exception as exc:
             try:
@@ -2152,8 +2301,17 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 "worklist_counts": w_counts
             })
 
-        else:
+        elif path in _STATIC_ALLOWLIST:
             super().do_GET()
+
+        else:
+            # Nunca serve arquivos fora do allowlist acima — sem isso, o
+            # SimpleHTTPRequestHandler serviria QUALQUER arquivo do diretório
+            # do projeto (run.py, o .db inteiro, scripts/, .git/, etc.) a
+            # quem pedir pelo nome.
+            self.send_response(404)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
     # ── POST ──────────────────────────────────────────────────────────────────
     def do_POST(self):
@@ -2162,6 +2320,11 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         Implementa um wrapper global de tratamento de erros que registra falhas críticas no log persistente.
         """
         try:
+            ok, operator = _authenticate(self)
+            if not ok:
+                _json_response(self, {"error": "Não autorizado"}, 401)
+                return
+            self.operator_name = operator
             self._do_POST_unwrapped()
         except Exception as exc:
             try:
@@ -2311,6 +2474,11 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         Exclui relatórios ou desfechos de contato, registrando qualquer falha no log persistente.
         """
         try:
+            ok, operator = _authenticate(self)
+            if not ok:
+                _json_response(self, {"error": "Não autorizado"}, 401)
+                return
+            self.operator_name = operator
             self._do_DELETE_unwrapped()
         except Exception as exc:
             try:
@@ -2413,7 +2581,7 @@ def start_server():
     global _httpd
     init_db()
     try:
-        _httpd = _ReuseServer(("", PORT), INADHandler)
+        _httpd = _ReuseServer((HOST, PORT), INADHandler)
         _httpd.serve_forever()
     except OSError as exc:
         print(f"\n[ERRO] Não foi possível iniciar o servidor na porta {PORT}: {exc}")
@@ -2424,18 +2592,68 @@ def start_server():
 # ─── PONTO DE ENTRADA ─────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    # Comandos de gestão de operadores (rodam e saem — não sobem o servidor).
+    if "--add-operator" in sys.argv:
+        _idx = sys.argv.index("--add-operator")
+        _name = sys.argv[_idx + 1] if _idx + 1 < len(sys.argv) else None
+        if not _name:
+            print('Uso: python run.py --add-operator "Nome do operador"')
+            sys.exit(1)
+        init_db()
+        _token = _add_operator(_name)
+        print(f"Operador '{_name}' criado.")
+        print("Token (guarde em local seguro — não será exibido de novo):")
+        print(f"  {_token}")
+        print(f"\nUso pelo operador: header 'X-INAD-Token: {_token}' ou ?token={_token} na URL.")
+        sys.exit(0)
+
+    if "--list-operators" in sys.argv:
+        init_db()
+        _ops = _list_operators()
+        if not _ops:
+            print("Nenhum operador cadastrado.")
+        else:
+            for _op in _ops:
+                _status = "ativo" if _op["active"] else "revogado"
+                print(f"  {_op['name']:<30} {_status:<10} criado em {_op['created_at']}")
+        sys.exit(0)
+
+    if "--revoke-operator" in sys.argv:
+        _idx = sys.argv.index("--revoke-operator")
+        _name = sys.argv[_idx + 1] if _idx + 1 < len(sys.argv) else None
+        if not _name:
+            print('Uso: python run.py --revoke-operator "Nome do operador"')
+            sys.exit(1)
+        init_db()
+        _ok = _revoke_operator(_name)
+        print(f"Operador '{_name}' {'revogado' if _ok else 'não encontrado'}.")
+        sys.exit(0 if _ok else 1)
+
     signal.signal(signal.SIGTERM, _shutdown_handler)
     try:
         signal.signal(signal.SIGINT, _shutdown_handler)
     except OSError:
         pass  # Windows não suporta SIGINT via signal.signal em todos os contextos
 
+    # Bind além de localhost exige pelo menos um operador cadastrado — sem
+    # isso, qualquer um na rede acessaria os dados sem nenhuma autenticação.
+    if not _is_loopback_bind():
+        init_db()
+        if not _has_active_operators():
+            print(f"\n[ERRO] INAD_HOST={HOST!r} expõe o servidor além de localhost, mas")
+            print("       nenhum operador está cadastrado. Cadastre um antes de continuar:")
+            print('         python run.py --add-operator "Seu Nome"')
+            sys.exit(1)
+
     print("══════════════════════════════════════════════════")
     print("  INAD · Painel de Cobrança")
     print(f"  Plataforma : {platform.system()} {platform.machine()}")
     print(f"  Python     : {platform.python_version()}")
     print(f"  Porta      : {PORT}  (use INAD_PORT=XXXX para mudar)")
+    print(f"  Endereço   : {HOST}  (use INAD_HOST/--host para expor na rede)")
     print(f"  Modo       : {'Servidor headless' if HEADLESS else 'Local (abre navegador)'}")
+    if not _is_loopback_bind():
+        print(f"  ⚠ REDE     : exposto além de localhost — autenticação por token exigida")
     print("══════════════════════════════════════════════════")
 
     server_thread = threading.Thread(target=start_server, daemon=True)

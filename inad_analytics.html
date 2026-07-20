@@ -150,6 +150,32 @@
   </div>
 
   <div class="spinner"></div>
+  <script>
+    // ─── AUTENTICAÇÃO (só relevante se o servidor estiver exposto além de
+    // localhost — ver run.py, _authenticate()). Precisa rodar ANTES de
+    // analytics.js, que já dispara fetch() no próprio carregamento.
+    (function() {
+      const params = new URLSearchParams(location.search);
+      const urlToken = params.get('token');
+      if (urlToken) {
+        sessionStorage.setItem('inad_token', urlToken);
+        params.delete('token');
+        const qs = params.toString();
+        history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+      }
+      const _fetch = window.fetch.bind(window);
+      window.fetch = function(input, init) {
+        const token = sessionStorage.getItem('inad_token');
+        if (token) {
+          init = init || {};
+          const headers = new Headers(init.headers || {});
+          headers.set('X-INAD-Token', token);
+          init = Object.assign({}, init, { headers });
+        }
+        return _fetch(input, init);
+      };
+    })();
+  </script>
   <script src="analytics.js"></script>
 </body>
 </html>

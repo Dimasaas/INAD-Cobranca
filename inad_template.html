@@ -434,6 +434,32 @@
 </div>
 
 <script>
+// ─── AUTENTICAÇÃO (só relevante se o servidor estiver exposto além de
+// localhost — ver run.py, _authenticate()). Captura ?token= da URL uma
+// única vez, guarda em sessionStorage e injeta como header X-INAD-Token em
+// toda chamada fetch() da página daqui pra frente.
+(function() {
+  const params = new URLSearchParams(location.search);
+  const urlToken = params.get('token');
+  if (urlToken) {
+    sessionStorage.setItem('inad_token', urlToken);
+    params.delete('token');
+    const qs = params.toString();
+    history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+  }
+  const _fetch = window.fetch.bind(window);
+  window.fetch = function(input, init) {
+    const token = sessionStorage.getItem('inad_token');
+    if (token) {
+      init = init || {};
+      const headers = new Headers(init.headers || {});
+      headers.set('X-INAD-Token', token);
+      init = Object.assign({}, init, { headers });
+    }
+    return _fetch(input, init);
+  };
+})();
+
 // ─── SANITIZAÇÃO (previne XSS armazenado a partir de dados do PDF/rede) ────
 // Uso: escapeHtml() para qualquer valor inserido como texto/atributo via
 // innerHTML ou template literal; jsAttr() para valores usados como argumento
