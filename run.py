@@ -2459,7 +2459,17 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 # ─── SERVIDOR ─────────────────────────────────────────────────────────────────
 
 class _ReuseServer(socketserver.TCPServer):
-    """TCPServer com reutilização de porta compatível com Windows e UNIX."""
+    """TCPServer com reutilização de porta compatível com Windows e UNIX.
+
+    Deliberadamente NÃO herda socketserver.ThreadingMixIn: o servidor atende
+    uma requisição HTTP por vez (modelo simples, adequado a um CRM local de
+    poucos operadores). O `threading.local`/`check_same_thread=False` na
+    conexão SQLite (get_conn(), acima) existe só porque a thread principal de
+    serve_forever() é distinta da thread de import/setup, e porque o modo demo
+    sobe um processo filho separado — não porque múltiplas requisições HTTP
+    rodem concorrentemente. Se algum dia migrar para ThreadingHTTPServer,
+    revisar todo cursor/conexão compartilhado antes (acesso a SQLite não é
+    thread-safe por padrão)."""
     allow_reuse_address = (platform.system() != "Windows")
 
     def server_bind(self):
