@@ -24,6 +24,7 @@ import signal
 import platform
 import socket
 import subprocess
+import re
 
 # Windows: garante UTF-8 no console/redirecionamento (evita crash do banner
 # com caracteres Unicode sob cp1252)
@@ -57,6 +58,14 @@ for _i, _arg in enumerate(sys.argv):
 
 DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
+# Teto de tamanho do corpo de requisições POST (proteção contra DoS por corpo
+# gigante). Configurável via INAD_MAX_BODY_BYTES; padrão 20 MB.
+MAX_BODY_BYTES = int(os.environ.get("INAD_MAX_BODY_BYTES", 20 * 1024 * 1024))
+
+# Teto de itens retornados por endpoints paginados (limit/top), independente
+# do que o cliente pedir na query string.
+MAX_RESULT_LIMIT = 500
+
 # Configuração de Logs de Erro Persistentes
 # Inicializa o logger padrão do Python para capturar erros críticos de execução do servidor.
 # Os registros de falha são salvos no arquivo 'inad_errors.log' na pasta raiz do projeto.
@@ -88,9 +97,9 @@ _no_display    = (platform.system() == "Linux"
 HEADLESS = _headless_env or _headless_arg or _no_display
 
 # ─── REGRAS DE NEGÓCIO E CONSTANTES OPERACIONAIS (v3.0.0) ────────────────────
-AGING_BUCKETS = [(0, 30, '0-30'), (31, 60, '31-60'), (61, 90, '61-90'), (91, 120, '91-120'), (121, None, '120+')]
-PREJURIDICO_DAYS = 120
-STAGES = {'0-30': 'lembrete', '31-60': 'firme', '61-90': 'firme', '91-120': 'serio', '120+': 'pre_juridico'}
+AGING_BUCKETS = [(0, 30, '0-30'), (31, 60, '31-60'), (61, 90, '61-90'), (91, 120, '91-120'), (121, None, '121+')]
+PREJURIDICO_DAYS = 120  # pré-jurídico dispara com dias de atraso > PREJURIDICO_DAYS (ou seja, a partir de 121)
+STAGES = {'0-30': 'lembrete', '31-60': 'firme', '61-90': 'firme', '91-120': 'serio', '121+': 'pre_juridico'}
 RISK_WEIGHT_VALOR = 45.0
 RISK_WEIGHT_AGING = 35.0
 RISK_WEIGHT_REINCIDENCIA = 20.0
@@ -344,6 +353,38 @@ def _migrate_legacy_files(cursor, conn):
             print(f"[MIGRAÇÃO] Erro ao migrar inad_sent.json: {exc}")
 
 
+_DATE_ISO_RE = re.compile(r'^\d{4}-\d{2}-\d{2}$')
+_DATE_BR_RE  = re.compile(r'^(\d{2})/(\d{2})/(\d{4})$')
+
+
+def _normalize_date(value):
+    """Normaliza uma data para ISO (AAAA-MM-DD).
+    Aceita ISO (AAAA-MM-DD) ou BR (DD/MM/AAAA) e converte para ISO.
+    Valores vazios/None passam adiante sem alteração (ausência de data
+    conhecida, não é um formato desconhecido). Levanta ValueError com
+    mensagem explícita para qualquer outro formato ou data inexistente
+    no calendário (ex.: 31/02) — nunca grava silenciosamente uma data
+    não confiável, já que comparações/ordenação e julianday() no resto
+    do sistema assumem ISO."""
+    if not value:
+        return value
+    value = value.strip()
+    if _DATE_ISO_RE.match(value):
+        candidate = value
+    else:
+        m = _DATE_BR_RE.match(value)
+        if not m:
+            raise ValueError(f"Data inválida: {value!r} (use AAAA-MM-DD ou DD/MM/AAAA)")
+        d, mo, y = m.groups()
+        candidate = f"{y}-{mo}-{d}"
+    import datetime
+    try:
+        datetime.date.fromisoformat(candidate)
+    except ValueError:
+        raise ValueError(f"Data inválida: {value!r} (use AAAA-MM-DD ou DD/MM/AAAA)")
+    return candidate
+
+
 def _insert_clients(cursor, report_id, clients):
     """Insere em batch todos os clientes, imóveis e parcelas de um relatório."""
     for c_name, c_data in clients.items():
@@ -364,7 +405,7 @@ def _insert_clients(cursor, report_id, clients):
                     "INSERT INTO parcels (property_id, parcela, vencimento, vencimento_full, valor) "
                     "VALUES (?,?,?,?,?)",
                     (property_id, parc.get("parcela", ""),
-                     parc.get("vencimento", ""), parc.get("vencimento_full", ""),
+                     parc.get("vencimento", ""), _normalize_date(parc.get("vencimento_full", "")),
                      float(parc.get("valor") or parc.get("valor_total") or parc.get("valor_parcela") or 0.0)),
                 )
 
@@ -404,6 +445,34 @@ def get_clients_for_report(report_id):
                 "parcela": pa_num, "vencimento": pa_venc, "vencimento_full": pa_venc_f, "valor": pa_val
             })
     return result
+
+
+def _backup_report_before_delete(cursor, rid):
+    """Salva um dump JSON do relatório (clientes/imóveis/parcelas) em backups/
+    antes de apagá-lo fisicamente. O arquivo é restaurável reenviando seu
+    conteúdo para POST /api/reports. Retorna o caminho do backup, ou None se
+    o relatório não existir."""
+    row = cursor.execute(
+        "SELECT report_name, COALESCE(NULLIF(report_date, ''), DATE(imported_at)) FROM reports WHERE id = ?",
+        (rid,),
+    ).fetchone()
+    if not row:
+        return None
+    report_name, report_date = row
+    clients = get_clients_for_report(rid)
+
+    # Backups do modo demo ficam separados dos backups do banco real.
+    backup_dir = os.path.join(DIRECTORY, "backups_demo" if DEMO else "backups")
+    os.makedirs(backup_dir, exist_ok=True)
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    safe_name = re.sub(r'[^\w\-. ]', '_', report_name or "relatorio")[:60]
+    backup_path = os.path.join(backup_dir, f"report_{rid}_{timestamp}_{safe_name}.json")
+    with open(backup_path, "w", encoding="utf-8") as f:
+        json.dump(
+            {"report_name": report_name, "report_date": report_date, "clients": clients},
+            f, ensure_ascii=False, indent=2,
+        )
+    return backup_path
 
 
 # ─── FUNÇÕES AUXILIARES OPERACIONAIS E DE RISCO (v3.0.0) ──────────────────────
@@ -485,7 +554,7 @@ def _stage_for_days(days):
         return 'lembrete'
     elif days <= 90:
         return 'firme'
-    elif days <= 120:
+    elif days <= PREJURIDICO_DAYS:
         return 'serio'
     else:
         return 'pre_juridico'
@@ -633,12 +702,14 @@ def _contact_effectiveness(cursor):
                 promises_kept += 1
 
     rate = round(regularized / contacted * 100, 1) if contacted > 0 else 0.0
+    promises_kept_rate = round(promises_kept / promises_made * 100, 1) if promises_made > 0 else 0.0
     return {
         "contacted": contacted,
         "regularized_after_contact": regularized,
         "rate": rate,
         "promises_made": promises_made,
-        "promises_kept": promises_kept
+        "promises_kept": promises_kept,
+        "promises_kept_rate": promises_kept_rate
     }
 
 
@@ -821,10 +892,10 @@ def _get_worklist_data(cursor, ref_date):
                     continue
 
         # 4) Novos Pré-Jurídico
-        if cf["max_days_overdue"] > 120:
+        if cf["max_days_overdue"] > PREJURIDICO_DAYS:
             if prev_report_id:
                 prev_cf_client = prev_cf.get(name)
-                if prev_cf_client and prev_cf_client["max_days_overdue"] <= 120:
+                if prev_cf_client and prev_cf_client["max_days_overdue"] <= PREJURIDICO_DAYS:
                     item = dict(queue_row)
                     item["entered_bucket"] = True
                     novos_pre_juridico.append(item)
@@ -1180,14 +1251,14 @@ def get_system_context():
     ref_date = datetime.date.today().isoformat()
     latest_rid = _dedup_latest_report_id(cursor)
     if latest_rid:
-        pre_juridico_count = len(cursor.execute("""
+        pre_juridico_count = len(cursor.execute(f"""
             SELECT c.name FROM clients c
             LEFT JOIN properties p ON p.client_id = c.id
             LEFT JOIN parcels pa ON pa.property_id = p.id AND pa.vencimento_full <= ?
             WHERE c.report_id = ?
               AND c.name NOT IN (SELECT client_name FROM kpi_exclusions)
             GROUP BY c.name
-            HAVING CAST(julianday(?) - julianday(MIN(pa.vencimento_full)) AS INTEGER) > 120
+            HAVING CAST(julianday(?) - julianday(MIN(pa.vencimento_full)) AS INTEGER) > {PREJURIDICO_DAYS}
         """, (ref_date, latest_rid, ref_date)).fetchall())
 
     ai_context_path = os.path.join(DIRECTORY, "AI_CONTEXT.md")
@@ -1346,6 +1417,18 @@ def _json_response(handler, data, status=200):
     handler.wfile.write(body)
 
 
+def _error_response(handler, exc, status=500):
+    """Loga o erro completo (com traceback) em inad_errors.log e responde ao
+    cliente com uma mensagem genérica — nunca vaza str(exc)/detalhes internos
+    na resposta HTTP."""
+    import traceback
+    logging.error(
+        f"Erro em {handler.command} {handler.path}: {exc}\n{traceback.format_exc()}"
+    )
+    message = "Requisição inválida" if status == 400 else "Erro interno"
+    _json_response(handler, {"error": message}, status)
+
+
 def _is_port_open(port, timeout=0.35):
     """Testa se algo já está escutando em localhost:port (usado para não
     duplicar a instância demo ao clicar no botão várias vezes)."""
@@ -1385,14 +1468,27 @@ def _launch_demo_instance():
     return {"already_running": False}
 
 
+_BODY_TOO_LARGE = object()  # sentinel: Content-Length excede MAX_BODY_BYTES
+
+
 def _read_body(handler):
-    """Lê o corpo do POST de forma segura; retorna None se Content-Length ausente."""
+    """Lê o corpo do POST de forma segura.
+    Retorna None se Content-Length ausente/inválido, _BODY_TOO_LARGE se exceder
+    MAX_BODY_BYTES (sem tentar ler o corpo), ou os bytes do corpo."""
     length = handler.headers.get("Content-Length")
     if length is None:
         return None
     try:
-        return handler.rfile.read(int(length))
-    except (ValueError, OSError):
+        length = int(length)
+    except ValueError:
+        return None
+    if length < 0:
+        return None
+    if length > MAX_BODY_BYTES:
+        return _BODY_TOO_LARGE
+    try:
+        return handler.rfile.read(length)
+    except OSError:
         return None
 
 
@@ -1426,10 +1522,8 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         try:
             self._do_GET_unwrapped()
         except Exception as exc:
-            import traceback
-            logging.error(f"Erro não tratado em GET {self.path}: {exc}\n{traceback.format_exc()}")
             try:
-                _json_response(self, {"error": "Internal Server Error", "details": str(exc)}, 500)
+                _error_response(self, exc, 500)
             except Exception:
                 pass
 
@@ -1497,13 +1591,14 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             report_ids = None
             if "?" in self.path:
                 from urllib.parse import parse_qs
-                try:
-                    params = parse_qs(self.path.split("?", 1)[1])
-                    ids_str = params.get("reports", [""])[0]
-                    if ids_str:
+                params = parse_qs(self.path.split("?", 1)[1])
+                ids_str = params.get("reports", [""])[0]
+                if ids_str:
+                    try:
                         report_ids = [int(x) for x in ids_str.split(",")]
-                except Exception:
-                    pass
+                    except ValueError:
+                        _json_response(self, {"error": "Parâmetro 'reports' inválido: todos os ids devem ser inteiros"}, 400)
+                        return
             _json_response(self, get_kpis_data(report_ids))
 
         elif path == "/api/kpis/analytics":
@@ -1524,7 +1619,8 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 try:
                     report_ids = [int(x) for x in ids_str.split(",")]
                 except ValueError:
-                    report_ids = None
+                    _json_response(self, {"error": "Parâmetro 'reports' inválido: todos os ids devem ser inteiros"}, 400)
+                    return
 
             cutoff_last_n = None
             n_str = _param("cutoff_last_n")
@@ -1548,7 +1644,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     cutoff_last_n=cutoff_last_n,
                 ))
             except Exception as exc:
-                _json_response(self, {"error": str(exc)}, 500)
+                _error_response(self, exc, 500)
 
         elif path == "/api/kpis/exclusions":
             cursor = get_conn().cursor()
@@ -1593,6 +1689,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     limit_val = int(_param("limit"))
                 except ValueError:
                     pass
+            limit_val = min(limit_val, MAX_RESULT_LIMIT)
 
             report_id = _dedup_latest_report_id(cursor)
             if not report_id:
@@ -1780,7 +1877,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 "31-60": {"parcels": 0, "value": 0.0},
                 "61-90": {"parcels": 0, "value": 0.0},
                 "91-120": {"parcels": 0, "value": 0.0},
-                "120+": {"parcels": 0, "value": 0.0}
+                "121+": {"parcels": 0, "value": 0.0}
             }
             properties_list = []
             
@@ -1943,6 +2040,9 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     limit_val = int(params.get("limit")[0])
                 except ValueError:
                     pass
+            # Clamp nos dois extremos: limit_val vai direto para "LIMIT ?" no SQL,
+            # onde SQLite trata valores negativos como "sem limite".
+            limit_val = max(1, min(limit_val, MAX_RESULT_LIMIT))
                     
             cursor = get_conn().cursor()
             if cname:
@@ -2018,7 +2118,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     "aging_distribution": {},
                     "pre_juridico": {"count": 0, "value": 0.0, "new_this_report": 0},
                     "top_debtors": [],
-                    "effectiveness": {"contacted": 0, "regularized_after_contact": 0, "rate": 0.0, "promises_made": 0, "promises_kept": 0},
+                    "effectiveness": {"contacted": 0, "regularized_after_contact": 0, "rate": 0.0, "promises_made": 0, "promises_kept": 0, "promises_kept_rate": 0.0},
                     "worklist_counts": {"promessas_vencidas": 0, "sem_resposta": 0, "novos_pre_juridico": 0}
                 })
                 return
@@ -2069,7 +2169,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 "31-60": {"clients": 0, "value": 0.0},
                 "61-90": {"clients": 0, "value": 0.0},
                 "91-120": {"clients": 0, "value": 0.0},
-                "120+": {"clients": 0, "value": 0.0}
+                "121+": {"clients": 0, "value": 0.0}
             }
             pre_juridico_count = 0
             pre_juridico_value = 0.0
@@ -2077,7 +2177,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 b = _bucketize(cf["max_days_overdue"])
                 aging_distribution[b]["clients"] += 1
                 aging_distribution[b]["value"] = round(aging_distribution[b]["value"] + cf["total_owed"], 2)
-                if cf["max_days_overdue"] > 120:
+                if cf["max_days_overdue"] > PREJURIDICO_DAYS:
                     pre_juridico_count += 1
                     pre_juridico_value = round(pre_juridico_value + cf["total_owed"], 2)
 
@@ -2089,6 +2189,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     top_val = int(params.get("top", [5])[0])
                 except Exception:
                     pass
+            top_val = max(1, min(top_val, MAX_RESULT_LIMIT))
             top_debtors = sorted(
                 [{"name": x["name"], "total_owed": x["total_owed"], "max_days_overdue": x["max_days_overdue"], "stage": _stage_for_days(x["max_days_overdue"])} for x in cf_all.values()],
                 key=lambda x: x["total_owed"],
@@ -2133,10 +2234,8 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         try:
             self._do_POST_unwrapped()
         except Exception as exc:
-            import traceback
-            logging.error(f"Erro não tratado em POST {self.path}: {exc}\n{traceback.format_exc()}")
             try:
-                _json_response(self, {"error": "Internal Server Error", "details": str(exc)}, 500)
+                _error_response(self, exc, 500)
             except Exception:
                 pass
 
@@ -2147,13 +2246,16 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         """
         path = self.path.split("?")[0]
         body = _read_body(self)
+        if body is _BODY_TOO_LARGE:
+            _json_response(self, {"error": "Corpo da requisição excede o limite permitido"}, 413)
+            return
         if body is None:
             _json_response(self, {"error": "Content-Length ausente"}, 400)
             return
         try:
             payload = json.loads(body.decode("utf-8"))
         except json.JSONDecodeError as exc:
-            _json_response(self, {"error": f"JSON inválido: {exc}"}, 400)
+            _error_response(self, exc, 400)
             return
 
         if path in ("/api/reports", "/api/clients"):
@@ -2164,8 +2266,9 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             clients     = payload.get("clients") or (
                 payload if "report_name" not in payload else {}
             )
+            conn   = get_conn()
             try:
-                conn   = get_conn()
+                report_date = _normalize_date(report_date)
                 cursor = conn.cursor()
                 cursor.execute(
                     "INSERT INTO reports (report_name, report_date) VALUES (?, ?)",
@@ -2176,8 +2279,12 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 conn.commit()
                 print(f"[API] Novo relatório importado com sucesso: '{report_name}' (ID: {report_id})")
                 _json_response(self, {"status": "success", "report_id": report_id})
+            except ValueError as exc:
+                conn.rollback()
+                _json_response(self, {"error": str(exc)}, 400)
             except Exception as exc:
-                _json_response(self, {"error": str(exc)}, 500)
+                conn.rollback()
+                _error_response(self, exc, 500)
 
         elif path in ("/api/actions/sent", "/api/sent"):
             try:
@@ -2206,7 +2313,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 conn.commit()
                 _json_response(self, {"status": "success"})
             except Exception as exc:
-                _json_response(self, {"error": str(exc)}, 500)
+                _error_response(self, exc, 500)
 
         elif path == "/api/demo/launch":
             if DEMO:
@@ -2222,7 +2329,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     "already_running": info["already_running"],
                 })
             except Exception as exc:
-                _json_response(self, {"error": str(exc)}, 500)
+                _error_response(self, exc, 500)
 
         elif path == "/api/kpis/exclusions":
             try:
@@ -2243,7 +2350,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 conn.commit()
                 _json_response(self, {"status": "success"})
             except Exception as exc:
-                _json_response(self, {"error": str(exc)}, 500)
+                _error_response(self, exc, 500)
 
         elif path == "/api/outcomes":
             try:
@@ -2278,7 +2385,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 print(f"[API] Desfecho registrado: '{outcome}' para o cliente '{client_name}'")
                 _json_response(self, {"status": "success", "id": cursor.lastrowid})
             except Exception as exc:
-                _json_response(self, {"error": str(exc)}, 500)
+                _error_response(self, exc, 500)
 
         else:
             _json_response(self, {"error": "Rota não encontrada"}, 404)
@@ -2292,10 +2399,8 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         try:
             self._do_DELETE_unwrapped()
         except Exception as exc:
-            import traceback
-            logging.error(f"Erro não tratado em DELETE {self.path}: {exc}\n{traceback.format_exc()}")
             try:
-                _json_response(self, {"error": "Internal Server Error", "details": str(exc)}, 500)
+                _error_response(self, exc, 500)
             except Exception:
                 pass
 
@@ -2317,14 +2422,20 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     _json_response(self, {"error": "Relatório não encontrado"}, 404)
                     return
 
+                # Backup recuperável antes da exclusão irreversível (dados sensíveis — nunca versionar)
+                backup_path = _backup_report_before_delete(cursor, rid)
+
                 # A exclusão cascateará devido a restrição ON DELETE CASCADE nos relacionamentos
                 cursor.execute("DELETE FROM reports WHERE id = ?", (rid,))
                 conn.commit()
-                _json_response(self, {"status": "success"})
+                _json_response(self, {
+                    "status": "success",
+                    "backup": os.path.basename(backup_path) if backup_path else None,
+                })
             except (ValueError, IndexError):
                 _json_response(self, {"error": "ID inválido"}, 400)
             except Exception as exc:
-                _json_response(self, {"error": str(exc)}, 500)
+                _error_response(self, exc, 500)
         elif path.startswith("/api/outcomes/"):
             try:
                 oid = int(path.rsplit("/", 1)[-1])
@@ -2340,7 +2451,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             except (ValueError, IndexError):
                 _json_response(self, {"error": "ID inválido"}, 400)
             except Exception as exc:
-                _json_response(self, {"error": str(exc)}, 500)
+                _error_response(self, exc, 500)
         else:
             _json_response(self, {"error": "Rota não encontrada"}, 404)
 

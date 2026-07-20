@@ -1,6 +1,11 @@
 /* INAD Analytics — estado, filtros, fetch e gráficos (Chart.js v4) */
 'use strict';
 
+// ─── SANITIZAÇÃO (previne XSS armazenado a partir de dados do PDF/rede) ────
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
 // ─── ESTADO ──────────────────────────────────────────────────────────────────
 const state = {
   from: null,        // YYYY-MM-DD ou null
@@ -31,6 +36,9 @@ const fmtBRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BR
 const fmtBRLShort = v => v >= 1e6 ? `R$ ${(v / 1e6).toFixed(1)}M`
   : v >= 1e3 ? `R$ ${(v / 1e3).toFixed(0)}k` : fmtBRL.format(v);
 const fmtDate = iso => iso ? iso.split('-').reverse().join('/') : '—';
+// Data local (não UTC) em AAAA-MM-DD — toISOString() converteria para UTC e
+// deslocaria 1 dia perto da meia-noite em fusos atrás de UTC (ex.: Brasil).
+const toLocalISODate = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 // ─── URL ⇆ ESTADO ────────────────────────────────────────────────────────────
 function stateFromURL() {
@@ -295,7 +303,7 @@ function renderDetailTable(series) {
     const pctNovo = s.total.clients ? Math.round(s.novo.clients / s.total.clients * 100) : 0;
     return `<tr>
       <td>${s.report_id}</td>
-      <td>${s.report_name}</td>
+      <td>${escapeHtml(s.report_name)}</td>
       <td>${fmtDate(s.report_date)}</td>
       <td class="num">${s.total.clients}</td>
       <td class="num">${s.total.parcels}</td>
@@ -325,8 +333,8 @@ function bindControls() {
       else {
         const to = new Date();
         const from = new Date(to.getTime() - days * 864e5);
-        state.from = from.toISOString().slice(0, 10);
-        state.to = to.toISOString().slice(0, 10);
+        state.from = toLocalISODate(from);
+        state.to = toLocalISODate(to);
       }
       fFrom.value = state.from || '';
       fTo.value = state.to || '';
@@ -409,7 +417,7 @@ async function loadReportList() {
     list.innerHTML = allReports.map(r => `
       <label class="dd-item">
         <input type="checkbox" value="${r.id}" ${!state.reports || state.reports.has(r.id) ? 'checked' : ''}>
-        <span>${r.report_name}</span>
+        <span>${escapeHtml(r.report_name)}</span>
         <span class="di-date">${fmtDate(r.report_date)}</span>
       </label>`).join('');
     list.querySelectorAll('input').forEach(cb => { cb.onchange = syncReportsFromCheckboxes; });

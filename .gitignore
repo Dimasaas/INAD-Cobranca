@@ -32,3 +32,5 @@ inad_database.db
 *.db-wal
 *.db-journal
 *.log
+backups/
+backups_demo/

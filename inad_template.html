@@ -439,6 +439,22 @@
 </div>
 
 <script>
+// ─── SANITIZAÇÃO (previne XSS armazenado a partir de dados do PDF/rede) ────
+// Uso: escapeHtml() para qualquer valor inserido como texto/atributo via
+// innerHTML ou template literal; jsAttr() para valores usados como argumento
+// string dentro de handlers inline (onclick="fn('...')").
+function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function jsAttr(s) {
+  const js = String(s ?? '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\n/g, '\\n')
+    .replace(/\r/g, '\\r');
+  return js.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
 // ─── DATA LOADING ────────────────────────────────────────────────────────
 const EMBEDDED_DATA = CLIENTS_JSON_PLACEHOLDER;
 let DATA = {};
@@ -812,13 +828,13 @@ async function loadKPIs() {
             <input type="checkbox" class="report-checkbox" data-id="${rep.report_id}" ${isChecked ? 'checked' : ''} onchange="toggleReportSelection(${rep.report_id}, this.checked)" style="cursor:pointer; width:15px; height:15px;">
           </td>
           <td><strong>#${rep.report_id}</strong></td>
-          <td>${rep.report_name} ${duplicateBadge}</td>
+          <td>${escapeHtml(rep.report_name)} ${duplicateBadge}</td>
           <td>${formattedDate}</td>
           <td>${rep.clients} clientes</td>
           <td><span class="chip" style="background:var(--red-bg); color:var(--red); border-color:rgba(239,68,68,.2);">${rep.parcels} parcelas</span></td>
           <td><strong>${formatCurrency(rep.total_value || 0)}</strong></td>
           <td style="text-align: right;">
-            <button class="kpi-btn-action kpi-btn-del" onclick="deleteReport(${rep.report_id}, '${rep.report_name.replace(/'/g, "\\'")}')">🗑️ Excluir</button>
+            <button class="kpi-btn-action kpi-btn-del" onclick="deleteReport(${rep.report_id}, '${jsAttr(rep.report_name)}')">🗑️ Excluir</button>
           </td>
         `;
         tbody.appendChild(tr);
@@ -850,8 +866,8 @@ async function loadKPIs() {
           const item = document.createElement('div');
           item.style.cssText = 'display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.01); border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px;';
           item.innerHTML = `
-            <span style="color:var(--text2); font-weight:500;" title="${name}">${tc(name)}</span>
-            <button class="kpi-btn-action kpi-btn-del" onclick="toggleClientExclusion('${name.replace(/'/g, "\\'")}')" style="padding:2px 6px; font-size:10px;">Reativar</button>
+            <span style="color:var(--text2); font-weight:500;" title="${escapeHtml(name)}">${escapeHtml(tc(name))}</span>
+            <button class="kpi-btn-action kpi-btn-del" onclick="toggleClientExclusion('${jsAttr(name)}')" style="padding:2px 6px; font-size:10px;">Reativar</button>
           `;
           exclListContainer.appendChild(item);
         });
@@ -946,7 +962,7 @@ function drawEvolutionChart(evolution) {
       const [yr, mo, dy] = d.report_date.split('-');
       label = `${dy}/${mo}/${yr.slice(2)}`;
     }
-    return { x, y, name: label, value: val };
+    return { x, y, name: escapeHtml(label), value: val };
   });
   
   let pathD = `M ${points[0].x} ${points[0].y}`;
@@ -999,7 +1015,7 @@ function drawComparisonChart(transitions) {
     barsHtml += `
       <div style="margin-bottom: 16px;">
         <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-weight:600; font-size:12px;">
-          <span style="color:var(--text2)">${trans.from_report} ➔ ${trans.to_report}</span>
+          <span style="color:var(--text2)">${escapeHtml(trans.from_report)} ➔ ${escapeHtml(trans.to_report)}</span>
           <span style="color:var(--green)">${trans.recovery_rate}% regularizados</span>
         </div>
         <div style="width:100%; height:12px; background:var(--border); border-radius:6px; overflow:hidden;">
@@ -1078,7 +1094,7 @@ function waLink(cel,msg){
     if(d.length>=10 && DDDs.has(d.slice(0,2)) && d[2]!=='0'){
       cc='55'+d;
     }else{
-      cc='1'+d; // Default to USA / international
+      return null; // Não é possível classificar com segurança como BR válido — não arriscar enviar a destinatário errado
     }
   }
   return`https://wa.me/${cc}?text=${encodeURIComponent(msg)}`;
@@ -1161,7 +1177,7 @@ function buildCard(c){
   
   let histHtml = '';
   if (c.queue_info && c.queue_info.last_outcome) {
-    const outcomeName = c.queue_info.last_outcome.replace(/_/g, ' ');
+    const outcomeName = escapeHtml(c.queue_info.last_outcome.replace(/_/g, ' '));
     let dateStr = 'Desconhecido';
     
     let rawDate = null;
@@ -1203,7 +1219,7 @@ function buildCard(c){
     let rClass = 'b-risk-low';
     if (score >= 70) rClass = 'b-risk-high';
     else if (score >= 40) rClass = 'b-risk-med';
-    let stageName = q.stage.replace(/_/g, ' ');
+    let stageName = escapeHtml(q.stage.replace(/_/g, ' '));
     riskBadge = `<div style="display:flex; gap:6px; margin-top:6px;">
         <span class="badge ${rClass}">Risco: ${score}</span>
         <span class="badge b-stage">${stageName}</span>
@@ -1211,23 +1227,25 @@ function buildCard(c){
   }
 
   const props=c.properties.map(p=>{
-    const chips=p.parcels.map(pc=>`<span class="chip">${pc.parcela} · ${pc.vencimento}</span>`).join('');
-    return`<div class="pr"><span class="pid">${tc(p.identifier)}</span><div class="pp">${chips}</div></div>`;
+    const chips=p.parcels.map(pc=>`<span class="chip">${escapeHtml(pc.parcela)} · ${escapeHtml(pc.vencimento)}</span>`).join('');
+    return`<div class="pr"><span class="pid">${escapeHtml(tc(p.identifier))}</span><div class="pp">${chips}</div></div>`;
   }).join('');
 
   const phoneHtml=phone
-    ?`<span class="mi"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.1a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2.18h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>${c.cel}</span>`
+    ?`<span class="mi"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.1a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2.18h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>${escapeHtml(c.cel)}</span>`
     :`<span class="mi err"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Sem telefone</span>`;
 
-  const emailHtml=c.email&&c.email.includes('@')?`<span class="mi"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>${c.email}</span>`:'';
+  const emailHtml=c.email&&c.email.includes('@')?`<span class="mi"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>${escapeHtml(c.email)}</span>`:'';
 
   const waBtn=wl
-    ?`<a href="${wl}" target="_blank" class="btn bwa" onclick="return handleWaClick(event,'${c.name.replace(/'/g,"\\'")}','${id}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.083.535 4.04 1.474 5.74L0 24l6.416-1.455A11.95 11.95 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 0 1-5.136-1.453l-.368-.219-3.806.866.887-3.706-.241-.381A9.793 9.793 0 0 1 2.182 12C2.182 6.566 6.566 2.182 12 2.182S21.818 6.566 21.818 12 17.434 21.818 12 21.818z"/></svg>Abrir WhatsApp</a>`
-    :`<span class="btn bwa noph"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Sem telefone</span>`;
+    ?`<a href="${wl}" target="_blank" class="btn bwa" onclick="return handleWaClick(event,'${jsAttr(c.name)}','${id}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.083.535 4.04 1.474 5.74L0 24l6.416-1.455A11.95 11.95 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 0 1-5.136-1.453l-.368-.219-3.806.866.887-3.706-.241-.381A9.793 9.793 0 0 1 2.182 12C2.182 6.566 6.566 2.182 12 2.182S21.818 6.566 21.818 12 17.434 21.818 12 21.818z"/></svg>Abrir WhatsApp</a>`
+    :phone
+      ?`<span class="btn bwa noph" title="Não foi possível identificar o DDD/país deste número com segurança — verifique manualmente"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Telefone a verificar</span>`
+      :`<span class="btn bwa noph"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Sem telefone</span>`;
 
   const excludeBtn = `
-    <button class="btn-exclude-kpi${isExcluded ? ' excluded' : ''}" 
-            onclick="toggleClientExclusion('${c.name.replace(/'/g, "\\'")}')" 
+    <button class="btn-exclude-kpi${isExcluded ? ' excluded' : ''}"
+            onclick="toggleClientExclusion('${jsAttr(c.name)}')"
             title="${isExcluded ? 'Incluir este cliente nos KPIs' : 'Ignorar este cliente nos KPIs'}">
       ${isExcluded ? '🚫 Ignorado' : '👁️ Ativo'}
     </button>
@@ -1237,7 +1255,7 @@ function buildCard(c){
   <div class="ch">
     <div class="av ${av}">${init}</div>
     <div class="ci">
-      <div class="cn" title="${c.name}">${tc(c.name)}${isSent?' <span style="color:var(--green);font-size:11px;font-weight:700;margin-left:6px">✓</span>':''}</div>
+      <div class="cn" title="${escapeHtml(c.name)}">${escapeHtml(tc(c.name))}${isSent?' <span style="color:var(--green);font-size:11px;font-weight:700;margin-left:6px">✓</span>':''}</div>
       <div class="cm">${phoneHtml}${emailHtml}</div>
       ${riskBadge}
     </div>
@@ -1249,7 +1267,7 @@ function buildCard(c){
   <div class="pl">${props}</div>
   <div class="ma">
     <div class="ml">Mensagem de cobrança <span>✎ editável</span></div>
-    <textarea class="mb" id="msg-${id}">${msg}</textarea>
+    <textarea class="mb" id="msg-${id}">${escapeHtml(msg)}</textarea>
   </div>
   <div class="ca">
     <button class="btn bcopy" id="cp-${id}" onclick="doCopy('${id}',this)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copiar</button>
@@ -1257,10 +1275,10 @@ function buildCard(c){
     <button class="btn boutcome" title="Registrar Desfecho" onclick="toggleOutcomePanel('${id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
   </div>
   <div class="outcome-panel" id="oc-panel-${id}">
-    <button class="oc-btn pp" onclick="registerOutcome('${c.name.replace(/'/g,"\\'")}','${id}','prometeu_pagar')">Prometeu Pagar</button>
-    <button class="oc-btn ng" onclick="registerOutcome('${c.name.replace(/'/g,"\\'")}','${id}','negociacao')">Negociação</button>
-    <button class="oc-btn" onclick="registerOutcome('${c.name.replace(/'/g,"\\'")}','${id}','sem_resposta')">Sem Resposta</button>
-    <button class="oc-btn" onclick="registerOutcome('${c.name.replace(/'/g,"\\'")}','${id}','recusou')">Recusou</button>
+    <button class="oc-btn pp" onclick="registerOutcome('${jsAttr(c.name)}','${id}','prometeu_pagar')">Prometeu Pagar</button>
+    <button class="oc-btn ng" onclick="registerOutcome('${jsAttr(c.name)}','${id}','negociacao')">Negociação</button>
+    <button class="oc-btn" onclick="registerOutcome('${jsAttr(c.name)}','${id}','sem_resposta')">Sem Resposta</button>
+    <button class="oc-btn" onclick="registerOutcome('${jsAttr(c.name)}','${id}','recusou')">Recusou</button>
   </div>
   ${histHtml}
 </div>`;
@@ -1952,7 +1970,7 @@ async function updateClientsDatalist() {
     const names = await res.json();
     const datalist = document.getElementById('kpi-clients-datalist');
     if (datalist) {
-      datalist.innerHTML = names.map(n => `<option value="${n}"></option>`).join('');
+      datalist.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
     }
   } catch(e) {}
 }
