@@ -9,7 +9,7 @@
 Esta é uma ferramenta profissional de CRM e Gestão de Cobrança desenvolvida para automatizar e otimizar o fluxo de recuperação de inadimplência da construtora. O sistema unifica o processamento de relatórios em PDF, calcula scores de risco inteligentes, classifica devedores em réguas de cobrança operacionais e facilita contatos dinâmicos via WhatsApp Web.
 
 > [!IMPORTANT]
-> **Privacidade & Segurança:** Toda a manipulação de dados é realizada **localmente no seu computador** ou na **Intranet da sua empresa**. O banco de dados SQLite (`inad_database.db`) e os relatórios ficam protegidos no ambiente do servidor local, sem qualquer vazamento de dados confidenciais para a nuvem.
+> **Privacidade & Segurança:** Toda a manipulação de dados é realizada **localmente no seu computador** ou na **Intranet da sua empresa** — nunca na nuvem. O banco de dados SQLite (`inad_database.db`) fica no próprio servidor local. Acesso pela rede exige cadastro individual por operador (sem usuário/senha compartilhado) e fica registrado numa trilha de auditoria interna. Veja [🔒 Segurança e Privacidade](#-segurança-e-privacidade) abaixo.
 
 ---
 
@@ -51,7 +51,8 @@ graph TD
   - *Novos no Pré-Jurídico:* Devedores que acabam de ultrapassar a barreira crítica dos 120 dias.
 - 💬 **WhatsApp Dinâmico Integrado:** Mensagens customizadas geradas automaticamente, incluindo variáveis de saudação baseadas em gênero, identificação do lote/quadra e saldo devedor atualizado, com link direto de disparo.
 - 📝 **Registro de Desfechos (Outcomes):** Painel interno em cada card para cadastrar retornos das conversas (*Prometeu Pagar*, *Negociação*, *Recusou*, *Sem resposta*) no formato brasileiro `DD/MM/AAAA`.
-- 📁 **Auditoria e Logs de Erro:** Gravação automática de logs operacionais no terminal e registro de exceções de sistema estruturadas no arquivo `inad_errors.log` (multiplataforma).
+- 📈 **KPIs com precisão exata:** identidade de cliente resiliente a variação de acento/caixa/espaço, somas monetárias em centavos inteiros (sem drift de ponto flutuante), e taxa de recuperação reportada em duas leituras lado a lado — quantos clientes "saíram da lista" vs. quantos têm pagamento efetivamente confirmado.
+- 📁 **Auditoria e Logs de Erro:** Toda consulta ao perfil individual de um cliente (que expõe CPF/telefone) fica registrada — quem acessou, qual cliente, quando — consultável via API. Exceções de sistema ficam em `inad_errors.log` (multiplataforma).
 
 ---
 
@@ -59,41 +60,64 @@ graph TD
 
 ### Passo 1: Obter a Aplicação
 1. Vá até a aba de **Releases** do repositório no GitHub.
-2. Baixe o pacote comprimido compatível com seu sistema operacional:
-   - **Para Windows:** `INAD_Cobranca-Windows.zip`
-   - **Para macOS:** `INAD_Cobranca-macOS.zip`
-3. Extraia o conteúdo do zip em uma pasta permanente.
+2. Baixe `INAD_Cobranca-Windows.zip` (build oficial distribuído — Windows 10/11).
+3. Extraia o conteúdo do zip em uma pasta permanente (ex.: `C:\INAD\`).
+
+> Quer rodar em macOS/Linux, ou embutir dados de exemplo no `.exe`? Veja
+> [⚙️ Para Desenvolvedores](#️-para-desenvolvedores-rodando-via-código) —
+> não há build oficial pra essas plataformas, mas compilar você mesmo é
+> simples.
 
 ---
 
-### Passo 2: Executar no Windows 🪟
+### Passo 2: Executar no Windows 🪟 (uso individual, só neste computador)
 1. Abra a pasta extraída.
 2. Execute o arquivo **`INAD_Cobranca.exe`** (clicando duas vezes).
 3. Uma tela preta de terminal se abrirá no background, e o seu navegador de internet padrão abrirá automaticamente o Painel de Cobrança.
 4. *Importante:* Mantenha o terminal aberto enquanto estiver trabalhando. Ao finalizar, basta fechar a janela preta para desligar o sistema.
 
----
-
-### Passo 3: Executar no macOS (Mac) 🍏
-Devido aos termos de segurança do macOS (Gatekeeper), o aplicativo precisará de uma autorização inicial:
-1. Abra a pasta extraída no *Finder*.
-2. **Clique com o botão direito** no executável **`INAD_Cobranca`** e selecione **Abrir (Open)**.
-3. Na janela de aviso de "Desenvolvedor não verificado", clique em **Abrir (Open)**.
-4. O navegador abrirá o painel. Nas próximas utilizações, basta abrir o arquivo com dois cliques simples.
+Por padrão o servidor só aceita conexões deste mesmo computador — ninguém
+mais na rede consegue acessar. Isso é proposital (ver seção de segurança
+abaixo).
 
 ---
 
-### Passo 4: Rodando em Servidor / Intranet 🌐
-Se você deseja compartilhar a ferramenta com toda a equipe através de um servidor local na rede da construtora:
-1. Coloque o projeto no servidor e configure o script `run.py` para escutar na porta ou interface desejada:
-   ```bash
-   # Executar na porta padrão (8000)
-   python run.py
-   
-   # Executar em uma porta customizada (ex: 9090)
-   python run.py --port 9090
-   ```
-2. O restante dos computadores na rede interna poderá acessar a ferramenta digitando o IP do servidor na barra de navegação (Ex: `http://192.168.1.100:9090`).
+### Passo 3: Rodando como servidor de Intranet 🌐 (compartilhar com a equipe)
+Pra deixar o painel acessível a partir de outros computadores da mesma rede
+(escritório), é preciso: (a) ligar o servidor num modo que aceite conexões
+de rede (`INAD_HOST=0.0.0.0` em vez do padrão localhost-apenas), e (b)
+cadastrar um operador — com um token individual, não usuário/senha — para
+cada pessoa que vai acessar. O passo a passo completo, com todos os
+comandos, está em **[`TUTORIAL_INTRANET_WINDOWS.md`](./TUTORIAL_INTRANET_WINDOWS.md)**
+(incluído dentro do zip da release) — escrito como um procedimento
+executável tanto por uma pessoa quanto por um agente de automação/IA.
+
+---
+
+## 🔒 Segurança e Privacidade
+
+- **Bind local por padrão:** o servidor só aceita conexões de `127.0.0.1`
+  (o próprio computador) a menos que seja explicitamente exposto na rede
+  (`INAD_HOST=0.0.0.0` ou `--host`).
+- **Autenticação por operador:** expor na rede exige cadastrar pelo menos
+  um operador (`INAD_Cobranca.exe --add-operator "Nome"`) — cada pessoa
+  recebe um token individual (não há usuário/senha compartilhado). O
+  servidor recusa subir exposto sem isso.
+- **Trilha de auditoria:** toda consulta ao perfil individual de um
+  cliente (que expõe CPF/telefone/endereço) fica registrada — quem, qual
+  cliente, quando — consultável via `GET /api/audit`.
+- **Identidade de cliente resiliente:** variação de acento/caixa/espaço no
+  nome não cria um cliente "fantasma" nem distorce taxas de recuperação.
+- **Sem criptografia própria do banco:** o `inad_database.db` não é
+  criptografado pela aplicação (decisão deliberada — ver `AI_CONTEXT.md`);
+  a proteção do disco (BitLocker/FileVault) fica a cargo do sistema
+  operacional. Não recomendado expor esta máquina fora da rede local da
+  empresa (sem VPN pública, sem port forwarding).
+- **Nunca vai para a nuvem:** todos os dados (relatórios, banco, backups)
+  ficam só no computador onde o servidor roda.
+
+Para o passo a passo completo de configurar acesso pela rede com múltiplos
+operadores, veja [`TUTORIAL_INTRANET_WINDOWS.md`](./TUTORIAL_INTRANET_WINDOWS.md).
 
 ---
 
@@ -119,9 +143,18 @@ O painel abrirá automaticamente no endereço correspondente.
 - `inad_errors.log`: Arquivo gerado automaticamente em caso de exceções não tratadas no servidor para fins de suporte técnico.
 
 ### Compilando Binários
-Caso precise empacotar uma nova versão executável para distribuição rápida:
+O build oficial (Windows) é gerado automaticamente pelo GitHub Actions a
+cada tag `v*` (veja `.github/workflows/build.yml`). Para compilar
+manualmente (Windows, macOS ou Linux):
 ```bash
 pip install pyinstaller
-pyinstaller --onefile --windowed --name=INAD_Cobranca --add-data "inad_template.html;." --add-data "inad_whatsapp.html;." --add-data "inad_analytics.html;." --add-data "analytics.js;." --add-data "analytics.css;." --add-data "libs;libs" run.py
+python add_pdf_importer.py   # gera inad_whatsapp.html
+pyinstaller --onefile --add-data "inad_whatsapp.html;." --add-data "libs;libs" --name INAD_Cobranca run.py
 ```
-*(No macOS, troque o `;` do argumento `--add-data` por `:`).*
+*(No macOS/Linux, troque o `;` do argumento `--add-data` por `:`).*
+
+O executável gerado (`dist/INAD_Cobranca`) deve ficar na mesma pasta que
+`inad_whatsapp.html`, `inad_analytics.html`, `analytics.js`, `analytics.css`
+e `libs/` — esses arquivos não ficam embutidos no `.exe`, são lidos do
+disco ao lado dele (é assim que o banco de dados e os logs também
+persistem entre execuções, mesmo empacotado com `--onefile`).

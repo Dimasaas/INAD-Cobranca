@@ -125,6 +125,27 @@ CREATE TABLE contact_outcomes (
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- 8. Operadores (autenticação mínima — só relevante quando exposto além de
+-- localhost; ver _authenticate()/--add-operator em run.py)
+CREATE TABLE operators (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    name       TEXT    NOT NULL UNIQUE,
+    token_hash TEXT    NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    active     INTEGER NOT NULL DEFAULT 1
+);
+
+-- 9. Auditoria de acesso a PII individual (S6) — quem consultou o perfil
+-- (CPF/telefone/endereço) de qual cliente e quando. Só alimentada por
+-- GET /api/clients/profile (leitura de UM cliente) — não por
+-- GET /api/reports/<id> (leitura em lote, uso rotineiro do painel).
+CREATE TABLE access_audit (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    operator    TEXT,
+    client_name TEXT    NOT NULL,
+    accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Índices (criados idempotentemente pelo init_db)
 CREATE INDEX idx_clients_name         ON clients(name);
 CREATE INDEX idx_clients_report_id    ON clients(report_id);
@@ -133,9 +154,11 @@ CREATE INDEX idx_parcels_property_id  ON parcels(property_id);
 CREATE INDEX idx_parcels_venc         ON parcels(vencimento_full);
 CREATE INDEX idx_outcomes_client      ON contact_outcomes(client_name);
 CREATE INDEX idx_outcomes_created     ON contact_outcomes(created_at);
+CREATE INDEX idx_access_audit_client   ON access_audit(client_name);
+CREATE INDEX idx_access_audit_accessed ON access_audit(accessed_at);
 ```
 
-> **Identidade de cliente:** não existe tabela canônica de clientes — a identidade é por **string exata de `name`** entre relatórios. Variações de grafia/acento (ex.: "GONCALVES" vs "GONÇALVES") são tratadas como clientes distintos. Limitação conhecida e aceita.
+> **Identidade de cliente:** não existe tabela canônica de clientes — o `name`/`client_name` original (como veio do PDF ou foi digitado) é sempre preservado para exibição. Para **comparações de identidade** entre relatórios/tabelas (dedup, recovery_rate, segmentação novo/antigo, exclusões de KPI, reentradas), todo o sistema usa `normalize_name()` (`run.py`): remove acentos, colapsa espaços e uniformiza caixa — "GONÇALVES" e "Goncalves " contam como o mesmo cliente. Abreviações (ex.: "Ma." vs "Maria") continuam fora do escopo dessa normalização puramente textual.
 
 ---
 
@@ -191,7 +214,7 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 | `GET` | `/api/kpis/exclusions` | Lista clientes excluídos dos KPIs |
 | `POST` | `/api/kpis/exclusions` | `{client_name, exclude: true\|false}` |
 
-**Resposta de `/api/kpis`:** `evolution` (filtrada, sem duplicados), `all_evolution` (com flag `is_duplicate`), `transitions` (cruzamentos consecutivos). Cada entrada de evolução inclui `total_value` (soma R$ das parcelas).
+**Resposta de `/api/kpis`:** `evolution` (filtrada, sem duplicados), `all_evolution` (com flag `is_duplicate`), `transitions` (cruzamentos consecutivos). Cada entrada de evolução inclui `total_value` (soma R$ das parcelas). Cada transição traz `recovery_rate` ("saiu do relatório seguinte" — sinal amplo, não implica pagamento) e, ao lado, `recovery_rate_confirmed`/`recovered_confirmed_clients` (K6: subconjunto com desfecho `pagou` registrado) — as duas convivem, nenhuma substitui a outra.
 
 **`GET /api/kpis/analytics` — parâmetros (todos opcionais, combináveis):**
 
@@ -213,7 +236,8 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
                 "novo":   {...}, "antigo": {...} } ],
   "transitions": [ { "from_report","to_report","from_date","to_date",
                      "total_clients","recovered_clients","recovery_rate",
-                     "recovery_rate_novo","recovery_rate_antigo","recovered_value" } ],
+                     "recovery_rate_novo","recovery_rate_antigo","recovered_value",
+                     "recovered_confirmed_clients","recovery_rate_confirmed" } ],
   "segment_totals": { "novo": {"clients","total_value"}, "antigo": {...} }
 }
 ```
@@ -231,6 +255,7 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 | `DELETE` | `/api/outcomes/<id>` | Remove um registro de desfecho (correções e auditoria) |
 | `GET` | `/api/worklist` | Alertas operacionais categorizados em listas de prioridades |
 | `GET` | `/api/summary` | Snapshot consolidado de KPIs financeiros, metas de contatos e conversão (?top=5) |
+| `GET` | `/api/audit` | Trilha de auditoria (S6): quem consultou o perfil/PII de qual cliente e quando (?name&limit=100) |
 
 #### Formato JSON `/api/queue`
 ```json
@@ -316,9 +341,11 @@ Relatórios com a mesma `report_date` são considerados duplicados. Mantém-se a
 
 $$\text{Taxa} = \frac{\text{Clientes em } R_n \text{ que NÃO constam em } R_{n+1}}{\text{Total de Clientes em } R_n} \times 100$$
 
+Este é o sinal **amplo** ("saiu do relatório seguinte") — não implica pagamento confirmado; o cliente pode ter renegociado fora do sistema, sido encaminhado ao jurídico, ou ter saído por um artefato de dado. **`recovery_rate_confirmed`** (K6, decisão do responsável: as duas métricas convivem, nenhuma substitui a outra) reporta ao lado a fração desse mesmo conjunto que tem um desfecho `pagou` registrado em `contact_outcomes` (`_confirmed_paid_names()` em `run.py`) — presente em `get_kpis_data()` e `get_analytics_data()`.
+
 ### Segmentação novo vs antigo
 
-Um cliente é **"novo"** se sua **primeira aparição em qualquer relatório do histórico** (`MIN(report_date)` por nome exato, CTE `first_seen` em `run.py`) ocorreu **na data de corte ou depois**; caso contrário é **"antigo"**. O corte é configurável por data (`cutoff`) ou pelos N últimos relatórios (`cutoff_last_n`).
+Um cliente é **"novo"** se sua **primeira aparição em qualquer relatório do histórico** (`MIN(report_date)` por identidade normalizada — `normalize_name()`, K2 — CTE `first_seen` em `run.py`) ocorreu **na data de corte ou depois**; caso contrário é **"antigo"**. O corte é configurável por data (`cutoff`) ou pelos N últimos relatórios (`cutoff_last_n`).
 
 **Regra crítica:** a primeira aparição é calculada sempre sobre **todo o histórico**, nunca restrita pelo filtro de datas da tela — senão clientes antigos seriam rotulados erroneamente como novos dentro de janelas recentes.
 
@@ -358,6 +385,12 @@ A régua de cobrança é dividida em 4 estágios baseados no tempo máximo de at
 ## ⚖️ Conformidade e Termos de Uso (Artigo 42 do CDC)
 
 Conforme o CDC art. 42, a cobrança não pode expor o cliente a ridículo, constrangimento ou ameaça. Todos os templates — inclusive o de pré-jurídico — devem ser factuais, respeitosos e limitados aos dados do débito (parcelas, valores, vencimentos) e a canais de regularização. O template pré-jurídico deve informar que o caso "poderá ser encaminhado ao setor jurídico" — nunca ameaçar processo, negativação ou perda do imóvel. No financiamento com alienação fiduciária (Lei 9.514/97), os passos formais (notificação via cartório, purga da mora) são atos jurídicos conduzidos por humanos/advogados; a ferramenta não automatiza nenhum passo legal — o estágio pre_juridico é apenas uma fila interna para triagem humana e entrega ao jurídico. Isto não é aconselhamento jurídico.
+
+### Segurança de dados pessoais (LGPD) — auditoria e criptografia (S6)
+
+- **Autenticação por operador** (`operators`): só é exigida quando o servidor está exposto além de localhost (`INAD_HOST`/`--host`); em bind loopback (padrão), sempre autorizado como operador `"local"`.
+- **Trilha de auditoria** (`access_audit`, decisão do responsável): toda leitura de `GET /api/clients/profile` — que expõe CPF/telefone/endereço de UM cliente específico — é registrada (`operator`, `client_name`, `accessed_at`) via `_log_access()`. Consultável via `GET /api/audit`. Leituras em lote (`GET /api/reports/<id>`, usada no uso rotineiro do painel) **não** são logadas, para a trilha não virar ruído.
+- **Criptografia at-rest** (SQLCipher): avaliada e **não implementada** — decisão do responsável de confiar na criptografia de disco do sistema operacional (FileVault/BitLocker) em vez de adicionar essa complexidade (gestão de chave/senha, rebuild do empacotamento PyInstaller por plataforma). Não reabrir sem nova decisão explícita.
 
 ---
 
