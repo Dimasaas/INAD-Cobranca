@@ -480,6 +480,37 @@ class GoldenKPITests(unittest.TestCase):
         self.assertEqual(a_trans["recovered_confirmed_clients"], 1)
         self.assertEqual(a_trans["recovery_rate_confirmed"], 33.3)
 
+    def test_access_audit_logs_profile_reads(self):
+        """S6: _log_access() registra quem consultou o perfil (PII) de qual
+        cliente e quando — decisão do responsável: tabela no banco
+        (queryable via GET /api/audit), não um arquivo de log."""
+        _import_report("Relatorio 1", "2026-01-01", {
+            "FULANO DE TAL": {
+                "cpf_cnpj": "123.456.789-00", "cel": "11999998888", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/01/2026",
+                     "vencimento_full": "2026-01-10", "valor": 500.0},
+                ]}],
+            },
+        })
+
+        conn = run.get_conn()
+        run._log_access(conn, "operador_teste", "FULANO DE TAL")
+        run._log_access(conn, "operador_teste", "FULANO DE TAL")
+        run._log_access(conn, "outro_operador", "OUTRO CLIENTE")
+
+        rows = conn.cursor().execute(
+            "SELECT operator, client_name FROM access_audit ORDER BY id"
+        ).fetchall()
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(rows[0][0], "operador_teste")
+        self.assertEqual(rows[0][1], "FULANO DE TAL")
+
+        only_fulano = conn.cursor().execute(
+            "SELECT COUNT(*) FROM access_audit WHERE client_name = ?", ("FULANO DE TAL",)
+        ).fetchone()[0]
+        self.assertEqual(only_fulano, 2)
+
 
 class LargeDatasetReconciliationTests(unittest.TestCase):
     """Gera uma série sintética determinística de relatórios (random.Random(42),

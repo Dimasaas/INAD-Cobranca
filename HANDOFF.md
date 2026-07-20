@@ -157,6 +157,25 @@ Todos os itens abaixo estão implementados, testados manualmente e/ou via
   sem internet, pré-existentes, sem relação com a mudança). Lembrar de
   rodar `python3 add_pdf_importer.py` depois de qualquer novo ajuste em
   `inad_template.html` pra regenerar `inad_whatsapp.html`.
+- **S6 — decidido e implementado (as duas partes).**
+  **(a) Trilha de auditoria:** decisão do responsável — tabela no banco
+  (não arquivo de log), consultável via SQL/API. Nova tabela
+  `access_audit` (`operator`, `client_name`, `accessed_at`) + índices.
+  Novo helper `_log_access(conn, operator, client_name)` chamado de
+  dentro de `GET /api/clients/profile` (a única leitura que expõe PII de
+  UM cliente específico) — `GET /api/reports/<id>` (leitura em lote, uso
+  rotineiro do painel) **não é logado**, de propósito, pra não afogar a
+  trilha em ruído. Novo endpoint `GET /api/audit?name=&limit=100`
+  (mesmo padrão de `GET /api/outcomes`) pra consultar a trilha. Teste
+  golden novo (`test_access_audit_logs_profile_reads`) + smoke test HTTP
+  confirmando: 2 consultas de perfil → 2 linhas em `access_audit`; 1
+  consulta de relatório em lote → 0 linhas novas.
+  **(b) Criptografia at-rest (SQLCipher):** decisão do responsável —
+  **não implementar**. Confiar na criptografia de disco do SO
+  (FileVault/BitLocker) em vez de adicionar gestão de chave/senha +
+  rebuild do empacotamento PyInstaller por plataforma. Nenhuma mudança
+  de código para esta parte — só a decisão documentada (não reabrir sem
+  decisão explícita nova).
 
 **Outros:**
 - **A1** — documentado que o servidor é single-thread de propósito
@@ -200,9 +219,10 @@ gerado no próprio arquivo de teste (determinístico, `random.Random(42)`,
 sem depender de nada externo), K2 (grafia diferente = mesmo cliente em
 recovery_rate/exclusões/reentradas — 3 testes), K7 (soma cent-exata com
 valores classicamente sujeitos a drift em float, incluindo o caminho
-novo+antigo do Analytics — 1 teste) e K6 (recovery_rate inalterado +
+novo+antigo do Analytics — 1 teste), K6 (recovery_rate inalterado +
 recovery_rate_confirmed reflete só quem tem 'pagou' registrado, em
-get_kpis_data e get_analytics_data — 1 teste).
+get_kpis_data e get_analytics_data — 1 teste) e S6 (`_log_access` grava
+e filtra corretamente em `access_audit` — 1 teste). 12 testes no total.
 
 ## Decisões já tomadas pelo responsável (não perguntar de novo)
 
@@ -217,7 +237,8 @@ get_kpis_data e get_analytics_data — 1 teste).
 | §4.8 Telefone inválido (D5) | Já resolvido — esconde o link (ver acima). |
 | §4.9 Reescrita de histórico git (S9) | Já feita (ver acima). |
 | §4.2 CSRF header | Já resolvido — `X-INAD-Token` custom + `?token=` fallback (ver S1-S3 acima). |
-| §4.10 Criptografia at-rest (S6) | **Ainda não decidido.** |
+| §4.10 Auditoria de acesso (S6a) | **Decidido e implementado** — tabela `access_audit` (queryable), não arquivo de log. Loga só `GET /api/clients/profile`. |
+| §4.10 Criptografia at-rest (S6b) | **Decidido: não implementar.** Confiar na criptografia de disco do SO (FileVault/BitLocker) em vez de SQLCipher. |
 
 ## O que falta (nesta ordem sugerida)
 
@@ -233,15 +254,11 @@ checklist original do K2 e tem impacto baixo — mas se for mexer em
 `_get_worklist_data()` de novo, considere normalizar essa comparação
 também (mesmo padrão usado em `_contact_effectiveness`).
 
-### 2. S6 — Auditoria de acesso / criptografia at-rest (não decidido)
-
-Com a autenticação por operador já existindo (S1-S3), a trilha de auditoria
-("quem leu o CPF de qual cliente e quando") ficou tecnicamente viável —
-`self.operator_name` já é setado em `do_GET`/`do_POST`/`do_DELETE` depois de
-`_authenticate()`, só falta decidir se/como logar isso (ex.: log estruturado
-separado para acessos a `/api/clients/profile`). Criptografia at-rest
-(SQLCipher) segue sem decisão — impacta o empacotamento PyInstaller
-(`INAD_Cobranca.spec`).
+Não há mais nenhum item do plano original (K1-K10/S1-S9) sem decisão ou
+sem implementação — só este gap residual opcional acima. Se surgir algo
+novo, seguir o mesmo padrão: decisão do responsável primeiro (perguntar
+as opções, nunca assumir), depois implementação + teste golden + smoke
+test manual, e por fim atualizar este arquivo.
 
 ## Como verificar depois de qualquer mudança
 

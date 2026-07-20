@@ -238,6 +238,17 @@ def init_db():
             active     INTEGER NOT NULL DEFAULT 1
         );
 
+        -- 9. Auditoria de acesso a PII individual (S6) — quem consultou o
+        -- perfil (CPF/telefone/endereço) de qual cliente e quando. Só
+        -- alimentada por leituras que expõem PII de UM cliente específico
+        -- (GET /api/clients/profile) — ver _log_access().
+        CREATE TABLE IF NOT EXISTS access_audit (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            operator    TEXT,
+            client_name TEXT    NOT NULL,
+            accessed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_clients_name         ON clients(name);
         CREATE INDEX IF NOT EXISTS idx_clients_report_id    ON clients(report_id);
         CREATE INDEX IF NOT EXISTS idx_properties_client_id ON properties(client_id);
@@ -245,6 +256,8 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_parcels_venc         ON parcels(vencimento_full);
         CREATE INDEX IF NOT EXISTS idx_outcomes_client      ON contact_outcomes(client_name);
         CREATE INDEX IF NOT EXISTS idx_outcomes_created     ON contact_outcomes(created_at);
+        CREATE INDEX IF NOT EXISTS idx_access_audit_client   ON access_audit(client_name);
+        CREATE INDEX IF NOT EXISTS idx_access_audit_accessed ON access_audit(accessed_at);
     """)
 
     # Migração: adiciona coluna report_date se não existir (banco legado)
@@ -1455,6 +1468,7 @@ def get_system_context():
             "action_logs": "Histórico de disparos WhatsApp (venda_id, client_name, sent_at)",
             "kpi_exclusions": "Clientes excluídos manualmente dos cálculos de KPI",
             "contact_outcomes": "Registros de desfechos de contatos (client_name, outcome, promised_date, next_contact, note)",
+            "access_audit": "Auditoria (S6): quem consultou o perfil/PII de qual cliente e quando (operator, client_name, accessed_at)",
         },
         "api_endpoints": {
             "GET /api/context": "Este payload — contexto completo para IAs",
@@ -1484,6 +1498,7 @@ def get_system_context():
             "DELETE /api/outcomes/<id>": "Exclui um registro de desfecho",
             "GET /api/worklist": "Alertas operacionais categorizados de recontato/promessas",
             "GET /api/summary": "Resumo executivo consolidado com metas de eficácia, aging e top devedores",
+            "GET /api/audit": "Trilha de auditoria de acesso a PII individual (?name&limit) — quem viu o perfil de qual cliente e quando",
         },
         "business_rules": {
             "kpi_deduplication": (
@@ -1524,6 +1539,15 @@ def get_system_context():
             ),
             "privacy": (
                 "Nunca commitar .db, .json com dados reais ou PDFs — ver .gitignore."
+            ),
+            "access_audit": (
+                "S6: GET /api/clients/profile registra em access_audit (operator, "
+                "client_name, accessed_at) — ver _log_access(). GET /api/reports/<id> "
+                "(leitura em lote do relatório inteiro) não é logado, para não afogar "
+                "a trilha com o uso rotineiro do painel. Criptografia at-rest do "
+                "banco (SQLCipher) foi avaliada e não implementada — decisão do "
+                "responsável de confiar na criptografia de disco do SO (FileVault/"
+                "BitLocker) em vez disso."
             ),
             "frontend_edit_rule": (
                 "Editar apenas inad_template.html; regenerar inad_whatsapp.html via add_pdf_importer.py."
@@ -1643,6 +1667,20 @@ def _authenticate(handler):
         if hmac.compare_digest(token_hash, stored_hash):
             return True, name
     return False, None
+
+
+def _log_access(conn, operator, client_name):
+    """S6: registra em access_audit quem consultou o perfil (CPF/telefone/
+    endereço) de qual cliente e quando. Chamado só em leituras que expõem
+    PII de UM cliente específico (GET /api/clients/profile) — não em
+    listagens em lote (GET /api/reports/<id>), pra não afogar a trilha com
+    o uso normal e rotineiro do painel (toda tela renderiza a partir do
+    relatório inteiro; isso não é uma "consulta" no sentido de auditoria)."""
+    conn.execute(
+        "INSERT INTO access_audit (operator, client_name) VALUES (?, ?)",
+        (operator, client_name),
+    )
+    conn.commit()
 
 
 # Únicos arquivos estáticos servidos pelo fallback do SimpleHTTPRequestHandler
@@ -2013,11 +2051,14 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 _json_response(self, {"error": "Parametro name e obrigatorio"}, 400)
                 return
 
-            cursor = get_conn().cursor()
+            conn = get_conn()
+            cursor = conn.cursor()
             exists = cursor.execute("SELECT 1 FROM clients WHERE name = ? LIMIT 1", (name,)).fetchone()
             if not exists:
                 _json_response(self, {"error": f"Cliente '{name}' nao encontrado no sistema"}, 404)
                 return
+
+            _log_access(conn, self.operator_name, name)
 
             import datetime
             ref_date = datetime.date.today().isoformat()
@@ -2245,6 +2286,47 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             res = [{
                 "id": r[0], "client_name": r[1], "venda_id": r[2], "action_log_id": r[3],
                 "outcome": r[4], "promised_date": r[5], "next_contact": r[6], "note": r[7], "created_at": r[8]
+            } for r in rows]
+            _json_response(self, res)
+
+        elif path == "/api/audit":
+            # S6: trilha de auditoria — quem consultou o perfil (CPF/telefone/
+            # endereço) de qual cliente e quando (ver _log_access()).
+            from urllib.parse import parse_qs
+            params = {}
+            if "?" in self.path:
+                try:
+                    params = parse_qs(self.path.split("?", 1)[1])
+                except Exception:
+                    pass
+            cname = params.get("name", [""])[0].strip()
+            limit_val = 100
+            if params.get("limit"):
+                try:
+                    limit_val = int(params.get("limit")[0])
+                except ValueError:
+                    pass
+            limit_val = max(1, min(limit_val, MAX_RESULT_LIMIT))
+
+            cursor = get_conn().cursor()
+            if cname:
+                rows = cursor.execute("""
+                    SELECT id, operator, client_name, accessed_at
+                    FROM access_audit
+                    WHERE client_name = ?
+                    ORDER BY accessed_at DESC
+                    LIMIT ?
+                """, (cname, limit_val)).fetchall()
+            else:
+                rows = cursor.execute("""
+                    SELECT id, operator, client_name, accessed_at
+                    FROM access_audit
+                    ORDER BY accessed_at DESC
+                    LIMIT ?
+                """, (limit_val,)).fetchall()
+
+            res = [{
+                "id": r[0], "operator": r[1], "client_name": r[2], "accessed_at": r[3]
             } for r in rows]
             _json_response(self, res)
 
