@@ -178,6 +178,26 @@ Todos os itens abaixo estão implementados, testados manualmente e/ou via
   decisão explícita nova).
 
 **Outros:**
+- **Papel de operador somente-leitura (`can_write`).** Regra nova pedida pelo
+  responsável (registrada no `CLAUDE.md`): existe um usuário que só pode
+  **ler**, PROIBIDO de editar via API. Antes todos os operadores eram iguais
+  (qualquer token válido podia `POST`/`DELETE`). Agora a tabela `operators`
+  tem a coluna `can_write INTEGER NOT NULL DEFAULT 1` (migração idempotente
+  em `init_db()` no mesmo padrão do K7; bancos legados nascem com `DEFAULT 1`,
+  então nenhum operador já cadastrado perde escrita). `_authenticate()` passou
+  a retornar a tripla `(ok, operador, pode_escrever)`; `do_POST`/`do_DELETE`
+  respondem **403** quando `pode_escrever` é falso (GET segue liberado — o
+  operador só-leitura ainda vê tudo). Em bind loopback (uso local do dono da
+  máquina) segue sempre com escrita, sem token. CLI:
+  `python run.py --add-operator "Nome" --read-only` cria o operador restrito;
+  `--list-operators` mostra a coluna de papel (escrita/somente-leitura).
+  Validação: teste golden novo
+  (`test_read_only_operator_is_authenticated_but_cannot_write` — RO autentica
+  mas `pode_escrever=False`, RW e loopback seguem `True`) **+ smoke test HTTP
+  8/8** (modo exposto: health público 200; sem token 401; RO → GET 200 /
+  POST 403 / DELETE 403; RW passa do portão de escrita) **+ migração de banco
+  legado validada** (operador pré-existente preservado com `can_write=1`,
+  idempotente). 14 testes no total.
 - **A1** — documentado que o servidor é single-thread de propósito
   (`_ReuseServer`), pra não confundir uma futura migração pra
   `ThreadingHTTPServer`.
@@ -209,7 +229,7 @@ Todos os itens abaixo estão implementados, testados manualmente e/ou via
   não precisam de reescrita de histórico.
   Repositório é **privado** no GitHub (confirmado via API, 404 sem auth).
 
-**Testes:** `tests/test_golden_kpis.py` — 10 testes, `python -m unittest
+**Testes:** `tests/test_golden_kpis.py` — 14 testes, `python -m unittest
 discover -s tests -v`. Roda inteiramente em SQLite temporário, nunca toca
 `inad_database.db`. Cobre: recovery_rate/dedup/somas com fixture pequena
 calculada à mão, validação de data (BR→ISO, formato inválido rejeitado),
@@ -225,7 +245,7 @@ get_kpis_data e get_analytics_data — 1 teste), S6 (`_log_access` grava
 e filtra corretamente em `access_audit` — 1 teste) e o gap residual do
 K2 em `novos_pre_juridico` (grafia diferente entre os dois relatórios
 mais recentes ainda detecta a transição pro corte de 121 dias — 1
-teste). 13 testes no total.
+teste). 14 testes no total.
 
 ## Decisões já tomadas pelo responsável (não perguntar de novo)
 
@@ -242,6 +262,7 @@ teste). 13 testes no total.
 | §4.2 CSRF header | Já resolvido — `X-INAD-Token` custom + `?token=` fallback (ver S1-S3 acima). |
 | §4.10 Auditoria de acesso (S6a) | **Decidido e implementado** — tabela `access_audit` (queryable), não arquivo de log. Loga só `GET /api/clients/profile`. |
 | §4.10 Criptografia at-rest (S6b) | **Decidido: não implementar.** Confiar na criptografia de disco do SO (FileVault/BitLocker) em vez de SQLCipher. |
+| (extra) Usuário somente-leitura | **Implementado** — coluna `operators.can_write`; operador `--read-only` autentica e faz GET, mas `POST`/`DELETE` retornam 403. |
 
 ## O que falta
 
@@ -258,7 +279,7 @@ lookup (`prev_cf_by_norm`, mesmo padrão usado em `_contact_effectiveness`)
 (`test_name_normalization_applies_to_novos_pre_juridico`) trava o critério:
 mesma pessoa, grafia diferente entre os dois relatórios, cruzando o corte
 de 121 dias entre um relatório e outro, tem que aparecer em
-`novos_pre_juridico`. 13 testes no total (`tests/test_golden_kpis.py`).
+`novos_pre_juridico`. 14 testes no total (`tests/test_golden_kpis.py`).
 Nenhuma outra mudança de comportamento.
 
 Se surgir algo novo, seguir o mesmo padrão: decisão do responsável primeiro

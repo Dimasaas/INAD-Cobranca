@@ -51,6 +51,15 @@ def _import_report(name, date, clients):
     return report_id
 
 
+class _FakeHandler:
+    """Handler mínimo para exercitar run._authenticate() sem subir um servidor
+    HTTP: só precisa de .headers.get('X-INAD-Token') e .path (ver
+    run._request_token/_authenticate)."""
+    def __init__(self, token="", path="/api/reports"):
+        self.path = path
+        self.headers = {"X-INAD-Token": token} if token else {}
+
+
 def _generate_synthetic_reports(rng, n_reports=10, pool_size=30):
     """Gera uma série determinística de relatórios mensais com churn de
     clientes (alguns saem, alguns entram a cada mês), só para ter volume
@@ -544,6 +553,42 @@ class GoldenKPITests(unittest.TestCase):
             "SELECT COUNT(*) FROM access_audit WHERE client_name = ?", ("FULANO DE TAL",)
         ).fetchone()[0]
         self.assertEqual(only_fulano, 2)
+
+    def test_read_only_operator_is_authenticated_but_cannot_write(self):
+        """Papel somente-leitura: _authenticate() reconhece o token do operador
+        (autorizado=True) mas sinaliza pode_escrever=False — do_POST/do_DELETE
+        usam esse sinal para responder 403. Operador de escrita e o bind
+        loopback continuam com pode_escrever=True (sem regressão)."""
+        rw_token = run._add_operator("Operador Escrita")
+        ro_token = run._add_operator("Operador Leitura", can_write=False)
+
+        # Força o caminho de autenticação (fora de loopback), restaurando o
+        # HOST depois — em loopback _authenticate() curto-circuita antes do token.
+        original_host = run.HOST
+        run.HOST = "192.168.0.10"
+        try:
+            ok, name, can_write = run._authenticate(_FakeHandler(rw_token))
+            self.assertTrue(ok)
+            self.assertEqual(name, "Operador Escrita")
+            self.assertTrue(can_write)
+
+            ok, name, can_write = run._authenticate(_FakeHandler(ro_token))
+            self.assertTrue(ok)                       # autenticado normalmente
+            self.assertEqual(name, "Operador Leitura")
+            self.assertFalse(can_write)               # mas não pode escrever
+
+            ok, name, can_write = run._authenticate(_FakeHandler("token-invalido"))
+            self.assertFalse(ok)
+            self.assertFalse(can_write)
+        finally:
+            run.HOST = original_host
+
+        # Bind loopback (padrão local): dono da máquina sempre pode escrever,
+        # sem exigir token nem papel.
+        self.assertTrue(run._is_loopback_bind())
+        ok, name, can_write = run._authenticate(_FakeHandler(""))
+        self.assertTrue(ok)
+        self.assertTrue(can_write)
 
 
 class LargeDatasetReconciliationTests(unittest.TestCase):

@@ -10,6 +10,7 @@ Uso:
 
 Padrão: bind em 127.0.0.1 (só local), sem autenticação. Para expor na rede:
   INAD_HOST=0.0.0.0 python3 run.py --add-operator "Nome"   → cadastra operador (uma vez)
+  python3 run.py --add-operator "Nome" --read-only         → operador só-leitura (POST/DELETE = 403)
   INAD_HOST=0.0.0.0 python3 run.py                          → sobe exigindo token
   python3 run.py --list-operators / --revoke-operator "Nome"
 """
@@ -245,7 +246,11 @@ def init_db():
             name       TEXT    NOT NULL UNIQUE,
             token_hash TEXT    NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            active     INTEGER NOT NULL DEFAULT 1
+            active     INTEGER NOT NULL DEFAULT 1,
+            -- Papel de escrita. can_write=0 → operador somente-leitura: é
+            -- autenticado normalmente e pode fazer GET, mas POST/DELETE
+            -- retornam 403 (ver _authenticate()/do_POST/do_DELETE).
+            can_write  INTEGER NOT NULL DEFAULT 1
         );
 
         -- 9. Auditoria de acesso a PII individual (S6) — quem consultou o
@@ -291,6 +296,16 @@ def init_db():
         cursor.execute("ALTER TABLE parcels ADD COLUMN valor_centavos INTEGER DEFAULT 0")
         cursor.execute("UPDATE parcels SET valor_centavos = CAST(ROUND(valor * 100) AS INTEGER)")
         print("[MIGRAÇÃO] Coluna valor_centavos adicionada e populada a partir de valor (R$ → centavos).")
+
+    # Migração: papel somente-leitura de operador (can_write). A coluna nasce
+    # com DEFAULT 1, então todo operador já cadastrado num banco legado
+    # continua com acesso de escrita — nenhuma mudança de comportamento na
+    # migração; o papel restrito só existe para operadores criados de
+    # propósito com --add-operator ... --read-only.
+    existing_operator_cols = {row[1] for row in cursor.execute("PRAGMA table_info(operators)")}
+    if "can_write" not in existing_operator_cols:
+        cursor.execute("ALTER TABLE operators ADD COLUMN can_write INTEGER NOT NULL DEFAULT 1")
+        print("[MIGRAÇÃO] Coluna can_write adicionada à tabela operators (papel somente-leitura).")
 
     conn.commit()
 
@@ -376,17 +391,19 @@ def _hash_token(token):
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def _add_operator(name):
+def _add_operator(name, can_write=True):
     """Cria um operador novo com um token aleatório. Retorna o token em claro
-    (só existe neste retorno — não fica gravado em lugar nenhum)."""
+    (só existe neste retorno — não fica gravado em lugar nenhum).
+    can_write=False cria um operador somente-leitura (pode GET, mas POST/DELETE
+    retornam 403 — ver _authenticate())."""
     name = name.strip()
     if not name:
         raise ValueError("Nome do operador não pode ser vazio.")
     token = secrets.token_urlsafe(32)
     conn = get_conn()
     conn.execute(
-        "INSERT INTO operators (name, token_hash, active) VALUES (?, ?, 1)",
-        (name, _hash_token(token)),
+        "INSERT INTO operators (name, token_hash, active, can_write) VALUES (?, ?, 1, ?)",
+        (name, _hash_token(token), 1 if can_write else 0),
     )
     conn.commit()
     return token
@@ -394,9 +411,12 @@ def _add_operator(name):
 
 def _list_operators():
     rows = get_conn().cursor().execute(
-        "SELECT name, created_at, active FROM operators ORDER BY created_at"
+        "SELECT name, created_at, active, can_write FROM operators ORDER BY created_at"
     ).fetchall()
-    return [{"name": r[0], "created_at": r[1], "active": bool(r[2])} for r in rows]
+    return [
+        {"name": r[0], "created_at": r[1], "active": bool(r[2]), "can_write": bool(r[3])}
+        for r in rows
+    ]
 
 
 def _revoke_operator(name):
@@ -1662,26 +1682,29 @@ def _request_token(handler):
 
 
 def _authenticate(handler):
-    """Retorna (autorizado: bool, operador: str|None).
-    Em bind loopback (padrão local), sempre autorizado — autenticação só é
-    exigida quando o servidor está exposto além de localhost (ver
-    _is_loopback_bind() e a checagem de boot em __main__)."""
+    """Retorna (autorizado: bool, operador: str|None, pode_escrever: bool).
+    Em bind loopback (padrão local), sempre autorizado com escrita — o dono da
+    máquina tem acesso total; autenticação/papel só são exigidos quando o
+    servidor está exposto além de localhost (ver _is_loopback_bind() e a
+    checagem de boot em __main__). Operador com can_write=0 é autenticado
+    normalmente (pode GET) mas volta pode_escrever=False — do_POST/do_DELETE
+    usam esse sinal para responder 403."""
     if _is_loopback_bind():
-        return True, "local"
+        return True, "local", True
     path = handler.path.split("?")[0]
     if path in _PUBLIC_PATHS:
-        return True, None
+        return True, None, True
     token = _request_token(handler)
     if not token:
-        return False, None
+        return False, None, False
     token_hash = _hash_token(token)
     rows = get_conn().cursor().execute(
-        "SELECT name, token_hash FROM operators WHERE active = 1"
+        "SELECT name, token_hash, can_write FROM operators WHERE active = 1"
     ).fetchall()
-    for name, stored_hash in rows:
+    for name, stored_hash, can_write in rows:
         if hmac.compare_digest(token_hash, stored_hash):
-            return True, name
-    return False, None
+            return True, name, bool(can_write)
+    return False, None, False
 
 
 def _log_access(conn, operator, client_name):
@@ -1744,7 +1767,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         e gravar o rastreamento completo (stack trace) no arquivo 'inad_errors.log'.
         """
         try:
-            ok, operator = _authenticate(self)
+            ok, operator, _can_write = _authenticate(self)
             if not ok:
                 _json_response(self, {"error": "Não autorizado"}, 401)
                 return
@@ -2519,9 +2542,12 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         Implementa um wrapper global de tratamento de erros que registra falhas críticas no log persistente.
         """
         try:
-            ok, operator = _authenticate(self)
+            ok, operator, can_write = _authenticate(self)
             if not ok:
                 _json_response(self, {"error": "Não autorizado"}, 401)
+                return
+            if not can_write:
+                _json_response(self, {"error": "Operador somente-leitura: edição não permitida"}, 403)
                 return
             self.operator_name = operator
             self._do_POST_unwrapped()
@@ -2679,9 +2705,12 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         Exclui relatórios ou desfechos de contato, registrando qualquer falha no log persistente.
         """
         try:
-            ok, operator = _authenticate(self)
+            ok, operator, can_write = _authenticate(self)
             if not ok:
                 _json_response(self, {"error": "Não autorizado"}, 401)
+                return
+            if not can_write:
+                _json_response(self, {"error": "Operador somente-leitura: edição não permitida"}, 403)
                 return
             self.operator_name = operator
             self._do_DELETE_unwrapped()
@@ -2801,12 +2830,15 @@ if __name__ == "__main__":
     if "--add-operator" in sys.argv:
         _idx = sys.argv.index("--add-operator")
         _name = sys.argv[_idx + 1] if _idx + 1 < len(sys.argv) else None
-        if not _name:
-            print('Uso: python run.py --add-operator "Nome do operador"')
+        if not _name or _name.startswith("--"):
+            print('Uso: python run.py --add-operator "Nome do operador" [--read-only]')
             sys.exit(1)
+        # --read-only: operador só pode GET; POST/DELETE respondem 403.
+        _can_write = "--read-only" not in sys.argv
         init_db()
-        _token = _add_operator(_name)
-        print(f"Operador '{_name}' criado.")
+        _token = _add_operator(_name, can_write=_can_write)
+        _role = "leitura+escrita" if _can_write else "SOMENTE-LEITURA"
+        print(f"Operador '{_name}' criado ({_role}).")
         print("Token (guarde em local seguro — não será exibido de novo):")
         print(f"  {_token}")
         print(f"\nUso pelo operador: header 'X-INAD-Token: {_token}' ou ?token={_token} na URL.")
@@ -2820,7 +2852,8 @@ if __name__ == "__main__":
         else:
             for _op in _ops:
                 _status = "ativo" if _op["active"] else "revogado"
-                print(f"  {_op['name']:<30} {_status:<10} criado em {_op['created_at']}")
+                _role = "escrita" if _op["can_write"] else "somente-leitura"
+                print(f"  {_op['name']:<30} {_status:<10} {_role:<16} criado em {_op['created_at']}")
         sys.exit(0)
 
     if "--revoke-operator" in sys.argv:
