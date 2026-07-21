@@ -29,6 +29,8 @@ kpi_exclusions.json
 *.pdf
 inad_database.db
 *.db
+*.db.bak*
+*.bak
 *.db-shm
 *.db-wal
 *.db-journal

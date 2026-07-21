@@ -10,6 +10,8 @@ Este documento descreve a arquitetura, regras de negócio, esquema de banco de d
 
 O projeto é um painel de cobrança para regularização de clientes inadimplentes, alimentado por relatórios do ERP de construtoras **ProUAU**. Ele permite importar relatórios em PDF de atrasos, extrair os dados cadastrais (clientes, imóveis e parcelas com valores em R$), gerar mensagens de cobrança pré-formatadas para o WhatsApp e monitorar os KPIs de recuperação de forma cronológica — incluindo uma página dedicada de **Analytics** com segmentação de clientes novos/antigos e filtros por período.
 
+> **Objetivo do produto:** o propósito da ferramenta é **diminuir a inadimplência** — não apenas medi-la. Toda feature de KPI/risco/fila de priorização (`risk_score`, `/api/queue`, `contact_outcomes`) existe para tornar a cobrança mais efetiva e reduzir o saldo em atraso ao longo do tempo. Ao gerar dados de teste ou avaliar melhorias, o critério de sucesso é esse: mais recuperação (`pagou`), resolução mais rápida, e (quando os dados permitirem) queda do total inadimplente — não só mais atividade registrada.
+
 ---
 
 ## 🏗️ Arquitetura do Software e Fluxo de Dados
