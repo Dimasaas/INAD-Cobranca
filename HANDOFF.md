@@ -1,4 +1,4 @@
-# HANDOFF — continuidade da revisão de segurança/corretude (INAD v3.2.0)
+# HANDOFF — continuidade do trabalho (INAD V5.0)
 
 > **Por que este arquivo existe:** este projeto está no meio de uma revisão de
 > segurança e corretude de KPI conduzida com um assistente de IA (Claude
@@ -13,6 +13,50 @@
 > local da máquina onde a sessão começou — **não está neste repositório** e
 > pode não estar acessível numa máquina nova. Este documento resume tudo que
 > importa dessa auditoria; não é preciso ir atrás do arquivo original.
+
+## ▶️ RESUMA AQUI (estado em 2026-07-21 — INAD V5.0)
+
+> Leitura de arranque: `CLAUDE.md` → `PLAN.md` → **este bloco**. Depois, se
+> precisar de detalhe, o resto deste arquivo (auditoria de segurança/KPI).
+
+**Onde o trabalho está:**
+- Branch **`feat/plano-kpi-e-correcoes`**, **PR #3** (draft, aberto, **ainda NÃO mergeado**).
+- Tag **`v5.0.0`** no commit `2b05139` (release marker). A `main` ainda está em
+  `90b104b` (pré-V5.0) — **o V5.0 só entra na `main` quando o PR #3 for mergeado**.
+- Repo (privado): `github.com/Dimasaas/INAD-Cobranca`. Dev em 2 máquinas
+  (Mac + Windows) — **a branch/PR no GitHub é a fonte de verdade**, não o disco local.
+
+**Concluído nesta branch (V5.0):**
+- **K2** — normalização de nome na identidade entre relatórios (exibição preservada).
+- **K7** — precisão monetária em centavos inteiros (migração idempotente; API em reais).
+- **Documentação de KPIs** — `inad_kpis_docs.html` + botão 📖 + tooltips.
+- **PLAN.md** (roadmap produto/KPI) e **`.gitignore`** blindado contra `*.db.bak*` (PII).
+- Validação: **9/9 testes golden**; migração K7 conferida em cópia do banco real
+  (3482 parcelas, diff R$ 0,00); smoke ao vivo da página de docs (200/302/404).
+- Ambiente: **Python 3.14** no Windows.
+
+**Próximos passos (em ordem):**
+1. **Revisar e mergear o PR #3** na `main` (draft → ready → merge).
+   ⚠️ **Deploy do K7:** a migração faz `ALTER TABLE` — **parar o servidor INAD de
+   produção antes de subir o código novo** (o servidor rodando segura o lock do
+   SQLite). Ao reiniciar, a coluna `valor_centavos` é criada e retropreenchida sozinha.
+2. **Decisões pendentes do responsável** (NÃO executar sem decisão — ver seções abaixo):
+   - **S6** — auditoria de acesso / criptografia at-rest (SQLCipher impacta o
+     empacotamento PyInstaller `INAD_Cobranca.spec`). Marcado "não decidido".
+   - **K6** — redefinir `recovery_rate` ("sumiu do relatório" vs. exigir sinal de
+     pagamento/outcome). Decisão de negócio.
+3. **Item opcional (melhoria de KPI):** sinal de **recuperabilidade** na fila —
+   ranquear por "onde o contato mais muda o resultado", não só pela maior dívida
+   (base já existe em `response_behavior` de `/api/clients/profile`). Ver `PLAN.md` §2.
+
+**Como retomar barato (sessão Sonnet nova):**
+1. Ler `CLAUDE.md` → `PLAN.md` → este bloco (não reler `run.py` inteiro — ir por
+   busca aos pontos citados).
+2. `python -m unittest discover -s tests -v` **antes** de mexer (deve dar 9/9).
+3. Um item por sessão, escopo mínimo; rodar a suíte de novo depois.
+4. **Atualizar este bloco** (estado + próximos passos) ao terminar cada item.
+
+---
 
 ## Contexto do projeto
 
