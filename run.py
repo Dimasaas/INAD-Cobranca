@@ -914,8 +914,13 @@ def _get_worklist_data(cursor, ref_date):
         prev_report_date = latest_ids[1][1]
 
     prev_cf = {}
+    prev_cf_by_norm = {}
     if prev_report_id:
         prev_cf = _client_financials(cursor, prev_report_id, prev_report_date)
+        # K2: chave também por identidade normalizada, pra "novos_pre_juridico"
+        # detectar a transição mesmo se a grafia do nome mudou entre os dois
+        # relatórios mais recentes (mesmo padrão de _contact_effectiveness).
+        prev_cf_by_norm = {_normalize_name(n): v for n, v in prev_cf.items()}
 
     promessas_vencidas = []
     recontato_agendado = []
@@ -1015,7 +1020,7 @@ def _get_worklist_data(cursor, ref_date):
         # 4) Novos Pré-Jurídico
         if cf["max_days_overdue"] > PREJURIDICO_DAYS:
             if prev_report_id:
-                prev_cf_client = prev_cf.get(name)
+                prev_cf_client = prev_cf_by_norm.get(_normalize_name(name))
                 if prev_cf_client and prev_cf_client["max_days_overdue"] <= PREJURIDICO_DAYS:
                     item = dict(queue_row)
                     item["entered_bucket"] = True

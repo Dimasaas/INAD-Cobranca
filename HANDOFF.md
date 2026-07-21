@@ -221,8 +221,11 @@ recovery_rate/exclusões/reentradas — 3 testes), K7 (soma cent-exata com
 valores classicamente sujeitos a drift em float, incluindo o caminho
 novo+antigo do Analytics — 1 teste), K6 (recovery_rate inalterado +
 recovery_rate_confirmed reflete só quem tem 'pagou' registrado, em
-get_kpis_data e get_analytics_data — 1 teste) e S6 (`_log_access` grava
-e filtra corretamente em `access_audit` — 1 teste). 12 testes no total.
+get_kpis_data e get_analytics_data — 1 teste), S6 (`_log_access` grava
+e filtra corretamente em `access_audit` — 1 teste) e o gap residual do
+K2 em `novos_pre_juridico` (grafia diferente entre os dois relatórios
+mais recentes ainda detecta a transição pro corte de 121 dias — 1
+teste). 13 testes no total.
 
 ## Decisões já tomadas pelo responsável (não perguntar de novo)
 
@@ -240,25 +243,27 @@ e filtra corretamente em `access_audit` — 1 teste). 12 testes no total.
 | §4.10 Auditoria de acesso (S6a) | **Decidido e implementado** — tabela `access_audit` (queryable), não arquivo de log. Loga só `GET /api/clients/profile`. |
 | §4.10 Criptografia at-rest (S6b) | **Decidido: não implementar.** Confiar na criptografia de disco do SO (FileVault/BitLocker) em vez de SQLCipher. |
 
-## O que falta (nesta ordem sugerida)
-
-### 1. Gap residual do K2 — "novos_pre_juridico" (opcional, baixo impacto)
-
-`_get_worklist_data()` categoriza a transição pra pré-jurídico comparando
-`prev_cf.get(name)` (nome exato do relatório anterior, não normalizado).
-Se a grafia do cliente mudar exatamente entre os dois relatórios mais
-recentes, essa categoria específica da worklist pode não detectar a
-transição (o cliente ainda aparece em `queue`/no relatório normal, só não
-é sinalizado como "acabou de entrar no pré-jurídico"). Não estava no
-checklist original do K2 e tem impacto baixo — mas se for mexer em
-`_get_worklist_data()` de novo, considere normalizar essa comparação
-também (mesmo padrão usado em `_contact_effectiveness`).
+## O que falta
 
 Não há mais nenhum item do plano original (K1-K10/S1-S9) sem decisão ou
-sem implementação — só este gap residual opcional acima. Se surgir algo
-novo, seguir o mesmo padrão: decisão do responsável primeiro (perguntar
-as opções, nunca assumir), depois implementação + teste golden + smoke
-test manual, e por fim atualizar este arquivo.
+sem implementação.
+
+**Gap residual do K2 — "novos_pre_juridico" (RESOLVIDO em 2026-07-20.)**
+`_get_worklist_data()` categorizava a transição pra pré-jurídico comparando
+`prev_cf.get(name)` (nome exato do relatório anterior, não normalizado), o
+que podia deixar de detectar a transição se a grafia do cliente mudasse
+entre os dois relatórios mais recentes. Corrigido normalizando a chave do
+lookup (`prev_cf_by_norm`, mesmo padrão usado em `_contact_effectiveness`)
+— `name` também é normalizado antes de consultar. Teste golden novo
+(`test_name_normalization_applies_to_novos_pre_juridico`) trava o critério:
+mesma pessoa, grafia diferente entre os dois relatórios, cruzando o corte
+de 121 dias entre um relatório e outro, tem que aparecer em
+`novos_pre_juridico`. 13 testes no total (`tests/test_golden_kpis.py`).
+Nenhuma outra mudança de comportamento.
+
+Se surgir algo novo, seguir o mesmo padrão: decisão do responsável primeiro
+(perguntar as opções, nunca assumir), depois implementação + teste golden +
+smoke test manual, e por fim atualizar este arquivo.
 
 ## Como verificar depois de qualquer mudança
 

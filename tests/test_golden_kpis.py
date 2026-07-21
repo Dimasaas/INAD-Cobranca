@@ -362,6 +362,40 @@ class GoldenKPITests(unittest.TestCase):
             [t["present"] for t in info["timeline"]], [True, False, True]
         )
 
+    def test_name_normalization_applies_to_novos_pre_juridico(self):
+        """K2 (gap residual documentado no HANDOFF): a detecção de 'novos
+        pré-jurídico' em _get_worklist_data() comparava prev_cf.get(name) com
+        o nome exato do relatório anterior — se a grafia mudasse entre os
+        dois relatórios mais recentes, a transição podia não ser detectada.
+        Mesmo cliente, grafia diferente entre os dois relatórios, tem que
+        aparecer em 'novos_pre_juridico' quando cruza o corte de 121 dias."""
+        _import_report("Relatorio 1", "2026-01-01", {
+            # 31 dias de atraso em 2026-01-01: ainda não é pré-jurídico (<=120)
+            "JOSE DA SILVA": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "01/12/2025",
+                     "vencimento_full": "2025-12-01", "valor": 800.0},
+                ]}],
+            },
+        })
+        _import_report("Relatorio 2", "2026-06-01", {
+            # mesma pessoa (identidade via K2), com acento; 151 dias de atraso
+            # em 2026-06-01: cruzou o corte de pré-jurídico (>120)
+            "JOSÉ DA SILVA": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [{"venda_id": "V1", "identifier": "Lote 1", "parcels": [
+                    {"parcela": "1/1", "vencimento": "01/01/2026",
+                     "vencimento_full": "2026-01-01", "valor": 800.0},
+                ]}],
+            },
+        })
+
+        cursor = run.get_conn().cursor()
+        worklist = run._get_worklist_data(cursor, "2026-06-01")
+        names = {item["name"] for item in worklist["novos_pre_juridico"]}
+        self.assertEqual(names, {"JOSÉ DA SILVA"})
+
     def test_monetary_totals_are_cent_exact(self):
         """K7: soma de parcelas com valores classicamente sujeitos a drift de
         ponto flutuante em float puro (0.10 + 0.20 == 0.30000000000000004)
