@@ -230,6 +230,18 @@ não adicionar isso em loops muito grandes sem necessidade.
   que a soma bate exatamente ao centavo (esse é o critério de aceitação
   original do achado K7).
 
+### Feature nova — Documentação de KPIs (📖)  ✅ CONCLUÍDO (branch `feat/plano-kpi-e-correcoes`)
+
+> Pedido do responsável, fora do backlog original de auditoria. **Feito:**
+> página estática self-contained `inad_kpis_docs.html` (o que cada KPI mede,
+> fórmula e interpretação — **sem PII**), servida via `_STATIC_ALLOWLIST` +
+> rotas amigáveis `/kpis-docs`, `/ajuda`, `/docs`; botão "📖 Entenda os KPIs"
+> no painel principal (`inad_template.html`, recompilado com
+> `add_pdf_importer.py`) e na página de Analytics; tooltips (`title=`) +
+> deep-links nos cards de KPI. Não altera nenhum número (9/9 testes seguem
+> passando). Smoke ao vivo numa cópia do banco: docs 200, `/kpis-docs` 302,
+> `/run.py` 404 (hardening intacto).
+
 ### 3. K6 — `recovery_rate` (mantido como está por enquanto — não mexer)
 
 Não implementar sem decisão explícita nova. Está documentado como

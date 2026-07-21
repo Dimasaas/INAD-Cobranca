@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="INAD — Guia de metodologia dos KPIs: fórmulas, interpretação e uso na redução da inadimplência. Sem dados de clientes.">
+<meta name="robots" content="noindex, nofollow">
+<title>INAD — Entenda os KPIs</title>
+<style>
+:root{
+  --bg:#0d0f14; --bg2:#13161d; --bg3:#1a1e28; --card:#181c26;
+  --border:#252b3b; --border2:#2e3650;
+  --accent:#4f8dff; --accent2:#6c63ff;
+  --green:#22c55e; --green-bg:rgba(34,197,94,.1);
+  --red:#ef4444; --red-bg:rgba(239,68,68,.08);
+  --purple:#a855f7; --purple-bg:rgba(168,85,247,.1);
+  --amber:#f59e0b; --amber-bg:rgba(245,158,11,.1);
+  --text:#e8eaf0; --text2:#9ba3bb; --text3:#636b85;
+  --r:14px; --r2:8px;
+  --sh:0 4px 24px rgba(0,0,0,.4);
+}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{font-family:'Inter','Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px;line-height:1.65}
+
+/* ── TOPBAR ─────────────────────────────────────────────────────────────── */
+.topbar{position:sticky;top:0;z-index:100;background:rgba(13,15,20,.92);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border-bottom:1px solid var(--border);padding:0 24px;display:flex;align-items:center;gap:14px;height:64px;flex-wrap:wrap}
+.logo{display:flex;align-items:center;gap:10px;font-weight:700;font-size:15px;white-space:nowrap}
+.logo-icon{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));display:flex;align-items:center;justify-content:center;font-size:18px;flex:none}
+.logo-sub{font-size:11px;color:var(--text3);font-weight:400}
+.back-links{display:flex;gap:8px;margin-left:auto;flex-wrap:wrap}
+.back-link{color:var(--text2);text-decoration:none;font-size:13px;font-weight:600;padding:7px 14px;border:1px solid var(--border);border-radius:var(--r2);transition:all .15s;white-space:nowrap}
+.back-link:hover{color:var(--accent);border-color:var(--accent)}
+
+/* ── CONTEÚDO ───────────────────────────────────────────────────────────── */
+.wrap{max-width:980px;margin:0 auto;padding:28px 24px 60px}
+
+.hero{background:linear-gradient(135deg,rgba(79,141,255,.10),rgba(108,99,255,.06));border:1px solid var(--border2);border-radius:var(--r);padding:22px 24px;margin-bottom:22px}
+.hero h1{font-size:21px;font-weight:800;margin-bottom:8px;display:flex;align-items:center;gap:10px}
+.hero p{color:var(--text2);font-size:13.5px;margin-top:6px}
+.hero .north-star{color:var(--text);font-weight:700}
+.meta-note{display:inline-flex;align-items:center;gap:7px;margin-top:14px;font-size:12px;font-weight:700;color:var(--green);background:var(--green-bg);border:1px solid rgba(34,197,94,.35);border-radius:20px;padding:6px 13px}
+
+/* índice / TOC */
+.toc{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:28px}
+.toc a{color:var(--text2);text-decoration:none;font-size:12.5px;font-weight:600;padding:7px 13px;border:1px solid var(--border);border-radius:20px;background:var(--bg3);transition:all .15s}
+.toc a:hover{color:var(--accent);border-color:var(--accent)}
+
+/* cards de KPI */
+.kpi-card{background:var(--card);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:var(--r);padding:22px 24px;margin-bottom:18px;scroll-margin-top:78px}
+.kpi-card.c-blue{border-left-color:var(--accent)}
+.kpi-card.c-green{border-left-color:var(--green)}
+.kpi-card.c-purple{border-left-color:var(--purple)}
+.kpi-card.c-amber{border-left-color:var(--amber)}
+.kpi-card.c-red{border-left-color:var(--red)}
+
+.kpi-card h2{font-size:17px;font-weight:800;display:flex;align-items:center;gap:9px;margin-bottom:4px}
+.kpi-tag{font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin-bottom:14px}
+
+.kpi-card h3{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--text3);margin:16px 0 6px}
+.kpi-card h3:first-of-type{margin-top:4px}
+.kpi-card p{color:var(--text2);font-size:13.5px}
+.kpi-card ul{color:var(--text2);font-size:13.5px;margin-left:18px;margin-top:2px}
+.kpi-card ul li{margin-bottom:4px}
+.kpi-card code{background:var(--bg3);border:1px solid var(--border);border-radius:5px;padding:1px 6px;font-family:'Consolas','Courier New',monospace;font-size:12.5px;color:var(--text)}
+
+.formula-box{background:var(--bg3);border:1px solid var(--border2);border-radius:var(--r2);padding:14px 16px;font-family:'Consolas','Courier New',monospace;font-size:13px;color:var(--text);overflow-x:auto;white-space:pre;line-height:1.9}
+.formula-box .op{color:var(--accent)}
+.formula-box .comp{color:var(--purple)}
+
+.interpret-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:6px}
+@media (max-width:640px){.interpret-grid{grid-template-columns:1fr}}
+.interpret-box{border-radius:var(--r2);padding:10px 13px;font-size:12.5px}
+.interpret-good{background:var(--green-bg);border:1px solid rgba(34,197,94,.3);color:var(--text)}
+.interpret-bad{background:var(--red-bg);border:1px solid rgba(239,68,68,.3);color:var(--text)}
+.interpret-box b{display:block;font-size:11px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:3px}
+.interpret-good b{color:var(--green)}
+.interpret-bad b{color:var(--red)}
+
+.limitation{background:var(--amber-bg);border:1px solid rgba(245,158,11,.35);border-radius:var(--r2);padding:12px 14px;margin-top:12px;font-size:12.5px;color:var(--text)}
+.limitation b{color:var(--amber)}
+
+.origin{margin-top:14px;font-size:11.5px;color:var(--text3)}
+.origin code{font-size:11px}
+
+.stage-list{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.stage-row{display:flex;align-items:center;gap:12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--r2);padding:9px 13px;font-size:12.5px}
+.stage-pill{font-weight:700;font-size:11.5px;padding:3px 10px;border-radius:20px;white-space:nowrap;min-width:100px;text-align:center}
+.stage-lembrete{background:var(--green-bg);color:var(--green)}
+.stage-firme{background:rgba(79,141,255,.12);color:var(--accent)}
+.stage-serio{background:var(--amber-bg);color:var(--amber)}
+.stage-prejur{background:var(--red-bg);color:var(--red)}
+.stage-row span.range{color:var(--text3);min-width:90px}
+
+footer{text-align:center;color:var(--text3);font-size:12px;margin-top:30px;padding-top:18px;border-top:1px solid var(--border)}
+footer a{color:var(--accent2);text-decoration:none}
+footer a:hover{text-decoration:underline}
+</style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="logo">
+      <div class="logo-icon">📖</div>
+      <div>
+        Entenda os KPIs
+        <div class="logo-sub">Metodologia — INAD Cobrança</div>
+      </div>
+    </div>
+    <div class="back-links">
+      <a class="back-link" href="inad_whatsapp.html#cobranca">💬 Cobrança</a>
+      <a class="back-link" href="inad_whatsapp.html#kpi">📈 KPIs</a>
+      <a class="back-link" href="inad_analytics.html">🔬 Analytics</a>
+    </div>
+  </div>
+
+  <div class="wrap">
+
+    <div class="hero">
+      <h1>📖 Entenda os KPIs — INAD</h1>
+      <p><span class="north-star">A ferramenta existe para REDUZIR a inadimplência — não apenas medi-la.</span>
+      Cada métrica documentada abaixo só importa na medida em que ajuda a decidir uma ação concreta de cobrança
+      (quem contatar, quando, e com que urgência) e, no agregado, empurra o saldo em atraso para baixo.</p>
+      <p>Esta página explica, para cada KPI/rótulo do painel e do Analytics: <b>o que mede</b>, a <b>fórmula</b>,
+      <b>como interpretar</b> (o que é bom/ruim) e <b>para que serve</b> na redução da inadimplência.</p>
+      <div class="meta-note">🔒 Metodologia — sem dados de clientes. Nenhuma informação pessoal (PII) nesta página.</div>
+    </div>
+
+    <div class="toc">
+      <a href="#saldo">💰 Saldo em atraso / nº de inadimplentes</a>
+      <a href="#recovery-rate">✅ Taxa de recuperação</a>
+      <a href="#risk-score">🎯 Score de Risco (0–100)</a>
+      <a href="#estagios">📶 Estágios de cobrança</a>
+      <a href="#segmentacao">🆕 Segmentação novo × antigo</a>
+      <a href="#aging">📊 Distribuição por aging</a>
+      <a href="#efetividade">📞 Efetividade de contato</a>
+      <a href="#data-referencia">🗓️ Data de referência do atraso</a>
+    </div>
+
+    <!-- ── 1. SALDO / NORTH STAR ─────────────────────────────────────────── -->
+    <section class="kpi-card c-blue" id="saldo">
+      <div class="kpi-tag">North star (lagging)</div>
+      <h2>💰 Saldo em atraso (R$) / nº de inadimplentes</h2>
+
+      <h3>O que mede</h3>
+      <p>A soma de todos os valores em aberto (R$) e a contagem de clientes com pelo menos uma parcela vencida,
+      no relatório de referência selecionado.</p>
+
+      <h3>Fórmula</h3>
+      <div class="formula-box">Saldo em atraso  = Σ (valor em aberto de cada parcela vencida)
+Nº inadimplentes = COUNT(DISTINCT cliente) com ≥ 1 parcela vencida</div>
+
+      <h3>Como interpretar</h3>
+      <div class="interpret-grid">
+        <div class="interpret-box interpret-good"><b>Bom</b>Saldo e nº de inadimplentes caindo ao longo dos relatórios — a operação está recuperando mais do que gerando inadimplência nova.</div>
+        <div class="interpret-box interpret-bad"><b>Ruim</b>Saldo e/ou nº de inadimplentes subindo relatório após relatório — a cobrança não está acompanhando a entrada de novos casos.</div>
+      </div>
+
+      <h3>Para que serve na redução da inadimplência</h3>
+      <p>É o <b>critério único de sucesso</b> do produto (ver PLAN.md §0). Toda ação registrada no painel — contato,
+      promessa, negociação — só tem valor real se, no agregado, empurra este número para baixo. Qualquer outro KPI
+      é meio, não fim.</p>
+
+      <div class="origin">Origem: <code>/api/summary</code> → <code>current</code> · <code>trend.vs_previous_report</code></div>
+    </section>
+
+    <!-- ── 2. RECOVERY RATE ──────────────────────────────────────────────── -->
+    <section class="kpi-card c-green" id="recovery-rate">
+      <div class="kpi-tag">Resultado (médio)</div>
+      <h2>✅ Taxa de recuperação (<code>recovery_rate</code>)</h2>
+
+      <h3>O que mede</h3>
+      <p>A proporção de clientes que estavam inadimplentes em um relatório e <b>não aparecem mais</b> no relatório
+      seguinte — um proxy de que a lista está "esvaziando" ao longo do tempo.</p>
+
+      <h3>Fórmula</h3>
+      <div class="formula-box">Taxa = <span class="op">(</span>Clientes em R<sub>n</sub> que NÃO aparecem em R<sub>n+1</sub><span class="op">)</span>
+        <span class="op">/</span> <span class="op">(</span>Total de clientes em R<sub>n</sub><span class="op">)</span> <span class="op">×</span> 100</div>
+
+      <h3>Como interpretar</h3>
+      <div class="interpret-grid">
+        <div class="interpret-box interpret-good"><b>Bom</b>Taxa alta e estável/crescente — mais gente saindo da lista de inadimplentes entre um relatório e o próximo.</div>
+        <div class="interpret-box interpret-bad"><b>Ruim</b>Taxa caindo — cada vez menos clientes deixam a lista; sinal de que a cobrança perdeu efetividade ou a base envelheceu.</div>
+      </div>
+
+      <div class="limitation">
+        <b>⚠️ Limitação conhecida (K6):</b> "sumir do relatório seguinte" <b>não é prova de pagamento</b>. O cliente
+        pode ter saído da lista por outros motivos (variação de grafia do nome, mudança na forma de emissão do
+        relatório, exclusão administrativa, etc.). É um indicador indireto (proxy), não um comprovante de
+        regularização. Redefinir este KPI com prova de pagamento real é uma decisão de negócio futura — documentada
+        aqui, mas intencionalmente <b>não alterada</b> nesta versão (o cálculo do <code>recovery_rate</code> permanece
+        intocado).
+      </div>
+
+      <h3>Para que serve na redução da inadimplência</h3>
+      <p>Aponta se o esforço de cobrança está, na prática, esvaziando a lista relatório a relatório. Deve ser lido
+      em conjunto com a Efetividade de contato (<a href="#efetividade">#efetividade</a>) para confirmar se a saída
+      da lista corresponde a uma regularização real.</p>
+
+      <div class="origin">Origem: <code>/api/kpis</code> · <code>/api/summary</code></div>
+    </section>
+
+    <!-- ── 3. RISK SCORE ──────────────────────────────────────────────────── -->
+    <section class="kpi-card c-purple" id="risk-score">
+      <div class="kpi-tag">Leading (controlável na semana)</div>
+      <h2>🎯 Score de Risco (0–100)</h2>
+
+      <h3>O que mede</h3>
+      <p>A prioridade matemática de cobrança de cada cliente inadimitente — quanto maior o score, mais urgente é o
+      contato. É puramente matemático e explicável: os 3 componentes (V/A/R) podem ser mostrados na tela para
+      reforçar a confiança do operador na priorização.</p>
+
+      <h3>Fórmula</h3>
+      <div class="formula-box">Score = <span class="op">45</span>·<span class="comp">V</span> <span class="op">+</span> <span class="op">35</span>·<span class="comp">A</span> <span class="op">+</span> <span class="op">20</span>·<span class="comp">R</span>
+
+<span class="comp">V</span> (Valor)        = min( total_owed / P90_da_carteira , 1 )   — exposição financeira
+<span class="comp">A</span> (Aging)        = min( max_days_overdue / 180 , 1 )        — idade do atraso mais antigo
+<span class="comp">R</span> (Reincidência) = min( reentries / 3 , 1 )                  — nº de reentradas na lista</div>
+
+      <h3>Como interpretar</h3>
+      <div class="interpret-grid">
+        <div class="interpret-box interpret-good"><b>Score alto (perto de 100)</b>Cliente com alta exposição financeira, atraso antigo e/ou reincidente — cobrar primeiro.</div>
+        <div class="interpret-box interpret-bad"><b>Score baixo</b>Exposição menor, atraso recente e sem reincidência — pode aguardar na fila sem grande risco imediato.</div>
+      </div>
+
+      <h3>Para que serve na redução da inadimplência</h3>
+      <p>Ordena a fila de cobrança (<code>/api/queue</code>) — "quem contatar hoje e por quê" — em vez do sócio
+      escolher no olho. Maximiza o retorno do tempo limitado dos 3 sócios, priorizando onde o risco de perda é maior.</p>
+
+      <div class="origin">Origem: <code>/api/queue</code> · componentes V/A/R calculados em <code>run.py</code></div>
+    </section>
+
+    <!-- ── 4. ESTÁGIOS ────────────────────────────────────────────────────── -->
+    <section class="kpi-card c-amber" id="estagios">
+      <div class="kpi-tag">Leading / Guardrail</div>
+      <h2>📶 Estágios de cobrança</h2>
+
+      <h3>O que mede</h3>
+      <p>Em qual "régua" de cobrança um cliente está, com base no tempo máximo de atraso (<code>max_days_overdue</code>).</p>
+
+      <div class="stage-list">
+        <div class="stage-row"><span class="stage-pill stage-lembrete">lembrete</span><span class="range">≤ 30 dias</span> Lembrete amigável.</div>
+        <div class="stage-row"><span class="stage-pill stage-firme">firme</span><span class="range">31–90 dias</span> Cobrança firme.</div>
+        <div class="stage-row"><span class="stage-pill stage-serio">serio</span><span class="range">91–120 dias</span> Cobrança séria.</div>
+        <div class="stage-row"><span class="stage-pill stage-prejur">pre_juridico</span><span class="range">"121+" (&gt;120 dias)</span> Encaminhamento pré-jurídico.</div>
+      </div>
+
+      <h3>Como interpretar</h3>
+      <div class="interpret-grid">
+        <div class="interpret-box interpret-good"><b>Bom</b>Concentração de casos em <code>lembrete</code>/<code>firme</code> — a cobrança está agindo cedo, antes do caso envelhecer.</div>
+        <div class="interpret-box interpret-bad"><b>Ruim</b>Volume crescente entrando em <code>pre_juridico</code> — sinal de que casos não estão sendo resolvidos nos estágios iniciais.</div>
+      </div>
+
+      <div class="limitation">
+        <b>⚖️ Compliance:</b> <code>pre_juridico</code> é apenas uma <b>fila interna de triagem humana</b> — não
+        automatiza nenhum ato jurídico. Os passos formais (notificação via cartório, purga da mora, etc., conforme
+        Lei 9.514/97) são conduzidos por humanos/advogados. Conforme o CDC art. 42, nenhum template — inclusive o de
+        pré-jurídico — pode ameaçar processo, negativação ou perda do imóvel; deve apenas informar que o caso
+        "poderá ser encaminhado ao setor jurídico". Isto não é aconselhamento jurídico.
+      </div>
+
+      <h3>Para que serve na redução da inadimplência</h3>
+      <p>Direciona o tom e a urgência da comunicação por estágio e alimenta o alerta <code>novos_pre_juridico</code>
+      no worklist — quanto menor esse número, melhor o funil está funcionando antes de precisar de escalonamento.</p>
+
+      <div class="origin">Origem: <code>STAGES</code> em <code>run.py</code> · <code>/api/worklist</code></div>
+    </section>
+
+    <!-- ── 5. SEGMENTAÇÃO ─────────────────────────────────────────────────── -->
+    <section class="kpi-card c-blue" id="segmentacao">
+      <div class="kpi-tag">Analítico (Analytics)</div>
+      <h2>🆕 Segmentação novo × antigo</h2>
+
+      <h3>O que mede</h3>
+      <p>Se um cliente é um caso "novo" de inadimplência ou um caso "antigo" (recorrente/crônico), para permitir
+      estratégias de cobrança diferentes por segmento.</p>
+
+      <h3>Fórmula (regra)</h3>
+      <div class="formula-box">first_seen(cliente) = MIN(report_date) do cliente em TODO o histórico
+                       (nome normalizado, CTE "first_seen" em run.py)
+
+Se first_seen(cliente) &gt;= data_de_corte  →  segmento = "novo"
+Senão                                      →  segmento = "antigo"
+
+Corte configurável por: cutoff (data específica) ou cutoff_last_n (últimos N relatórios)</div>
+
+      <div class="limitation">
+        <b>❗ Regra crítica:</b> a primeira aparição (<code>first_seen</code>) é sempre calculada sobre <b>todo o
+        histórico</b> de relatórios, nunca restrita ao filtro de datas selecionado na tela. Se fosse restrita à
+        janela do filtro, clientes antigos apareceriam erroneamente como "novos" ao olhar só um período recente.
+      </div>
+
+      <h3>Como interpretar</h3>
+      <div class="interpret-grid">
+        <div class="interpret-box interpret-good"><b>Segmento "novo"</b>Caso recém-formado — janela de ouro para intervir rápido e evitar que se torne crônico.</div>
+        <div class="interpret-box interpret-bad"><b>Segmento "antigo"</b>Inadimplência recorrente/crônica — geralmente exige abordagem diferente (negociação, escalonamento).</div>
+      </div>
+
+      <h3>Para que serve na redução da inadimplência</h3>
+      <p>Permite comparar a efetividade da cobrança em quem acabou de entrar na lista (onde a ação rápida tem o
+      maior efeito preventivo) contra quem já é recorrente (onde talvez seja preciso um plano diferente).</p>
+
+      <div class="origin">Origem: <code>/api/kpis/analytics</code> · filtros <code>cutoff</code> / <code>cutoff_last_n</code> na página Analytics</div>
+    </section>
+
+    <!-- ── 6. AGING ────────────────────────────────────────────────────────── -->
+    <section class="kpi-card c-red" id="aging">
+      <div class="kpi-tag">Analítico (Analytics)</div>
+      <h2>📊 Distribuição por aging (buckets)</h2>
+
+      <h3>O que mede</h3>
+      <p>Quantas parcelas (e quanto em R$) estão em cada faixa de dias de atraso, agrupadas em 5 buckets:
+      <code>0-30</code>, <code>31-60</code>, <code>61-90</code>, <code>91-120</code>, <code>121+</code>.</p>
+
+      <h3>Fórmula</h3>
+      <div class="formula-box">Para cada bucket B:
+  parcelas(B) = COUNT(parcelas com dias_atraso dentro da faixa de B)
+  valor(B)    = Σ (valor em aberto das parcelas dentro da faixa de B)</div>
+
+      <h3>Como interpretar</h3>
+      <div class="interpret-grid">
+        <div class="interpret-box interpret-good"><b>Bom</b>Massa concentrada nos buckets iniciais (0-30 / 31-60) — atraso recente, mais fácil e barato de recuperar.</div>
+        <div class="interpret-box interpret-bad"><b>Ruim</b>Concentração crescente nos buckets altos (91-120 / 121+) — risco de perda maior, recuperação mais difícil e cara.</div>
+      </div>
+
+      <h3>Para que serve na redução da inadimplência</h3>
+      <p>Prioriza a ação preventiva nos buckets iniciais, onde uma cobrança bem-feita evita que o caso avance para
+      estágios (<a href="#estagios">#estagios</a>) mais caros e difíceis de reverter.</p>
+
+      <div class="origin">Origem: <code>/api/summary</code> → <code>aging_distribution</code> · Analytics</div>
+    </section>
+
+    <!-- ── 7. EFETIVIDADE ─────────────────────────────────────────────────── -->
+    <section class="kpi-card c-green" id="efetividade">
+      <div class="kpi-tag">Resultado (médio) / Leading</div>
+      <h2>📞 Efetividade de contato</h2>
+
+      <h3>O que mede</h3>
+      <p>Se o contato feito com o cliente está de fato convertendo em regularização — e se as promessas de
+      pagamento feitas pelo cliente estão sendo cumpridas.</p>
+
+      <h3>Fórmula</h3>
+      <div class="formula-box">% regulariza após contato = regularized_after_contact / contacted
+
+promises_kept_rate       = promises_kept / promises_made
+                            (com guarda contra divisão por zero — K9)</div>
+
+      <h3>Como interpretar</h3>
+      <div class="interpret-grid">
+        <div class="interpret-box interpret-good"><b>Bom</b>Taxas altas de regularização após contato e de promessas cumpridas — a cobrança está convertendo, não só "empurrando" mensagens.</div>
+        <div class="interpret-box interpret-bad"><b>Ruim</b>Taxas baixas — muito contato feito, pouco resultado; sinal para revisar abordagem, template ou timing, não apenas "cobrar mais".</div>
+      </div>
+
+      <h3>Para que serve na redução da inadimplência</h3>
+      <p>É o termômetro real do ROI do esforço de contato dos sócios. Só existe se <code>contact_outcomes</code> for
+      alimentado (registrar o desfecho de cada contato) — friccionar esse registro é o maior risco de "cegar" este
+      KPI (ver PLAN.md §1.2).</p>
+
+      <div class="origin">Origem: <code>/api/summary</code> → <code>effectiveness</code></div>
+    </section>
+
+    <!-- ── 8. DATA DE REFERÊNCIA ───────────────────────────────────────────── -->
+    <section class="kpi-card c-blue" id="data-referencia">
+      <div class="kpi-tag">Regra transversal</div>
+      <h2>🗓️ Data de referência do atraso</h2>
+
+      <h3>O que mede</h3>
+      <p>Contra qual data os "dias de atraso" (<code>max_days_overdue</code>) de um cliente são calculados — não é
+      um KPI isolado, mas uma regra que afeta todos os outros.</p>
+
+      <h3>Regra</h3>
+      <div class="formula-box">Visão OPERACIONAL (Fila, Worklist, Perfil, Estágios):
+  dias_atraso = HOJE (data local do servidor) − data_vencimento
+
+Visão HISTÓRICA (KPIs, Analytics):
+  dias_atraso = report_date (data de emissão do relatório) − data_vencimento</div>
+
+      <h3>Como interpretar</h3>
+      <div class="interpret-grid">
+        <div class="interpret-box interpret-good"><b>Operacional = hoje</b>A fila sempre mostra quem cobrar agora; débitos continuam acumulando atraso enquanto não houver relatório novo.</div>
+        <div class="interpret-box interpret-bad"><b>Histórico = report_date</b>Números de um relatório antigo não mudam com o tempo — são reprodutíveis e comparáveis entre sessões.</div>
+      </div>
+
+      <p style="margin-top:10px">Por isso o mesmo cliente pode mostrar "dias em atraso" diferentes na fila (hoje)
+      e em um relatório histórico (data do relatório) — isso é <b>esperado e intencional</b>, não um erro de cálculo.</p>
+
+      <h3>Para que serve na redução da inadimplência</h3>
+      <p>Garante que a ação do dia a dia (fila/worklist) esteja sempre atualizada para a decisão de cobrar agora,
+      enquanto a análise histórica (KPIs/Analytics) permanece estável e confiável ao longo do tempo, sem "mudar de
+      ideia" sobre relatórios passados.</p>
+
+      <div class="origin">Origem: regra aplicada em <code>/api/queue</code>, <code>/api/worklist</code>, <code>/api/clients/profile</code> (operacional) vs. <code>/api/kpis</code>, <code>/api/kpis/analytics</code> (histórico)</div>
+    </section>
+
+    <footer>
+      INAD Cobrança · Página de metodologia — nenhum dado de cliente é exibido aqui.
+      Voltar: <a href="inad_whatsapp.html#cobranca">Painel de Cobrança</a> ·
+      <a href="inad_whatsapp.html#kpi">Indicadores (KPIs)</a> ·
+      <a href="inad_analytics.html">Analytics</a>
+    </footer>
+
+  </div>
+
+</body>
+</html>

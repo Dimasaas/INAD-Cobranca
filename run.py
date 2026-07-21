@@ -1629,6 +1629,7 @@ def _authenticate(handler):
 # que de outra forma o SimpleHTTPRequestHandler serviria sem restrição) recebe 404.
 _STATIC_ALLOWLIST = {
     "/inad_template.html", "/inad_whatsapp.html", "/inad_analytics.html",
+    "/inad_kpis_docs.html",
     "/analytics.css", "/analytics.js",
     "/libs/chart.umd.min.js", "/libs/pdf.min.js", "/libs/pdf.worker.min.js",
 }
@@ -1702,6 +1703,8 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             self._redirect("/inad_whatsapp.html#cobranca")
         elif path in ("/analytics", "/analitico"):
             self._redirect("/inad_analytics.html")
+        elif path in ("/kpis-docs", "/ajuda", "/docs"):
+            self._redirect("/inad_kpis_docs.html")
 
         elif path == "/api/reports":
             cursor = get_conn().cursor()

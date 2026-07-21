@@ -300,6 +300,7 @@
     <button class="tab-btn active" id="tab-cobranca" onclick="switchTab('cobranca')">💬 Cobrança</button>
     <button class="tab-btn" id="tab-kpi" onclick="switchTab('kpi')">📈 Indicadores (KPIs)</button>
     <a class="tab-btn" href="inad_analytics.html" style="text-decoration:none" title="Análise avançada com segmentação e filtros por período">🔬 Analytics</a>
+    <a class="tab-btn" href="inad_kpis_docs.html" target="_blank" rel="noopener" style="text-decoration:none" title="Metodologia dos KPIs: fórmulas e como interpretar">📖 Entenda os KPIs</a>
   </div>
   
   <div class="top-actions">
@@ -349,24 +350,24 @@
 <div class="kpi-screen" id="kpi-screen" style="display:none; padding: 22px 24px;">
   <div class="kpi-grid">
     <div class="kpi-card">
-      <div class="kpi-card-title">Taxa de Recuperação Média</div>
+      <div class="kpi-card-title" title="Clientes que saíram da lista entre relatórios ÷ total no relatório. 'Sumir do relatório' não é prova de pagamento — saiba mais na página de KPIs.">Taxa de Recuperação Média ⓘ</div>
       <div class="kpi-card-value" id="kpi-recovery-rate">—</div>
-      <div class="kpi-card-desc">Média de clientes que saíram da lista de inadimplência entre relatórios consecutivos.</div>
+      <div class="kpi-card-desc">Média de clientes que saíram da lista de inadimplência entre relatórios consecutivos. <a href="inad_kpis_docs.html#recovery-rate" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:600">Saiba mais</a></div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-card-title">Total Inadimplente (Atual)</div>
+      <div class="kpi-card-title" title="North-star do produto: soma de todas as parcelas vencidas no relatório selecionado.">Total Inadimplente (Atual) ⓘ</div>
       <div class="kpi-card-value" id="kpi-active-value">—</div>
-      <div class="kpi-card-desc">Soma do valor de todas as parcelas vencidas no último relatório selecionado.</div>
+      <div class="kpi-card-desc">Soma do valor de todas as parcelas vencidas no último relatório selecionado. <a href="inad_kpis_docs.html#saldo" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:600">Saiba mais</a></div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-card-title">Clientes em Atraso (Atual)</div>
+      <div class="kpi-card-title" title="North-star do produto: contagem de clientes com parcelas vencidas no relatório selecionado.">Clientes em Atraso (Atual) ⓘ</div>
       <div class="kpi-card-value" id="kpi-active-clients">—</div>
-      <div class="kpi-card-desc">Total de clientes devedores ativos no último relatório selecionado.</div>
+      <div class="kpi-card-desc">Total de clientes devedores ativos no último relatório selecionado. <a href="inad_kpis_docs.html#saldo" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:600">Saiba mais</a></div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-card-title">Parcelas em Atraso (Atual)</div>
+      <div class="kpi-card-title" title="Concentração em buckets de aging altos indica maior risco de perda.">Parcelas em Atraso (Atual) ⓘ</div>
       <div class="kpi-card-value" id="kpi-active-parcels">—</div>
-      <div class="kpi-card-desc">Total de parcelas vencidas no último relatório selecionado.</div>
+      <div class="kpi-card-desc">Total de parcelas vencidas no último relatório selecionado. <a href="inad_kpis_docs.html#aging" target="_blank" rel="noopener" style="color:var(--accent);text-decoration:none;font-weight:600">Saiba mais</a></div>
     </div>
   </div>
 
