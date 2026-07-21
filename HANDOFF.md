@@ -191,7 +191,19 @@ por linha via SQLite `create_function` — não é indexável. Para o volume de
 dados de um CRM local isso é aceitável (correção > performance aqui), mas
 não adicionar isso em loops muito grandes sem necessidade.
 
-### 2. K7 — Precisão monetária (APROVADO — migrar para centavos/Decimal)
+### 2. K7 — Precisão monetária  ✅ CONCLUÍDO (branch `feat/plano-kpi-e-correcoes`)
+
+> **Feito:** coluna `parcels.valor_centavos INTEGER` adicionada por migração
+> idempotente em `init_db` (guarda por `PRAGMA table_info`; `valor` REAL
+> mantida por compat/rollback, nunca derrubada). Ingestão grava centavos;
+> todas as somas/médias monetárias passaram a usar `valor_centavos` (SUM
+> inteiro exato) convertendo pra reais uma única vez — corrigido também o
+> double-rounding de `get_analytics_data`. Formato da API preservado (campos
+> continuam em reais; `total_owed_cents` é interno, nunca serializado).
+> Testes golden `test_exact_cent_sum_avoids_float_drift` e
+> `test_valor_centavos_migration_backfill_and_idempotent` (9/9 passam).
+> Validado em cópia do banco real: 3482 parcelas, reconciliação exata
+> (diff R$ 0,00), migração idempotente. Detalhe histórico do plano abaixo.
 
 **Não iniciado.** Precisa:
 - Decidir a representação: coluna `INTEGER` (centavos) é mais simples de

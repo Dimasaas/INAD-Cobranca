@@ -14,6 +14,7 @@ import os
 import sys
 import random
 import shutil
+import sqlite3
 import tempfile
 import unittest
 
@@ -351,6 +352,169 @@ class LargeDatasetReconciliationTests(unittest.TestCase):
             self.assertEqual(evo["clients"], s["total"]["clients"])
             self.assertEqual(evo["parcels"], s["total"]["parcels"])
             self.assertAlmostEqual(evo["total_value"], s["total"]["total_value"], places=2)
+
+
+class MonetaryPrecisionTests(unittest.TestCase):
+    """K7 — precisão monetária (centavos inteiros). Trava que somas de
+    dinheiro usam `parcels.valor_centavos` (INTEGER — SUM em SQL é exato) e
+    só convertem pra reais na apresentação, mesmo com muitos valores
+    clássicos de "armadilha" de ponto flutuante binário (0.10, 0.20, 0.30,
+    1.15, 0.01... nenhum destes é exatamente representável em binário)."""
+
+    def setUp(self):
+        self.tmpdir = tempfile.mkdtemp(prefix="inad_k7_exact_")
+        _fresh_db(self.tmpdir, name="k7_exact.db")
+
+    def tearDown(self):
+        if hasattr(run._local, "conn") and run._local.conn is not None:
+            run._local.conn.close()
+            run._local.conn = None
+        shutil.rmtree(self.tmpdir, ignore_errors=True)
+
+    def test_exact_cent_sum_avoids_float_drift(self):
+        """Insere dezenas de parcelas com valores clássicos de drift de
+        float (0.10, 0.20, 0.30, 1.15, 2.20, 0.05, 3.33, 0.01, 9.99, 0.99)
+        distribuídas em 2 clientes/3 imóveis, e confere que o total
+        reportado — via _client_financials (usado por queue/summary/profile)
+        E via get_kpis_data (usado pela aba KPI) — bate EXATO ao centavo com
+        a soma matemática esperada, não uma aproximação."""
+        client_a_values = [0.10] * 12 + [0.20] * 9 + [0.30] * 7 + [1.15] * 5 + [2.20] * 4
+        client_b_values = [0.05] * 8 + [3.33] * 3 + [0.01] * 15 + [9.99] * 2 + [0.99] * 6
+
+        def _parcels(values):
+            return [
+                {"parcela": f"{i + 1}/{len(values)}", "vencimento": "10/01/2026",
+                 "vencimento_full": "2026-01-10", "valor": v}
+                for i, v in enumerate(values)
+            ]
+
+        report_id = _import_report("Relatorio Centavos", "2026-01-01", {
+            "CLIENTE A CENTAVOS": {
+                "cpf_cnpj": "1", "cel": "", "email": "",
+                "properties": [
+                    {"venda_id": "VA1", "identifier": "Lote A1", "parcels": _parcels(client_a_values[:16])},
+                    {"venda_id": "VA2", "identifier": "Lote A2", "parcels": _parcels(client_a_values[16:])},
+                ],
+            },
+            "CLIENTE B CENTAVOS": {
+                "cpf_cnpj": "2", "cel": "", "email": "",
+                "properties": [
+                    {"venda_id": "VB1", "identifier": "Lote B1", "parcels": _parcels(client_b_values)},
+                ],
+            },
+        })
+
+        # Soma exata esperada, calculada em centavos inteiros (mesma lógica
+        # de conversão usada na ingestão real: int(round(valor*100))).
+        expected_a_cents = sum(round(v * 100) for v in client_a_values)
+        expected_b_cents = sum(round(v * 100) for v in client_b_values)
+        expected_a = round(expected_a_cents / 100.0, 2)
+        expected_b = round(expected_b_cents / 100.0, 2)
+        expected_total = round((expected_a_cents + expected_b_cents) / 100.0, 2)
+
+        # Via _client_financials (usado por /api/queue, /api/summary, /api/clients/profile)
+        cursor = run.get_conn().cursor()
+        cf = run._client_financials(cursor, report_id, "2099-12-31")
+        self.assertEqual(cf["CLIENTE A CENTAVOS"]["total_owed"], expected_a)
+        self.assertEqual(cf["CLIENTE B CENTAVOS"]["total_owed"], expected_b)
+        self.assertEqual(cf["CLIENTE A CENTAVOS"]["total_owed_cents"], expected_a_cents)
+        self.assertEqual(cf["CLIENTE B CENTAVOS"]["total_owed_cents"], expected_b_cents)
+
+        # Via get_kpis_data (usado pela aba KPI — total_value do relatório inteiro)
+        kpis = run.get_kpis_data(None)
+        evo = {e["report_name"]: e for e in kpis["evolution"]}
+        self.assertEqual(evo["Relatorio Centavos"]["total_value"], expected_total)
+
+    def test_valor_centavos_migration_backfill_and_idempotent(self):
+        """Monta um banco com o schema ANTIGO (pré-K7: parcels.valor REAL,
+        SEM valor_centavos), roda a migração real (init_db) contra ele, e
+        confere que valor_centavos foi retropreenchido corretamente
+        (= round(valor*100)) — e que rodar a migração uma SEGUNDA vez é
+        no-op (idempotente: valores inalterados, sem erro)."""
+        tmp_dir = tempfile.mkdtemp(prefix="inad_k7_migration_")
+        try:
+            db_path = os.path.join(tmp_dir, "old_schema.db")
+
+            raw = sqlite3.connect(db_path)
+            raw.executescript("""
+                CREATE TABLE reports (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    report_name TEXT    NOT NULL,
+                    report_date TEXT,
+                    imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                );
+                CREATE TABLE clients (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    report_id   INTEGER NOT NULL,
+                    name        TEXT    NOT NULL,
+                    cpf_cnpj    TEXT    DEFAULT '',
+                    cel         TEXT    DEFAULT '',
+                    email       TEXT    DEFAULT ''
+                );
+                CREATE TABLE properties (
+                    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                    client_id   INTEGER NOT NULL,
+                    venda_id    TEXT    NOT NULL,
+                    identifier  TEXT    NOT NULL
+                );
+                CREATE TABLE parcels (
+                    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+                    property_id     INTEGER NOT NULL,
+                    parcela         TEXT    NOT NULL,
+                    vencimento      TEXT    NOT NULL,
+                    vencimento_full TEXT    NOT NULL,
+                    valor           REAL    DEFAULT 0.0
+                );
+            """)
+            raw.execute(
+                "INSERT INTO reports (id, report_name, report_date) VALUES (1, 'Legado', '2026-01-01')"
+            )
+            raw.execute("INSERT INTO clients (id, report_id, name) VALUES (1, 1, 'CLIENTE LEGADO')")
+            raw.execute(
+                "INSERT INTO properties (id, client_id, venda_id, identifier) VALUES (1, 1, 'V1', 'Lote 1')"
+            )
+            # Valores REAL do schema antigo, incluindo casos de arredondamento
+            # não triviais (0.10, 1.15, 0.01, 33.33 não são exatos em binário).
+            legacy_values = [10.0, 0.10, 1.15, 999.99, 0.01, 33.33]
+            for i, v in enumerate(legacy_values):
+                raw.execute(
+                    "INSERT INTO parcels (property_id, parcela, vencimento, vencimento_full, valor) "
+                    "VALUES (1, ?, ?, ?, ?)",
+                    (f"{i + 1}/{len(legacy_values)}", "10/01/2026", "2026-01-10", v),
+                )
+            raw.commit()
+            raw.close()
+
+            # Roda a migração real (init_db) contra este banco no schema antigo.
+            if hasattr(run._local, "conn") and run._local.conn is not None:
+                run._local.conn.close()
+                run._local.conn = None
+            run.DB_PATH = db_path
+            run.init_db()
+
+            cursor = run.get_conn().cursor()
+            cols = {row[1] for row in cursor.execute("PRAGMA table_info(parcels)")}
+            self.assertIn("valor_centavos", cols, "migração K7 não adicionou a coluna valor_centavos")
+
+            rows = cursor.execute("SELECT valor, valor_centavos FROM parcels ORDER BY id").fetchall()
+            self.assertEqual(len(rows), len(legacy_values))
+            for (valor, valor_centavos), expected_v in zip(rows, legacy_values):
+                self.assertEqual(
+                    valor_centavos, round(expected_v * 100),
+                    f"backfill incorreto para valor={expected_v}: esperado "
+                    f"{round(expected_v * 100)} centavos, obtido {valor_centavos}"
+                )
+                self.assertEqual(valor, expected_v, "migração não deve alterar a coluna valor (REAL) legada")
+
+            # Idempotência: rodar a migração de novo não deve alterar nada nem falhar.
+            run.init_db()
+            rows_again = cursor.execute("SELECT valor, valor_centavos FROM parcels ORDER BY id").fetchall()
+            self.assertEqual(rows_again, rows, "segunda execução da migração não é idempotente")
+        finally:
+            if hasattr(run._local, "conn") and run._local.conn is not None:
+                run._local.conn.close()
+                run._local.conn = None
+            shutil.rmtree(tmp_dir, ignore_errors=True)
 
 
 if __name__ == "__main__":
