@@ -32,6 +32,7 @@ import hashlib
 import hmac
 import secrets
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor
 
 # Windows: garante UTF-8 no console/redirecionamento (evita crash do banner
 # com caracteres Unicode sob cp1252)
@@ -169,6 +170,9 @@ def get_conn():
         conn.create_function("normalize_name", 1, _normalize_name)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")   # Leituras paralelas sem lock
+        conn.execute("PRAGMA busy_timeout = 5000")  # Espera até 5s por lock de
+        # escrita em vez de falhar na hora — cobre a rara contenção entre os
+        # (no máx. 2) workers do pool de requisições (ver _ReuseServer).
         _local.conn = conn
     return _local.conn
 
@@ -1732,6 +1736,16 @@ _STATIC_ALLOWLIST = {
 
 
 class INADHandler(http.server.SimpleHTTPRequestHandler):
+    # Timeout de socket por conexão: uma conexão especulativa (preconnect) que
+    # nunca envia a linha de requisição levanta socket.timeout aqui e é
+    # descartada, liberando o worker do pool — sem isso, um pool de poucas
+    # threads congela preso em sockets ociosos (sockets ociosos > nº de workers
+    # travariam todos). Curto de propósito: em localhost/intranet toda
+    # requisição real completa em ms, então 5s nunca descarta ninguém legítimo,
+    # mas garante que um preconnect solte o worker rápido. Ajustável via
+    # INAD_CONN_TIMEOUT.
+    timeout = int(os.environ.get("INAD_CONN_TIMEOUT", 5))
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=DIRECTORY, **kwargs)
 
@@ -2775,17 +2789,33 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 # ─── SERVIDOR ─────────────────────────────────────────────────────────────────
 
 class _ReuseServer(socketserver.TCPServer):
-    """TCPServer com reutilização de porta compatível com Windows e UNIX.
+    """TCPServer com reutilização de porta (Windows/UNIX) e um pool LIMITADO
+    de threads de requisição (padrão 2, configurável via INAD_MAX_WORKERS).
 
-    Deliberadamente NÃO herda socketserver.ThreadingMixIn: o servidor atende
-    uma requisição HTTP por vez (modelo simples, adequado a um CRM local de
-    poucos operadores). O `threading.local`/`check_same_thread=False` na
-    conexão SQLite (get_conn(), acima) existe só porque a thread principal de
-    serve_forever() é distinta da thread de import/setup — não porque
-    múltiplas requisições HTTP rodem concorrentemente. Se algum dia migrar
-    para ThreadingHTTPServer, revisar todo cursor/conexão compartilhado antes
-    (acesso a SQLite não é thread-safe por padrão)."""
+    Por que um pool pequeno — e não single-thread nem ThreadingHTTPServer sem
+    limite: o modelo single-thread original CONGELAVA com navegadores reais.
+    O Chrome abre conexões especulativas (preconnect) que não enviam
+    requisição nenhuma; a thread única bloqueava lendo uma dessas conexões
+    ociosas e travava TODO o resto (pilha de sockets em CLOSE_WAIT, painel
+    inacessível). Um pool fixo de poucos workers elimina o congelamento sem
+    abrir threads ilimitadas (mantém o espírito "CRM local de poucos
+    operadores" do item A1).
+
+    Segurança do SQLite sob concorrência: get_conn() é thread-local (uma
+    conexão por thread — nunca compartilhada entre workers) + WAL (leituras
+    paralelas sem lock) + busy_timeout de 5s (cobre a rara contenção de
+    escrita entre os workers). INADHandler.timeout garante que uma conexão
+    ociosa/preconnect libere seu worker (socket.timeout → conexão descartada)
+    em vez de segurá-lo indefinidamente."""
     allow_reuse_address = (platform.system() != "Windows")
+
+    def __init__(self, *args, max_workers=None, **kwargs):
+        if max_workers is None:
+            max_workers = int(os.environ.get("INAD_MAX_WORKERS", 2))
+        self._pool = ThreadPoolExecutor(
+            max_workers=max(1, max_workers), thread_name_prefix="inad-req"
+        )
+        super().__init__(*args, **kwargs)
 
     def server_bind(self):
         if platform.system() == "Windows":
@@ -2798,6 +2828,25 @@ class _ReuseServer(socketserver.TCPServer):
             except OSError:
                 pass
         super().server_bind()
+
+    def process_request(self, request, client_address):
+        # Entrega a conexão a uma das (no máx.) N threads do pool, em vez de
+        # atender inline na thread do accept-loop (que era o gargalo).
+        self._pool.submit(self._process_request_thread, request, client_address)
+
+    def _process_request_thread(self, request, client_address):
+        try:
+            self.finish_request(request, client_address)
+        except Exception:
+            self.handle_error(request, client_address)
+        finally:
+            self.shutdown_request(request)
+
+    def server_close(self):
+        super().server_close()
+        pool = getattr(self, "_pool", None)
+        if pool is not None:
+            pool.shutdown(wait=False)
 
 
 _httpd = None

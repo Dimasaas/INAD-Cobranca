@@ -198,9 +198,24 @@ Todos os itens abaixo estão implementados, testados manualmente e/ou via
   POST 403 / DELETE 403; RW passa do portão de escrita) **+ migração de banco
   legado validada** (operador pré-existente preservado com `can_write=1`,
   idempotente). 14 testes no total.
-- **A1** — documentado que o servidor é single-thread de propósito
-  (`_ReuseServer`), pra não confundir uma futura migração pra
-  `ThreadingHTTPServer`.
+- **A1 — REVISADO: servidor passou a usar pool LIMITADO de threads (padrão
+  2, `INAD_MAX_WORKERS`).** A decisão original era single-thread de propósito,
+  mas na prática ele **CONGELAVA com navegadores reais**: o Chrome abre
+  conexões especulativas (preconnect) que não enviam requisição, e a thread
+  única bloqueava lendo uma delas, travando todo o painel (pilha de sockets
+  em `CLOSE_WAIT`, `/api/health` sem responder). Correção: `_ReuseServer`
+  agora despacha cada conexão para um `ThreadPoolExecutor(max_workers=2)`;
+  `INADHandler.timeout` (5s, `INAD_CONN_TIMEOUT`) faz um preconnect ocioso
+  soltar o worker em vez de segurá-lo. SQLite sob concorrência já estava
+  pronto: `get_conn()` é thread-local (uma conexão por thread) + WAL +
+  `busy_timeout=5000` (novo, cobre contenção de escrita entre os 2 workers).
+  Validado: suíte golden (14) verde; teste de stress (preconnects ociosos +
+  10 requests paralelos) recupera em todos os cenários — 1 preconnect (uso
+  real) fluido em ~2s, nunca mais congela; e carga real no Chrome renderiza
+  o painel inteiro sem erro de console. **Trade-off do teto de 2 workers:**
+  enchente adversarial de sockets ociosos (> nº de workers) ainda causa
+  lentidão LIMITADA que se recupera após o timeout — aceitável para um CRM
+  local de poucos operadores; suba `INAD_MAX_WORKERS` se precisar de mais.
 - **Modo demo removido por completo** (pedido explícito do responsável,
   "buggy e sem aplicação prática") — sem relação com o plano de auditoria
   original, mas fez parte desta sessão. `generate_demo_data.py` apagado,
