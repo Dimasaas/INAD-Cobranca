@@ -312,3 +312,192 @@ curl http://127.0.0.1:8999/api/health
 
 Sempre rodar a suíte de testes ANTES e DEPOIS de qualquer mudança em K1/K2/
 K4/K6/K7 (afetam números de KPI) — é para isso que ela existe.
+
+---
+
+# UAU — Integração para alimentar dados reais (PLANEJADO / em implementação)
+
+> **Contexto (sessão 2026-07-21):** o banco `inad_database.db` desta máquina
+> Windows estava **vazio** (schema criado, 0 linhas em todas as tabelas). O
+> único caminho de entrada de dados implementado hoje é importar PDF pelo
+> frontend → `POST /api/reports`. O `.env` tem credenciais da **UAU** (ERP da
+> construtora, Senior Cloud) que **nunca foram usadas** — não existe uma linha
+> sequer de código de integração. O responsável decidiu **construir a
+> integração UAU** para popular o banco com dados reais, com sync **agendado**,
+> para **uma empresa específica**, e — ponto central — o relatório precisa
+> **reconstruir o histórico** para os Analytics fazerem sentido desde o dia 1
+> (recovery_rate, segmentação novo/antigo, reentradas e timeline são todos
+> longitudinais: comparam relatórios consecutivos; num banco zerado só com sync
+> diário para frente, ficariam vazios por semanas). Esta seção é o plano
+> durável — implementar seguindo o padrão do projeto (decisão → código → teste
+> golden → smoke test → atualizar este arquivo).
+
+## O que JÁ foi validado ao vivo nesta máquina (não repetir a descoberta)
+
+- **Endpoint alcançável e autenticação FUNCIONA.** `UAU_BASE_URL` no `.env` =
+  `https://gamma-api.seniorcloud.com.br:51910/uauAPI` (ambiente **gamma** =
+  provável homologação — **o responsável ainda vai confirmar se os dados de
+  gamma são reais ou de teste**; se precisar de produção, ele troca a URL/
+  credenciais no `.env`).
+- **Fluxo de auth:** `POST {base}/api/v1.0/Autenticador/AutenticarUsuario`,
+  corpo `{"Login": UAU_USUARIO, "Senha": UAU_SENHA, "UsuarioUAUSite": ""}`,
+  header **`X-INTEGRATION-Authorization`: `UAU_X_INTEGRATION`** (ATENÇÃO: o
+  header é `X-INTEGRATION-Authorization`, NÃO `X-INTEGRATION` — usar o nome
+  errado dá HTTP 500 null-ref em `AutenticadorHandler`). Resposta = um **token
+  JWT** (string). Esse token vai no header **`Authorization`** de TODA chamada
+  seguinte, junto com o `X-INTEGRATION-Authorization` (os dois em todo POST).
+  TLS do host gamma não valida cadeia limpa → usar contexto sem verificação
+  **apenas** para gamma; revisar ao ir para produção.
+- **Empresas ativas em gamma:** `POST .../api/v1.0/Empresa/ObterEmpresasAtivas`
+  (sem corpo) retornou **7 empresas, códigos 1–7**. Nome de cada uma está no
+  campo `Desc_emp` (a listagem também traz `CGC_emp`=CNPJ, `Endereco_emp`,
+  `Fone_emp`). **Falta o responsável escolher o código da empresa-alvo.**
+- **Swagger completo** baixado (v1.0, 438 endpoints). Se precisar de novo:
+  `GET {base}/1.0/swagger` (com o header `X-INTEGRATION-Authorization`); a UI
+  fica em `{base}/swagger/ui/index`.
+- **Versão no path:** usar `version = 1` → `/api/v1/...` (a doc chama de v1.0).
+
+## Cadeia de ingestão (mapeada do Swagger — endpoint principal + enriquecimento)
+
+Todos POST; headers `Authorization` + `X-INTEGRATION-Authorization` em todos.
+
+1. **`Venda/ConsultarContasReceberCalc`** ← ENDPOINT PRINCIPAL (consulta em
+   massa). Corpo: `{ "Vendas": [{ "Empresa": <cod>, "Obra": <cod_obra opc> }],
+   "DataFim": "<hoje/data-alvo>" }` (`DataInicio`, `TiposParcela`, `Numero` da
+   venda são opcionais; só `Empresa` é obrigatório no item de `Vendas`).
+   Retorna **array de parcelas em aberto** com: `empresa`, `obra`,
+   `numeroVenda`, `numeroParcela`, `tipoParcela`, **`cliente`** (código da
+   pessoa), **`nomeCliente`**, **`dataVencimento`**, `valorReajustado`,
+   `valorPrincipal`, `valorJuros`, **`valorJurosAtraso`**, **`valorMulta`**,
+   **`valorCorrecaoAtraso`**, etc. **Em atraso = `dataVencimento < hoje`**
+   (não há flag booleano; encargos `valorJurosAtraso/valorMulta > 0`
+   corroboram). Agrupar por `cliente` e `numeroVenda`.
+   - **Incerteza a validar em runtime:** o Swagger marca só `Empresa` como
+     obrigatório, sugerindo que aceita filtro empresa-only e varre todas as
+     vendas. Se na prática exigir `Numero`, enumerar as vendas antes com
+     `Venda/RetornaChavesVendasPorPeriodo` (corpo: `data_inicio`, `data_fim`,
+     `statusVenda="0"` normal, `listaEmpresaObra:[{codigoEmpresa,codigoObra}]`;
+     resposta é **string JSON serializada**, parsear na mão).
+2. **Enriquecimento por código de `cliente` distinto** (o `ContasReceberCalc`
+   NÃO traz CPF/telefone/unidade):
+   - `Pessoas/ConsultarPessoasPorCondicao` → CPF/CNPJ, e-mail. Corpo:
+     `condicaoConsultarPessoa` = WHERE SQL (ex.: `cod_pes IN (1,2,3)` em lote).
+     Resposta tipada: `CodigoPessoa`, `NomePessoa`, `CpfPessoa`, endereços.
+   - `Pessoas/ConsultarTelefones` → celular. Corpo `{ "Numero": <cod_pessoa> }`.
+     Resposta: `DDD`+`Telefone`, `Tipo` (**2 = Celular**), `Principal`. Usar
+     `Tipo==2`.
+   - `Pessoas/ConsultarUnidades` → identificação lote/quadra/unidade. Corpo
+     `{ "CodigoPessoa": <cod> }` (ou `CpfCnpj`). Resposta: `Venda`, `Obra`,
+     `Empresa`, `Produto`, **`Identificador`** (unidades separadas por " | ").
+     Casa `Venda/Obra/Empresa` com o `numeroVenda` de (1).
+   - **Alternativa por CPF (drill-down de UM devedor, tela de detalhe):**
+     `Recebiveis/ParcelasECobrancasDoCliente` (corpo `Cpf`, `ValorReajustado`)
+     — resposta totalmente tipada com vendas+unidades+parcelas+boletos+pix num
+     payload só. Não faz varredura em massa; ótimo para o perfil do cliente.
+
+## Mapeamento UAU → schema INAD (reusar `_insert_clients`, sem inventar schema)
+
+Montar o mesmo dict que `POST /api/reports` já consome e chamar `_insert_clients`
+(ver `run.py`), de modo que **todo o pipeline de KPI/Analytics funcione sem
+mudança**. Estrutura: `{ report_name, report_date, clients: { <nome>: {
+cpf_cnpj, cel, email, properties: [ { venda_id, identifier, parcels: [
+{ parcela, vencimento, vencimento_full (ISO), valor } ] } ] } } }`.
+- `clients[nome]` ← `nomeCliente` (exibição; a identidade usa `normalize_name`).
+- `cpf_cnpj` ← `CpfPessoa`; `cel` ← DDD+Telefone (Tipo 2); `email` ← `EmailPessoa`.
+- `properties[].venda_id` ← `numeroVenda`; `identifier` ← `Identificador`.
+- `parcels[].vencimento_full` ← `dataVencimento` (normalizar p/ ISO via
+  `_normalize_date`); `valor` ← usar o valor devido da parcela (definir com o
+  responsável qual: `valorReajustado` = com correção/encargos, ou
+  `valorPrincipal`). **K7:** `valor_centavos` é derivado automaticamente em
+  `_insert_clients` (`round(valor*100)`) — manter.
+- **PII/LGPD:** os dados trazidos são PII sensível (nome, CPF, telefone,
+  unidade, saldo). Não logar em claro; a trilha `access_audit` (S6) e a
+  criptografia de disco do SO (S6b) continuam sendo a política. Nunca commitar
+  o `.db` nem dumps.
+
+## O CENTRAL: reconstrução do histórico para os Analytics (backfill)
+
+Problema: os Analytics comparam `reports` consecutivos ordenados por
+`report_date`. Um único snapshot de hoje não produz recovery_rate, novo/antigo,
+reentradas nem timeline. `ConsultarContasReceberCalc` calcula **como está
+HOJE** (não aceita "data de cálculo retroativa" no request — só filtra por
+vencimento), então chamá-lo hoje não devolve o estado passado da carteira.
+
+**Solução planejada — reconstruir snapshots mensais a partir do razão de
+parcelas + datas de pagamento:**
+1. Para a empresa-alvo, obter, por venda/cliente, TODAS as parcelas (número,
+   vencimento, valor) **e os pagamentos** (data de quitação de cada parcela).
+   Fontes candidatas de pagamento (validar qual traz data de pagamento
+   confiável em runtime): `Venda/BuscarParcelasRecebidas`,
+   `Venda/BuscarRecebimentosDaVenda`,
+   `ExtratoDoCliente/ConsultarDadosDemonstrativoPagtoCliente` ("parcelas
+   pagas"), ou o razão do `Recebiveis/ParcelasECobrancasDoCliente`.
+2. Definir uma janela (ex.: **últimos 12 meses**). Para cada data de corte
+   mensal `S` (ex.: último dia de cada mês), um cliente está inadimplente em
+   `S` se tem ao menos uma parcela com `vencimento <= S` E
+   `(não paga OU data_pagamento > S)`. Isso reconstrói exatamente "quem estava
+   em atraso naquele mês".
+3. Inserir **um `report` por mês** (`report_date = S`), com os clientes/parcelas
+   em atraso naquele corte, via `_insert_clients`. Resultado: recovery_rate
+   (saiu do relatório do mês seguinte = pagou entre um corte e outro), timeline,
+   reentradas e segmentação novo/antigo passam a refletir o **histórico real**
+   desde o primeiro uso. O sync agendado apenas acrescenta o snapshot novo por
+   cima dessa base.
+   - **Risco/incerteza a resolver na implementação:** confirmar que as datas de
+     pagamento vêm confiáveis por parcela (senão o "recuperado histórico" fica
+     impreciso). Se a data de pagamento não for obtível de forma confiável,
+     fallback MVP: gerar os snapshots mensais só do estado atual replicado NÃO
+     serve (falsearia recuperação); nesse caso reduzir a ambição para "histórico
+     a partir de hoje" e deixar claro na UI que o histórico começa na data de
+     ativação. **Decidir com o responsável se o backfill sai ou não conforme a
+     qualidade das datas de pagamento.**
+
+## Design do sync AGENDADO (decisão do responsável: agendado)
+
+- Implementar como **função/CLI** primeiro (`python run.py --sync-uau
+  --empresa <cod> [--backfill-meses 12]`) — testável, fora do alcance do
+  operador somente-leitura (o sync ESCREVE; nunca expor ao RO). A CLI:
+  autentica → (na 1ª vez) roda o backfill histórico → insere/atualiza o
+  snapshot do dia → `data_version` sobe e o frontend já reflete.
+- **Agendamento (Windows):** Task Scheduler (`schtasks`) chamando a mesma CLI
+  1x/dia (ex.: de manhã). Documentar o comando no `TUTORIAL_INTRANET_WINDOWS.md`.
+  A máquina precisa estar ligada no horário. (No Mac seria `launchd`/cron, mas
+  só a máquina Windows alcança a UAU — ver memória do projeto.)
+- **Idempotência:** um sync do mesmo dia não deve duplicar o report daquele
+  `report_date`; reusar a dedup por `report_date` que já existe
+  (`active_report_ids`) — se já existe report para a data, substituir/pular
+  (definir política; provavelmente substituir pelo mais recente do dia).
+- **Credenciais:** só no `.env` (já gitignored). Token JWT vive em memória
+  durante a execução; não persistir em disco.
+
+## Estado das decisões do responsável (sessão 2026-07-21)
+
+| Item | Decisão |
+|---|---|
+| Fonte dos dados reais | **Construir integração UAU** (não import de PDF/JSON). |
+| Ambiente | **A confirmar** — `.env` aponta pra gamma; responsável vai dizer se é real ou se troca pra produção. |
+| Escopo | **Uma empresa específica** — responsável vai escolher o código (empresas 1–7 ativas em gamma). |
+| Gatilho | **Agendado** (via Task Scheduler no Windows), implementado sobre uma CLI `--sync-uau`. |
+| Analytics | **Reconstruir histórico** (backfill de snapshots mensais) para as métricas longitudinais valerem desde o dia 1. |
+
+## Próximos passos concretos (ordem sugerida)
+
+1. Responsável confirma **ambiente** (gamma×produção) e **código da empresa**.
+2. Escrever um módulo cliente UAU em `run.py` (ou `uau_client.py` novo, sem
+   dependências externas — só `urllib`/`ssl` da stdlib, como já validado):
+   `_uau_auth()`, `_uau_post(path, payload, token)`, e as funções da cadeia.
+3. Implementar `sync_uau(empresa, backfill_meses)` que monta o dict e chama
+   `_insert_clients`; validar a incerteza do `ConsultarContasReceberCalc`
+   (empresa-only vs precisa enumerar vendas) e a qualidade das datas de
+   pagamento para o backfill.
+4. CLI `--sync-uau` + guarda para NUNCA rodar em contexto de operador RO.
+5. Teste golden com **payload UAU fake** (fixture determinística, nunca a API
+   real) validando o mapeamento UAU→INAD e a reconstrução de snapshots mensais.
+6. Smoke test end-to-end contra gamma (1 empresa, janela curta) conferindo que
+   KPI/Analytics renderizam com o histórico.
+7. Documentar o agendamento no `TUTORIAL_INTRANET_WINDOWS.md` e atualizar este
+   HANDOFF marcando o que saiu.
+
+**Nada disso está implementado ainda** — só a descoberta/validação de auth e a
+listagem de empresas foram feitas. O arquivo do Swagger baixado fica no
+scratchpad da sessão (temporário); rebaixar com o GET acima se precisar.
