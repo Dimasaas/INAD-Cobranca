@@ -249,6 +249,57 @@ class GoldenKPITests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _import_report("Relatorio Invalido", "31/02/2026", {})
 
+    def test_name_normalization_treats_spelling_variants_as_same_client(self):
+        """K2: acento/caixa/espaço não podem fazer o mesmo cliente contar como
+        dois clientes distintos. Importa "JOSÉ DA SILVA" no relatório 1 e
+        "Jose da Silva " (sem acento, minúsculo, espaço à direita) no
+        relatório 2 e confirma que:
+          1) em recovery_rate, o cliente NÃO é contado como "recuperado"
+             (sumiu) apenas por causa da grafia diferente;
+          2) uma exclusão cadastrada como "jose da silva" exclui o cliente
+             dos KPIs independentemente da grafia armazenada em `clients`.
+        """
+        _import_report("Relatorio Norm 1", "2026-03-01", {
+            "JOSÉ DA SILVA": {
+                "cpf_cnpj": "444", "cel": "11955556666", "email": "",
+                "properties": [{"venda_id": "V10", "identifier": "Lote 10", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/03/2026",
+                     "vencimento_full": "2026-03-10", "valor": 800.0},
+                ]}],
+            },
+        })
+        _import_report("Relatorio Norm 2", "2026-04-01", {
+            "Jose da Silva ": {
+                "cpf_cnpj": "444", "cel": "11955556666", "email": "",
+                "properties": [{"venda_id": "V10", "identifier": "Lote 10", "parcels": [
+                    {"parcela": "1/1", "vencimento": "10/04/2026",
+                     "vencimento_full": "2026-04-10", "valor": 800.0},
+                ]}],
+            },
+        })
+
+        kpis = run.get_kpis_data(None)
+        trans_by_from = {t["from_report"]: t for t in kpis["transitions"]}
+        trans = trans_by_from["Relatorio Norm 1"]
+        self.assertEqual(trans["total_clients"], 1)
+        self.assertEqual(
+            trans["recovered_clients"], 0,
+            "grafia diferente ('JOSÉ DA SILVA' vs 'Jose da Silva ') não deveria "
+            "contar como cliente recuperado/sumido — é a mesma pessoa"
+        )
+        self.assertEqual(trans["recovery_rate"], 0.0)
+
+        # kpi_exclusions: excluir com uma grafia totalmente diferente (minúscula,
+        # sem acento) da armazenada em `clients` deve excluir o cliente mesmo assim.
+        conn = run.get_conn()
+        conn.execute("INSERT INTO kpi_exclusions (client_name) VALUES (?)", ("jose da silva",))
+        conn.commit()
+
+        kpis_excluded = run.get_kpis_data(None)
+        evo_excluded = {e["report_name"]: e for e in kpis_excluded["evolution"]}
+        self.assertEqual(evo_excluded["Relatorio Norm 1"]["clients"], 0)
+        self.assertEqual(evo_excluded["Relatorio Norm 2"]["clients"], 0)
+
 
 class LargeDatasetReconciliationTests(unittest.TestCase):
     """Gera uma série sintética determinística de relatórios (random.Random(42),

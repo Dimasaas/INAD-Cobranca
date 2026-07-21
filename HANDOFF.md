@@ -138,7 +138,15 @@ sem depender de nada externo).
 
 ## O que falta (nesta ordem sugerida)
 
-### 1. K2 — Normalização de nome (APROVADO, mas só o esqueleto foi feito)
+### 1. K2 — Normalização de nome  ✅ CONCLUÍDO (branch `feat/plano-kpi-e-correcoes`)
+
+> **Feito:** `normalize_name`/`_normalize_name` aplicados nos dois lados de todas
+> as comparações de identidade entre relatórios (exclusões, `recovery_rate`,
+> reincidência, `first_seen`/segmentação, worklist, queue, profile, outcomes,
+> action_logs). Exibição continua com a grafia original (profile retorna
+> `resolved_name`). Teste golden
+> `test_name_normalization_treats_spelling_variants_as_same_client` trava o
+> comportamento. 7/7 testes passam. Detalhe histórico do plano abaixo.
 
 Já existe em `run.py`:
 - `_normalize_name(name)` — remove acentos (via `unicodedata`), colapsa

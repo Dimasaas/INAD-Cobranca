@@ -586,7 +586,7 @@ def _client_financials(cursor, report_id, ref_date):
         LEFT JOIN properties p ON p.client_id = c.id
         LEFT JOIN parcels pa   ON pa.property_id = p.id AND pa.vencimento_full <= ?
         WHERE c.report_id = ?
-          AND c.name NOT IN (SELECT client_name FROM kpi_exclusions)
+          AND normalize_name(c.name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
         GROUP BY c.name
     """, (ref_date, ref_date, report_id)).fetchall()
 
@@ -657,11 +657,12 @@ def _calculate_reentries(cursor):
 
     presence_rows = cursor.execute("""
         SELECT report_id, name FROM clients
-        WHERE name NOT IN (SELECT client_name FROM kpi_exclusions)
+        WHERE normalize_name(name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
     """).fetchall()
 
     client_presence = {}
-    for rid, name in presence_rows:
+    for rid, raw_name in presence_rows:
+        name = _normalize_name(raw_name)
         if name not in client_presence:
             client_presence[name] = set()
         client_presence[name].add(rid)
@@ -737,11 +738,11 @@ def _contact_effectiveness(cursor):
     report_clients = {}
     for r in deduped_reports:
         rows = cursor.execute("SELECT name FROM clients WHERE report_id = ?", (r["id"],)).fetchall()
-        report_clients[r["id"]] = {row[0] for row in rows}
+        report_clients[r["id"]] = {_normalize_name(row[0]) for row in rows}
 
     contacts = cursor.execute("""
-        SELECT client_name, MAX(sent_at) FROM action_logs
-        GROUP BY client_name
+        SELECT normalize_name(client_name) AS name, MAX(sent_at) FROM action_logs
+        GROUP BY normalize_name(client_name)
     """).fetchall()
 
     contacted = 0
@@ -759,7 +760,7 @@ def _contact_effectiveness(cursor):
                 regularized += 1
 
     promises = cursor.execute("""
-        SELECT client_name, promised_date FROM contact_outcomes
+        SELECT normalize_name(client_name) AS name, promised_date FROM contact_outcomes
         WHERE outcome = 'prometeu_pagar' AND promised_date IS NOT NULL
     """).fetchall()
 
@@ -818,10 +819,10 @@ def _get_worklist_data(cursor, ref_date):
     reentries_map = _calculate_reentries(cursor)
 
     outcomes_rows = cursor.execute("""
-        SELECT client_name, outcome, promised_date, next_contact, note, created_at
+        SELECT normalize_name(client_name) AS name, outcome, promised_date, next_contact, note, created_at
         FROM contact_outcomes
-        WHERE (client_name, created_at) IN (
-            SELECT client_name, MAX(created_at) FROM contact_outcomes GROUP BY client_name
+        WHERE (normalize_name(client_name), created_at) IN (
+            SELECT normalize_name(client_name), MAX(created_at) FROM contact_outcomes GROUP BY normalize_name(client_name)
         )
     """).fetchall()
     latest_outcomes = {
@@ -831,7 +832,7 @@ def _get_worklist_data(cursor, ref_date):
     }
 
     contact_rows = cursor.execute("""
-        SELECT client_name, MAX(sent_at) FROM action_logs GROUP BY client_name
+        SELECT normalize_name(client_name) AS name, MAX(sent_at) FROM action_logs GROUP BY normalize_name(client_name)
     """).fetchall()
     latest_contacts = {r[0]: r[1] for r in contact_rows}
 
@@ -869,6 +870,9 @@ def _get_worklist_data(cursor, ref_date):
     prev_cf = {}
     if prev_report_id:
         prev_cf = _client_financials(cursor, prev_report_id, prev_report_date)
+    # Lookup por identidade normalizada: prev_cf vem de OUTRO relatório, cuja
+    # grafia do nome pode diferir da grafia usada no relatório atual (K2).
+    prev_cf_by_norm = {_normalize_name(k): v for k, v in prev_cf.items()}
 
     promessas_vencidas = []
     recontato_agendado = []
@@ -878,13 +882,14 @@ def _get_worklist_data(cursor, ref_date):
     categorized_clients = set()
 
     for name, cf in cf_all.items():
-        reentries = reentries_map.get(name, {}).get("reentries", 0)
+        norm_name = _normalize_name(name)
+        reentries = reentries_map.get(norm_name, {}).get("reentries", 0)
         score_info = _calculate_risk_score(cf["total_owed"], cf["max_days_overdue"], reentries, p90)
         bucket = _bucketize(cf["max_days_overdue"])
         stage = _stage_for_days(cf["max_days_overdue"])
 
-        last_c = latest_contacts.get(name)
-        out_info = latest_outcomes.get(name)
+        last_c = latest_contacts.get(norm_name)
+        out_info = latest_outcomes.get(norm_name)
         out_outcome = out_info["outcome"] if out_info else None
         out_date = out_info["created_at"] if out_info else None
         
@@ -917,7 +922,7 @@ def _get_worklist_data(cursor, ref_date):
         }
 
         # 1) Promessas vencidas
-        out_info = latest_outcomes.get(name)
+        out_info = latest_outcomes.get(norm_name)
         if out_info and out_info["outcome"] == "prometeu_pagar" and out_info["promised_date"]:
             if out_info["promised_date"] < ref_date:
                 try:
@@ -940,7 +945,7 @@ def _get_worklist_data(cursor, ref_date):
             continue
 
         # 3) Sem resposta
-        last_c = latest_contacts.get(name)
+        last_c = latest_contacts.get(norm_name)
         if last_c:
             last_c_date = last_c.split()[0]
             try:
@@ -968,7 +973,7 @@ def _get_worklist_data(cursor, ref_date):
         # 4) Novos Pré-Jurídico
         if cf["max_days_overdue"] > PREJURIDICO_DAYS:
             if prev_report_id:
-                prev_cf_client = prev_cf.get(name)
+                prev_cf_client = prev_cf_by_norm.get(norm_name)
                 if prev_cf_client and prev_cf_client["max_days_overdue"] <= PREJURIDICO_DAYS:
                     item = dict(queue_row)
                     item["entered_bucket"] = True
@@ -1011,7 +1016,7 @@ def get_kpis_data(report_ids=None):
         FROM   clients   c
         LEFT JOIN properties p  ON p.client_id   = c.id
         LEFT JOIN parcels    pa ON pa.property_id = p.id
-        WHERE  c.name NOT IN (SELECT client_name FROM kpi_exclusions)
+        WHERE  normalize_name(c.name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
         GROUP  BY c.report_id
     """).fetchall()
     all_stats_map = {r[0]: {"clients": r[1], "properties": r[2], "parcels": r[3], "total_value": round(r[4], 2)}
@@ -1061,15 +1066,18 @@ def get_kpis_data(report_ids=None):
         placeholders = ",".join("?" for _ in active_report_ids)
         client_rows = cursor.execute(
             f"SELECT report_id, name FROM clients WHERE report_id IN ({placeholders}) "
-            f"AND name NOT IN (SELECT client_name FROM kpi_exclusions)",
+            f"AND normalize_name(name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)",
             active_report_ids
         ).fetchall()
     else:
         client_rows = []
 
+    # Chave do set() é a IDENTIDADE normalizada do cliente (K2) — assim
+    # `clients_cur - clients_next` (recovered) compara o mesmo cliente mesmo
+    # que a grafia do nome varie entre relatórios (acento/caixa/espaço).
     client_sets = {}
     for row in client_rows:
-        client_sets.setdefault(row[0], set()).add(row[1])
+        client_sets.setdefault(row[0], set()).add(_normalize_name(row[1]))
 
     transitions = []
     for i in range(len(reports) - 1):
@@ -1107,10 +1115,10 @@ _FIRST_SEEN_CTE = """
         FROM   reports
     ),
     first_seen AS (
-        SELECT c.name AS name, MIN(rd.rdate) AS first_date
+        SELECT normalize_name(c.name) AS name, MIN(rd.rdate) AS first_date
         FROM   clients c
         JOIN   report_dates rd ON rd.id = c.report_id
-        GROUP  BY c.name
+        GROUP  BY normalize_name(c.name)
     )
 """
 
@@ -1120,8 +1128,9 @@ def get_analytics_data(start=None, end=None, report_ids=None,
     """
     Dados agregados para a página de Analytics: série temporal por segmento
     (novo/antigo/total), transições com taxa de recuperação por segmento e
-    totais do período. Identidade de cliente é por nome exato (limitação
-    conhecida: variações de grafia/acento contam como clientes distintos).
+    totais do período. Identidade de cliente é por nome NORMALIZADO (K2):
+    acento/caixa/espaço não fazem um cliente contar como distinto — ver
+    _normalize_name()/normalize_name() em first_seen/kpi_exclusions/client_sets.
     """
     cursor = get_conn().cursor()
 
@@ -1191,10 +1200,10 @@ def get_analytics_data(start=None, end=None, report_ids=None,
                COUNT(pa.id)                 AS parcels,
                COALESCE(SUM(pa.valor), 0.0) AS total_value
         FROM   clients c
-        JOIN   first_seen fs    ON fs.name = c.name
+        JOIN   first_seen fs    ON fs.name = normalize_name(c.name)
         LEFT JOIN properties p  ON p.client_id   = c.id
         LEFT JOIN parcels    pa ON pa.property_id = p.id
-        WHERE  c.name NOT IN (SELECT client_name FROM kpi_exclusions)
+        WHERE  normalize_name(c.name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
         GROUP  BY c.report_id, segment
     """, (cutoff_date,)).fetchall()
 
@@ -1232,17 +1241,20 @@ def get_analytics_data(start=None, end=None, report_ids=None,
                    CASE WHEN fs.first_date >= ? THEN 'novo' ELSE 'antigo' END AS segment,
                    COALESCE(SUM(pa.valor), 0.0) AS value
             FROM   clients c
-            JOIN   first_seen fs    ON fs.name = c.name
+            JOIN   first_seen fs    ON fs.name = normalize_name(c.name)
             LEFT JOIN properties p  ON p.client_id   = c.id
             LEFT JOIN parcels    pa ON pa.property_id = p.id
             WHERE  c.report_id IN ({placeholders})
-              AND  c.name NOT IN (SELECT client_name FROM kpi_exclusions)
+              AND  normalize_name(c.name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
             GROUP  BY c.report_id, c.name
         """, [cutoff_date] + sel_ids).fetchall()
 
-    per_report = {}   # report_id -> {name: (segment, value)}
+    # Chave por identidade normalizada (K2): recovered/novo/antigo em
+    # `transitions` abaixo comparam a mesma pessoa mesmo com grafia diferente
+    # entre relatórios. Nenhum nome é exposto no payload de `transitions`.
+    per_report = {}   # report_id -> {normalized_name: (segment, value)}
     for rid, name, seg, val in client_rows:
-        per_report.setdefault(rid, {})[name] = (seg, val)
+        per_report.setdefault(rid, {})[_normalize_name(name)] = (seg, val)
 
     def _rate(recovered, total):
         return round(len(recovered) / len(total) * 100, 1) if total else 0.0
@@ -1328,7 +1340,7 @@ def get_system_context():
             LEFT JOIN properties p ON p.client_id = c.id
             LEFT JOIN parcels pa ON pa.property_id = p.id AND pa.vencimento_full <= ?
             WHERE c.report_id = ?
-              AND c.name NOT IN (SELECT client_name FROM kpi_exclusions)
+              AND normalize_name(c.name) NOT IN (SELECT normalize_name(client_name) FROM kpi_exclusions)
             GROUP BY c.name
             HAVING CAST(julianday(?) - julianday(MIN(pa.vencimento_full)) AS INTEGER) > {PREJURIDICO_DAYS}
         """, (ref_date, latest_rid, ref_date)).fetchall())
@@ -1829,10 +1841,10 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             reentries_map = _calculate_reentries(cursor)
 
             outcomes_rows = cursor.execute("""
-                SELECT client_name, outcome, promised_date, next_contact, note, created_at
+                SELECT normalize_name(client_name) AS name, outcome, promised_date, next_contact, note, created_at
                 FROM contact_outcomes
-                WHERE (client_name, created_at) IN (
-                    SELECT client_name, MAX(created_at) FROM contact_outcomes GROUP BY client_name
+                WHERE (normalize_name(client_name), created_at) IN (
+                    SELECT normalize_name(client_name), MAX(created_at) FROM contact_outcomes GROUP BY normalize_name(client_name)
                 )
             """).fetchall()
             latest_outcomes = {
@@ -1842,7 +1854,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             }
 
             contact_rows = cursor.execute("""
-                SELECT client_name, MAX(sent_at) FROM action_logs GROUP BY client_name
+                SELECT normalize_name(client_name) AS name, MAX(sent_at) FROM action_logs GROUP BY normalize_name(client_name)
             """).fetchall()
             latest_contacts = {r[0]: r[1] for r in contact_rows}
 
@@ -1859,19 +1871,20 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 
             queue = []
             for name, cf in cf_all.items():
-                reentries = reentries_map.get(name, {}).get("reentries", 0)
+                norm_name = _normalize_name(name)
+                reentries = reentries_map.get(norm_name, {}).get("reentries", 0)
                 score_info = _calculate_risk_score(cf["total_owed"], cf["max_days_overdue"], reentries, p90)
-                
+
                 bucket = _bucketize(cf["max_days_overdue"])
                 stage = _stage_for_days(cf["max_days_overdue"])
-                
+
                 if stage_filter and stage != stage_filter:
                     continue
                 if min_days_filter is not None and cf["max_days_overdue"] < min_days_filter:
                     continue
 
-                last_c = latest_contacts.get(name)
-                out_info = latest_outcomes.get(name)
+                last_c = latest_contacts.get(norm_name)
+                out_info = latest_outcomes.get(norm_name)
                 out_outcome = out_info["outcome"] if out_info else None
                 out_date = out_info["created_at"] if out_info else None
                 
@@ -1933,7 +1946,12 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 return
 
             cursor = get_conn().cursor()
-            exists = cursor.execute("SELECT 1 FROM clients WHERE name = ? LIMIT 1", (name,)).fetchone()
+            # Busca por identidade normalizada (K2): o nome digitado/selecionado
+            # pode diferir em acento/caixa/espaço do que está armazenado (vindo
+            # do PDF) e ainda assim deve achar o cliente certo.
+            exists = cursor.execute(
+                "SELECT 1 FROM clients WHERE normalize_name(name) = normalize_name(?) LIMIT 1", (name,)
+            ).fetchone()
             if not exists:
                 _json_response(self, {"error": f"Cliente '{name}' nao encontrado no sistema"}, 404)
                 return
@@ -1941,23 +1959,27 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             import datetime
             ref_date = datetime.date.today().isoformat()
             report_id = _dedup_latest_report_id(cursor)
-            
+
             latest_client_row = cursor.execute("""
-                SELECT c.id, c.report_id, c.cpf_cnpj, c.cel, c.email
+                SELECT c.id, c.name, c.report_id, c.cpf_cnpj, c.cel, c.email
                 FROM clients c
                 JOIN reports r ON r.id = c.report_id
-                WHERE c.name = ?
+                WHERE normalize_name(c.name) = normalize_name(?)
                 ORDER BY COALESCE(NULLIF(r.report_date, ''), DATE(r.imported_at)) DESC, r.id DESC
                 LIMIT 1
             """, (name,)).fetchone()
-            
-            c_id, c_rep_id, cpf_cnpj, cel, email = latest_client_row
-            
+
+            c_id, resolved_name, c_rep_id, cpf_cnpj, cel, email = latest_client_row
+            # `resolved_name` é a grafia REAL mais recente armazenada para este
+            # cliente (nunca a normalizada) — usada para exibição e para casar
+            # com action_logs/contact_outcomes, que podem ter sido gravados com
+            # a mesma grafia digitada em telas diferentes.
+
             ver_row = cursor.execute(
                 "SELECT COUNT(*), COALESCE(MAX(imported_at), ''), COALESCE(MAX(id), 0) FROM reports"
             ).fetchone()
             data_version = f"{ver_row[0]}:{ver_row[2]}:{ver_row[1]}"
-            
+
             rep_date_str = None
             if report_id:
                 rep_date_row = cursor.execute(
@@ -1965,8 +1987,11 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 ).fetchone()
                 rep_date_str = rep_date_row[0] if rep_date_row else None
 
-            is_present_latest = cursor.execute("SELECT id FROM clients WHERE report_id = ? AND name = ?", (report_id, name)).fetchone() if report_id else None
-            
+            is_present_latest = cursor.execute(
+                "SELECT id, name FROM clients WHERE report_id = ? AND normalize_name(name) = normalize_name(?)",
+                (report_id, name)
+            ).fetchone() if report_id else None
+
             buckets_data = {
                 "0-30": {"parcels": 0, "value": 0.0},
                 "31-60": {"parcels": 0, "value": 0.0},
@@ -1977,7 +2002,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             properties_list = []
             
             if is_present_latest:
-                latest_c_id = is_present_latest[0]
+                latest_c_id, name_in_latest_report = is_present_latest
                 props_rows = cursor.execute("""
                     SELECT id, venda_id, identifier FROM properties
                     WHERE client_id = ?
@@ -2009,23 +2034,23 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     })
 
             reentries_map = _calculate_reentries(cursor)
-            rec_info = reentries_map.get(name, {
+            rec_info = reentries_map.get(_normalize_name(resolved_name), {
                 "reentries": 0, "timeline": [], "first_seen": None, "currently_present": False
             })
 
             contacts_rows = cursor.execute("""
                 SELECT sent_at, venda_id FROM action_logs
-                WHERE client_name = ?
+                WHERE normalize_name(client_name) = normalize_name(?)
                 ORDER BY sent_at DESC
-            """, (name,)).fetchall()
+            """, (resolved_name,)).fetchall()
             contacts_list = [{"sent_at": r[0], "venda_id": r[1]} for r in contacts_rows]
 
             outcomes_rows = cursor.execute("""
                 SELECT id, outcome, promised_date, next_contact, note, created_at
                 FROM contact_outcomes
-                WHERE client_name = ?
+                WHERE normalize_name(client_name) = normalize_name(?)
                 ORDER BY created_at DESC
-            """, (name,)).fetchall()
+            """, (resolved_name,)).fetchall()
             outcomes_list = [{
                 "id": r[0], "outcome": r[1], "promised_date": r[2], "next_contact": r[3], "note": r[4], "created_at": r[5]
             } for r in outcomes_rows]
@@ -2055,7 +2080,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 idx = int(len(vals) * 0.9) if vals else 0
                 p90 = vals[idx] if vals else 0.0
                 
-                cf_client = cf_all.get(name, {
+                cf_client = cf_all.get(name_in_latest_report, {
                     "total_owed": 0.0, "max_days_overdue": 0, "n_properties": 0, "n_parcels": 0, "oldest_due": None, "avg_parcel": 0.0
                 })
                 score_info = _calculate_risk_score(cf_client["total_owed"], cf_client["max_days_overdue"], rec_info["reentries"], p90)
@@ -2098,7 +2123,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     "report_date": rep_date_str,
                     "data_version": data_version
                 },
-                "name": name,
+                "name": resolved_name,
                 "cel": cel or "",
                 "email": email or "",
                 "cpf_cnpj": cpf_cnpj or "",
@@ -2144,7 +2169,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 rows = cursor.execute("""
                     SELECT id, client_name, venda_id, action_log_id, outcome, promised_date, next_contact, note, created_at
                     FROM contact_outcomes
-                    WHERE client_name = ?
+                    WHERE normalize_name(client_name) = normalize_name(?)
                     ORDER BY created_at DESC
                     LIMIT ?
                 """, (cname, limit_val)).fetchall()
@@ -2408,7 +2433,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 if isinstance(payload, list):
                     for name in payload:
                         if not cursor.execute(
-                            "SELECT 1 FROM action_logs WHERE client_name = ? LIMIT 1",
+                            "SELECT 1 FROM action_logs WHERE normalize_name(client_name) = normalize_name(?) LIMIT 1",
                             (name,)
                         ).fetchone():
                             cursor.execute(
@@ -2442,9 +2467,20 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     return
 
                 if exclude:
-                    cursor.execute("INSERT OR IGNORE INTO kpi_exclusions (client_name) VALUES (?)", (client_name,))
+                    # Só insere se nenhuma exclusão já existente casar por
+                    # identidade normalizada (K2) — evita duplicar a mesma
+                    # exclusão sob grafias diferentes.
+                    already = cursor.execute(
+                        "SELECT 1 FROM kpi_exclusions WHERE normalize_name(client_name) = normalize_name(?) LIMIT 1",
+                        (client_name,)
+                    ).fetchone()
+                    if not already:
+                        cursor.execute("INSERT INTO kpi_exclusions (client_name) VALUES (?)", (client_name,))
                 else:
-                    cursor.execute("DELETE FROM kpi_exclusions WHERE client_name = ?", (client_name,))
+                    cursor.execute(
+                        "DELETE FROM kpi_exclusions WHERE normalize_name(client_name) = normalize_name(?)",
+                        (client_name,)
+                    )
 
                 conn.commit()
                 _json_response(self, {"status": "success"})
