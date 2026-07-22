@@ -716,27 +716,35 @@ def _uau_request(base, version, endpoint, integ_token, auth_token=None,
 
 
 def _uau_parse_recebiveis(receb):
-    """RecebiveisResponse (Vendas → ParcelasVenda) → árvore de imóveis/parcelas do
+    """RecebiveisResponse (Vendas → ParcelasVenda ou lista direta) → árvore de imóveis/parcelas do
     INAD, mantendo só parcelas VENCIDAS (inadimplência = vencimento < hoje)."""
     hoje = datetime.date.today()
     props = []
-    if not isinstance(receb, dict):
-        return props
-    for venda in receb.get("Vendas") or []:
-        empreend = venda.get("Obra") or ""
-        venda_id = str(venda.get("Venda", "") or "")
-        itens = venda.get("ItensVenda") or []
+    vendas = []
+    if isinstance(receb, list):
+        vendas = receb
+    elif isinstance(receb, dict):
+        vendas = receb.get("Vendas") or receb.get("vendas") or []
+
+    for venda in vendas:
+        if not isinstance(venda, dict):
+            continue
+        empreend = venda.get("Obra") or venda.get("obra") or ""
+        venda_id = str(venda.get("Venda", "") or venda.get("venda", "") or "")
+        itens = venda.get("ItensVenda") or venda.get("itensVenda") or []
         identifier = ""
-        if itens:
+        if itens and isinstance(itens, list) and len(itens) > 0 and isinstance(itens[0], dict):
             identifier = itens[0].get("Identificador") or itens[0].get("DescProduto") or ""
         parcels = []
-        for pv in venda.get("ParcelasVenda") or []:
-            venc = _uau_parse_date(pv.get("DataVencimento"))
+        for pv in venda.get("ParcelasVenda") or venda.get("parcelasVenda") or []:
+            if not isinstance(pv, dict):
+                continue
+            venc = _uau_parse_date(pv.get("DataVencimento") or pv.get("dataVencimento"))
             if venc is None or venc >= hoje:
                 continue  # só parcelas vencidas
-            valor = float(pv.get("ValorParcela") or 0.0)
+            valor = float(pv.get("ValorParcela") or pv.get("valorParcela") or 0.0)
             parcels.append({
-                "parcela": str(pv.get("NumParcela", "") or ""),
+                "parcela": str(pv.get("NumParcela", "") or pv.get("numParcela", "") or ""),
                 "vencimento": venc.strftime("%d/%m"),
                 "vencimento_full": venc.isoformat(),
                 "valor": valor,
