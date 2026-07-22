@@ -803,25 +803,23 @@ def _sync_from_uau(empresa=None, obra=None, diag=None):
                               "resposta": _uau_shape(raw_titulares),
                               "titulares_apos_normalizar": len(titulares)}
 
-    n_com_cpf = 0
-    n_recebiveis_ok = 0
-    clients = {}
-    for pessoa in titulares:
+    import concurrent.futures
+
+    def _process_single_pessoa(pessoa):
         if not isinstance(pessoa, dict):
-            continue
+            return None
         cod_pes = _uau_first(pessoa, ["Cod_pes", "cod_pes", "CodPessoa", "cod_pessoa", "Codigopessoa"])
         if cod_pes and str(cod_pes).startswith("System."):
-            continue
+            return None
         nome = _uau_first(pessoa, ["nome", "Nome", "NomePessoa", "Nome_pes",
                                    "razaoSocial", "RazaoSocial"]) or ""
         if str(nome).startswith("System."):
-            continue
+            return None
 
         cpf = _uau_first(pessoa, ["cpf", "Cpf", "CPF", "cpf_cnpj", "CpfCnpj",
                                   "CPFCNPJ", "CpfCnpj_pes", "cpf_pes"])
         email = _uau_first(pessoa, ["email", "Email", "Email_pes"]) or ""
 
-        # Se CPF não veio na lista de titulares, busca os dados da pessoa por chave
         if not cpf and cod_pes:
             try:
                 cod_num = int(cod_pes)
@@ -843,55 +841,52 @@ def _sync_from_uau(empresa=None, obra=None, diag=None):
                                             nome = r.get("nome_pes") or nome
                                         break
             except Exception as exc:
-                print(f"[UAU] Falha ao consultar pessoa por chave cod_pes={cod_pes}: {exc}")
+                pass
 
         if not cpf:
-            continue
+            return None
 
         cpf_num = re.sub(r"\D", "", str(cpf))
         if len(cpf_num) < 11:
-            continue
+            return None
 
-        n_com_cpf += 1
         if not nome:
             nome = str(cpf_num)
 
-        # 3. Parcelas/cobranças do cliente (ValorReajustado=True → valor atualizado).
         try:
             receb = _uau_request(
                 base, version, "/Recebiveis/ParcelasECobrancasDoCliente", integ,
                 auth_token=token, payload={"Cpf": cpf_num, "ValorReajustado": True})
         except Exception as exc:
-            print(f"[UAU] Falha ao consultar recebíveis de ***{cpf_num[-3:]}: {exc}")
-            continue
+            return None
 
         props = _uau_parse_recebiveis(receb)
-        if props:
-            n_recebiveis_ok += 1
-
-        if diag is not None and "3_recebiveis_1o" not in diag:
-            vendas = receb.get("Vendas") if isinstance(receb, dict) else None
-            total_parc = sum(len(v.get("ParcelasVenda") or [])
-                             for v in (vendas or []) if isinstance(v, dict))
-            diag["3_recebiveis_1o"] = {
-                "cpf_mascarado": "***" + cpf_num[-3:],
-                "resposta": _uau_shape(receb),
-                "num_vendas": len(vendas) if isinstance(vendas, list) else None,
-                "total_parcelas": total_parc,
-                "parcelas_vencidas_apos_filtro": sum(len(p["parcels"]) for p in props),
-                "hoje": datetime.date.today().isoformat(),
-            }
-
         if not props:
-            continue  # sem parcelas vencidas → não é inadimplente
+            return None
 
-        clients[nome] = {
+        return (nome, {
             "cpf_cnpj": str(cpf), "cel": "", "email": str(email),
             "endereco": "", "telefone_secundario": "", "properties": props,
-        }
+        })
+
+    n_com_cpf = 0
+    n_recebiveis_ok = 0
+    clients = {}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        futures = [executor.submit(_process_single_pessoa, p) for p in titulares]
+        for future in concurrent.futures.as_completed(futures):
+            try:
+                item = future.result()
+                if item:
+                    c_name, c_data = item
+                    clients[c_name] = c_data
+                    n_recebiveis_ok += 1
+            except Exception as exc:
+                print(f"[UAU] Erro no worker: {exc}")
+
     if diag is not None:
-        diag["4_resumo"] = {"titulares": len(titulares), "com_cpf": n_com_cpf,
-                            "com_parcelas_vencidas": n_recebiveis_ok,
+        diag["4_resumo"] = {"titulares": len(titulares),
                             "clientes_montados": len(clients)}
     return clients
 

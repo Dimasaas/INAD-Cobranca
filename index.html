@@ -1397,10 +1397,10 @@
       if (overlay) overlay.style.display = 'flex';
 
       if (loadingTimeout) clearTimeout(loadingTimeout);
-      // Trava de segurança: esconde o overlay automaticamente após 10s para NUNCA congelar a tela
+      // Trava de segurança: esconde o overlay automaticamente após 120s para NUNCA congelar a tela
       loadingTimeout = setTimeout(() => {
         hideLoading();
-      }, 10000);
+      }, 120000);
     }
 
     function setProgress(percent) {
