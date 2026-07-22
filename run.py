@@ -624,9 +624,13 @@ def get_clients_for_report(report_id):
 
 
 # ─── Integração com a API do ERP UAU (SOMENTE LEITURA) ──────────────────────
-# Regras (ver memória uau-sync-implementation-rules): só endpoints de CONSULTA,
-# enumeração via ConsultarPessoasComVenda com filtro empresa/obra, sem fan-out
-# pesado de Pessoas/*. Nada de escrita (LGPD / operador read-only).
+# Regras (ver memória uau-sync-implementation-rules e docs/UAU_API.md): só
+# endpoints de CONSULTA. ConsultarPessoasComVenda NÃO aceita filtro de
+# empresa/obra (não documentado na API) — enumeração é sempre completa; o
+# filtro empresa/obra é aplicado client-side em _uau_parse_recebiveis, sobre
+# os campos Empresa/Obra de cada venda retornados por
+# Recebiveis/ParcelasECobrancasDoCliente. Sem fan-out pesado de Pessoas/*.
+# Nada de escrita (LGPD / operador read-only).
 UAU_HTTP_TIMEOUT = int(os.environ.get("UAU_HTTP_TIMEOUT", "30"))
 
 
@@ -703,14 +707,21 @@ def _uau_request(base, version, endpoint, integ_token, auth_token=None,
     return val
 
 
-def _uau_parse_recebiveis(receb):
+def _uau_parse_recebiveis(receb, empresa=None, obra=None):
     """RecebiveisResponse (Vendas → ParcelasVenda) → árvore de imóveis/parcelas do
-    INAD, mantendo só parcelas VENCIDAS (inadimplência = vencimento < hoje)."""
+    INAD, mantendo só parcelas VENCIDAS (inadimplência = vencimento < hoje).
+    Filtro empresa/obra aplicado aqui (por venda), pois a API não oferece esse
+    filtro em ConsultarPessoasComVenda nem em ParcelasECobrancasDoCliente —
+    ver docs/UAU_API.md."""
     hoje = datetime.date.today()
     props = []
     if not isinstance(receb, dict):
         return props
     for venda in receb.get("Vendas") or []:
+        if empresa not in (None, "") and str(venda.get("Empresa", "")) != str(empresa):
+            continue
+        if obra not in (None, "") and str(venda.get("Obra", "")).strip().lower() != str(obra).strip().lower():
+            continue
         empreend = venda.get("Obra") or ""
         venda_id = str(venda.get("Venda", "") or "")
         itens = venda.get("ItensVenda") or []
@@ -741,8 +752,11 @@ def _uau_parse_recebiveis(receb):
 
 def _sync_from_uau(empresa=None, obra=None):
     """Consulta a API UAU (read-only) e devolve a árvore `clients` pronta para
-    _insert_clients. Fluxo documentado: Autenticar → ConsultarPessoasComVenda
-    (filtro empresa/obra) → por CPF: ParcelasECobrancasDoCliente → inadimplência."""
+    _insert_clients. Fluxo conforme docs/UAU_API.md: Autenticar → enumerar todos
+    os titulares de venda (ConsultarPessoasComVenda não aceita filtro de
+    empresa/obra) → por CPF: ParcelasECobrancasDoCliente (com DataFimVencimento
+    = hoje, para o servidor já podar parcelas futuras) → filtro empresa/obra e
+    de parcelas vencidas aplicado client-side em _uau_parse_recebiveis."""
     base = os.environ["UAU_BASE_URL"]
     version = os.environ.get("UAU_API_VERSION", "1")
     integ = os.environ["UAU_X_INTEGRATION"]
@@ -758,16 +772,13 @@ def _sync_from_uau(empresa=None, obra=None):
         raise RuntimeError("Autenticação UAU não retornou um token válido")
     token = token.strip().strip('"')
 
-    # 2. Enumerar titulares de venda (só campos válidos: empresa/obra).
-    filtro = {}
-    if empresa not in (None, ""):
-        filtro["empresa"] = empresa
-    if obra not in (None, ""):
-        filtro["obra"] = obra
+    # 2. Enumerar titulares de venda. ConsultarPessoasComVenda não documenta
+    # nenhum parâmetro de request (nem empresa, nem obra) — enviar corpo vazio.
     titulares = _uau_as_list(_uau_request(
         base, version, "/Pessoas/ConsultarPessoasComVenda", integ,
-        auth_token=token, payload=filtro))
+        auth_token=token, payload={}))
 
+    hoje_iso = datetime.date.today().isoformat()
     clients = {}
     for pessoa in titulares:
         cpf = _uau_first(pessoa, ["cpf", "Cpf", "CPF", "cpf_cnpj", "CpfCnpj",
@@ -777,17 +788,20 @@ def _sync_from_uau(empresa=None, obra=None):
         nome = _uau_first(pessoa, ["nome", "Nome", "NomePessoa", "Nome_pes",
                                    "razaoSocial", "RazaoSocial"]) or str(cpf)
         cpf_num = re.sub(r"\D", "", str(cpf))
-        # 3. Parcelas/cobranças do cliente (ValorReajustado=True → valor atualizado).
+        # 3. Parcelas/cobranças do cliente (ValorReajustado=True → valor
+        # atualizado; DataFimVencimento = hoje poda parcelas futuras no servidor).
         try:
             receb = _uau_request(
                 base, version, "/Recebiveis/ParcelasECobrancasDoCliente", integ,
-                auth_token=token, payload={"Cpf": cpf_num, "ValorReajustado": True})
+                auth_token=token,
+                payload={"Cpf": cpf_num, "ValorReajustado": True,
+                         "DataFimVencimento": hoje_iso})
         except Exception as exc:
             print(f"[UAU] Falha ao consultar recebíveis de {cpf_num}: {exc}")
             continue
-        props = _uau_parse_recebiveis(receb)
+        props = _uau_parse_recebiveis(receb, empresa=empresa, obra=obra)
         if not props:
-            continue  # sem parcelas vencidas → não é inadimplente
+            continue  # sem parcelas vencidas (ou fora do filtro empresa/obra)
         clients[nome] = {
             "cpf_cnpj": str(cpf), "cel": "", "email": "",
             "endereco": "", "telefone_secundario": "", "properties": props,
