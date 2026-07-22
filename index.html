@@ -1373,6 +1373,7 @@
 
       const initialTab = location.hash.replace('#', '');
       if (initialTab === 'kpi') switchTab('kpi');
+      hideLoading();
     }
 
     function loadLocalData() {
@@ -1382,14 +1383,39 @@
       isServerActive = false;
       document.getElementById('report-select-sep').style.display = 'none';
       document.getElementById('report-select').style.display = 'none';
+    let loadingTimeout = null;
+    function showLoading(title, subtitle, initialProgress = 30) {
+      const overlay = document.getElementById('loading-overlay');
+      const loadingText = document.getElementById('loading-text');
+      const pBar = document.getElementById('progress-bar');
+      const pSub = document.getElementById('loading-sub');
+
+      if (loadingText && title) loadingText.textContent = title;
+      if (pSub && subtitle) pSub.textContent = subtitle;
+      if (pBar) pBar.style.width = initialProgress + '%';
+
+      if (overlay) overlay.style.display = 'flex';
+
+      if (loadingTimeout) clearTimeout(loadingTimeout);
+      // Trava de segurança: esconde o overlay automaticamente após 10s para NUNCA congelar a tela
+      loadingTimeout = setTimeout(() => {
+        hideLoading();
+      }, 10000);
+    }
+
+    function setProgress(percent) {
+      const pBar = document.getElementById('progress-bar');
+      if (pBar) pBar.style.width = percent + '%';
+    }
+
+    function hideLoading() {
+      if (loadingTimeout) clearTimeout(loadingTimeout);
+      const overlay = document.getElementById('loading-overlay');
+      if (overlay) overlay.style.display = 'none';
     }
 
     async function syncUAU() {
       const btn = document.getElementById('btn-sync-uau');
-      const overlay = document.getElementById('loading-overlay');
-      const loadingText = document.getElementById('loading-text');
-      const progressBar = document.getElementById('progress-bar');
-
       if (!btn) return;
 
       const originalText = btn.innerHTML;
@@ -1397,45 +1423,38 @@
       btn.style.opacity = '0.75';
       btn.innerHTML = '<span class="spinner-sm"></span> Sincronizando...';
 
-      if (overlay) {
-        if (loadingText) loadingText.innerText = 'Sincronizando dados com a API ProUAU...';
-        if (progressBar) progressBar.style.width = '45%';
-        overlay.style.display = 'flex';
-      }
+      showLoading('Sincronizando dados com a API ProUAU...', 'Conectando ao servidor...', 40);
 
       try {
-        if (progressBar) progressBar.style.width = '75%';
+        setProgress(75);
         const res = await fetch('/api/sync_uau', {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
+          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ empresa: null, obra: null })
         });
         const data = await res.json();
+        setProgress(100);
 
-        if (progressBar) progressBar.style.width = '100%';
+        hideLoading();
 
         if (res.ok && data.status === 'success') {
           setTimeout(() => {
-            alert("✅ Sincronização ProUAU concluída: " + (data.clients || 0) +
-                  " cliente(s) inadimplente(s) importado(s) da API.");
+            alert("✅ Sincronização ProUAU concluída: " + (data.clients || 0) + " cliente(s) inadimplente(s) importado(s) da API.");
             if (typeof updateReportDropdown === 'function') {
               updateReportDropdown();
             }
             location.reload();
-          }, 200);
+          }, 150);
         } else if (res.ok && data.status === 'empty') {
-          if (overlay) overlay.style.display = 'none';
           alert("ℹ️ Nenhum cliente inadimplente retornado pela UAU para o filtro informado.");
         } else {
-          if (overlay) overlay.style.display = 'none';
           alert("❌ Erro na sincronização ProUAU: " + (data.error || "Falha desconhecida."));
         }
       } catch (err) {
-        if (overlay) overlay.style.display = 'none';
+        hideLoading();
         alert("❌ Erro ao conectar com o servidor: " + err.message);
       } finally {
+        hideLoading();
         btn.disabled = false;
         btn.style.opacity = '1';
         btn.innerHTML = originalText;
@@ -1497,36 +1516,28 @@
     async function changeReport(reportId) {
       if (reportId === 'latest') return;
 
-      const overlay = document.getElementById('loading-overlay');
-      const loadingText = document.getElementById('loading-text');
-      const pBar = document.getElementById('progress-bar');
-      const pSub = document.getElementById('loading-sub');
-
-      overlay.style.display = 'flex';
-      pBar.style.width = '30%';
-      loadingText.textContent = "Carregando relatório...";
-      pSub.textContent = "Buscando dados no servidor...";
+      showLoading("Carregando relatório...", "Buscando dados no servidor...", 30);
 
       try {
         const res = await fetch(`/api/reports/${reportId}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         const clientsData = await res.json();
-        pBar.style.width = '60%';
+        setProgress(60);
 
         await linkQueueInfo(clientsData, reportId);
-        pBar.style.width = '85%';
+        setProgress(85);
 
         if (clientsData && typeof clientsData === 'object') {
           DATA = clientsData;
         }
 
-        pBar.style.width = '100%';
-        await new Promise(resolve => setTimeout(resolve, 200));
+        setProgress(100);
+        await new Promise(resolve => setTimeout(resolve, 150));
         renderAll();
       } catch (e) {
         alert("Erro ao carregar relatório selecionado: " + e.message);
       } finally {
-        overlay.style.display = 'none';
+        hideLoading();
       }
     }
 
