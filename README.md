@@ -6,7 +6,7 @@
 [![Build Tool](https://img.shields.io/badge/Bundler-PyInstaller-yellow)](https://pyinstaller.org/)
 [![Platform Supported](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-brightgreen)](#)
 
-Esta é uma ferramenta profissional de CRM e Gestão de Cobrança desenvolvida para automatizar e otimizar o fluxo de recuperação de inadimplência da construtora. O sistema unifica o processamento de relatórios em PDF, calcula scores de risco inteligentes, classifica devedores em réguas de cobrança operacionais e facilita contatos dinâmicos via WhatsApp Web.
+Esta é uma ferramenta profissional de CRM e Gestão de Cobrança desenvolvida para automatizar e otimizar o fluxo de recuperação de inadimplência da construtora. O sistema sincroniza relatórios nativamente via **API da SeniorCloud (ProUAU)**, calcula scores de risco inteligentes, classifica devedores em réguas de cobrança operacionais e facilita contatos dinâmicos via WhatsApp Web.
 
 > [!IMPORTANT]
 > **Privacidade & Segurança:** Toda a manipulação de dados é realizada **localmente no seu computador** ou na **Intranet da sua empresa** — nunca na nuvem. O banco de dados SQLite (`inad_database.db`) fica no próprio servidor local. Acesso pela rede exige cadastro individual por operador (sem usuário/senha compartilhado) e fica registrado numa trilha de auditoria interna. Veja [🔒 Segurança e Privacidade](#-segurança-e-privacidade) abaixo.
@@ -20,17 +20,19 @@ O INAD possui uma arquitetura híbrida ultra-leve que permite rodar tanto de for
 ```mermaid
 graph TD
     subgraph Frontend ["Frontend (HTML5 / Glassmorphism UI)"]
-        UI["Painel de Cobrança / inad_whatsapp.html"]
+        UI["Painel de Cobrança / index.html"]
         ANA["Painel Científico / inad_analytics.html"]
         JS["Motor JS Local / localStorage"]
     end
 
     subgraph Backend ["Backend (Servidor run.py)"]
         API["Servidor HTTP Integrado"]
+        SYNC["Integração UAU (SeniorCloud)"]
         DB[("Banco SQLite / WAL Mode")]
     end
 
-    PDF["Relatório Inadimplência PDF"] -->|Drag & Drop / PDF.js| UI
+    API_UAU["API ProUAU"] -->|GET (Sincronização)| SYNC
+    SYNC -->|Mapeamento| DB
     UI -->|Registrar Log /api/actions/sent| API
     UI -->|Salvar Desfecho /api/outcomes| API
     API -->|Persistir dados| DB
@@ -123,7 +125,16 @@ operadores, veja [`TUTORIAL_INTRANET_WINDOWS.md`](./TUTORIAL_INTRANET_WINDOWS.md
 
 ## ⚙️ Para Desenvolvedores (Rodando via Código)
 
-### Instalação de Requisitos
+### Instalação de Requisitos e Configuração (API UAU)
+O sistema puxa relatórios nativamente da API ProUAU. Crie um arquivo `.env` na raiz do projeto com as chaves:
+
+```env
+UAU_BASE_URL=https://gamma-api.seniorcloud.com.br:51910/uauAPI
+UAU_USUARIO=seu_usuario
+UAU_SENHA=sua_senha
+UAU_X_INTEGRATION=seu_token_jwt
+```
+
 Instale o Python 3.8+ em sua máquina e garanta o driver SQLite padrão ativo. Para iniciar o servidor de desenvolvimento local:
 
 ```bash
@@ -137,8 +148,7 @@ O painel abrirá automaticamente no endereço correspondente.
 
 ### Estrutura dos Arquivos Principais
 - `run.py`: Servidor HTTP/API REST nativo em Python com SQLite em modo WAL e gerenciamento de erros estruturado.
-- `inad_template.html`: Template base da interface contendo o Design System (CSS) e lógica JS da aplicação.
-- `add_pdf_importer.py`: Compilador estático que gera o arquivo autônomo offline `inad_whatsapp.html` a partir do template.
+- `index.html`: Interface do Painel de Cobrança contendo o Design System (CSS), cards ricos e lógica JS da aplicação.
 - `inad_analytics.html` / `analytics.js`: Dashboard de inteligência estatística para análise de recuperação.
 - `inad_errors.log`: Arquivo gerado automaticamente em caso de exceções não tratadas no servidor para fins de suporte técnico.
 

@@ -90,6 +90,16 @@ if getattr(sys, "frozen", False):
 else:
     DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 
+env_path = os.path.join(DIRECTORY, ".env")
+if os.path.exists(env_path):
+    with open(env_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line and not line.startswith("#"):
+                parts = line.split("=", 1)
+                if len(parts) == 2:
+                    os.environ[parts[0].strip()] = parts[1].strip()
+
 # Teto de tamanho do corpo de requisições POST (proteção contra DoS por corpo
 # gigante). Configurável via INAD_MAX_BODY_BYTES; padrão 20 MB.
 MAX_BODY_BYTES = int(os.environ.get("INAD_MAX_BODY_BYTES", 20 * 1024 * 1024))
@@ -187,31 +197,36 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS clients (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            report_id   INTEGER NOT NULL,
-            name        TEXT    NOT NULL,
-            cpf_cnpj    TEXT    DEFAULT '',
-            cel         TEXT    DEFAULT '',
-            email       TEXT    DEFAULT '',
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id           INTEGER NOT NULL,
+            name                TEXT    NOT NULL,
+            cpf_cnpj            TEXT    DEFAULT '',
+            cel                 TEXT    DEFAULT '',
+            email               TEXT    DEFAULT '',
+            endereco            TEXT    DEFAULT '',
+            telefone_secundario TEXT    DEFAULT '',
             FOREIGN KEY(report_id) REFERENCES reports(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS properties (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_id   INTEGER NOT NULL,
-            venda_id    TEXT    NOT NULL,
-            identifier  TEXT    NOT NULL,
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_id      INTEGER NOT NULL,
+            venda_id       TEXT    NOT NULL,
+            identifier     TEXT    NOT NULL,
+            empreendimento TEXT    DEFAULT '',
             FOREIGN KEY(client_id) REFERENCES clients(id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS parcels (
-            id              INTEGER PRIMARY KEY AUTOINCREMENT,
-            property_id     INTEGER NOT NULL,
-            parcela         TEXT    NOT NULL,
-            vencimento      TEXT    NOT NULL,
-            vencimento_full TEXT    NOT NULL,
-            valor           REAL    DEFAULT 0.0,
-            valor_centavos  INTEGER DEFAULT 0,
+            id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            property_id            INTEGER NOT NULL,
+            parcela                TEXT    NOT NULL,
+            vencimento             TEXT    NOT NULL,
+            vencimento_full        TEXT    NOT NULL,
+            valor                  REAL    DEFAULT 0.0,
+            valor_centavos         INTEGER DEFAULT 0,
+            valor_original_centavos INTEGER DEFAULT 0,
+            valor_juros_centavos    INTEGER DEFAULT 0,
             FOREIGN KEY(property_id) REFERENCES properties(id) ON DELETE CASCADE
         );
 
@@ -302,10 +317,20 @@ def init_db():
     # continua com acesso de escrita — nenhuma mudança de comportamento na
     # migração; o papel restrito só existe para operadores criados de
     # propósito com --add-operator ... --read-only.
-    existing_operator_cols = {row[1] for row in cursor.execute("PRAGMA table_info(operators)")}
-    if "can_write" not in existing_operator_cols:
-        cursor.execute("ALTER TABLE operators ADD COLUMN can_write INTEGER NOT NULL DEFAULT 1")
-        print("[MIGRAÇÃO] Coluna can_write adicionada à tabela operators (papel somente-leitura).")
+    # Migração UAU API: Novas colunas de metadados ricos para bancos legados
+    existing_clients_cols = {row[1] for row in cursor.execute("PRAGMA table_info(clients)")}
+    if "endereco" not in existing_clients_cols:
+        cursor.execute("ALTER TABLE clients ADD COLUMN endereco TEXT DEFAULT ''")
+        cursor.execute("ALTER TABLE clients ADD COLUMN telefone_secundario TEXT DEFAULT ''")
+    
+    existing_props_cols = {row[1] for row in cursor.execute("PRAGMA table_info(properties)")}
+    if "empreendimento" not in existing_props_cols:
+        cursor.execute("ALTER TABLE properties ADD COLUMN empreendimento TEXT DEFAULT ''")
+        
+    if "valor_original_centavos" not in existing_parcel_cols:
+        cursor.execute("ALTER TABLE parcels ADD COLUMN valor_original_centavos INTEGER DEFAULT 0")
+        cursor.execute("ALTER TABLE parcels ADD COLUMN valor_juros_centavos INTEGER DEFAULT 0")
+        cursor.execute("UPDATE parcels SET valor_original_centavos = valor_centavos")
 
     conn.commit()
 
@@ -525,25 +550,28 @@ def _insert_clients(cursor, report_id, clients):
     """Insere em batch todos os clientes, imóveis e parcelas de um relatório."""
     for c_name, c_data in clients.items():
         cursor.execute(
-            "INSERT INTO clients (report_id, name, cpf_cnpj, cel, email) VALUES (?,?,?,?,?)",
+            "INSERT INTO clients (report_id, name, cpf_cnpj, cel, email, endereco, telefone_secundario) VALUES (?,?,?,?,?,?,?)",
             (report_id, c_name,
-             c_data.get("cpf_cnpj", ""), c_data.get("cel", ""), c_data.get("email", "")),
+             c_data.get("cpf_cnpj", ""), c_data.get("cel", ""), c_data.get("email", ""),
+             c_data.get("endereco", ""), c_data.get("telefone_secundario", "")),
         )
         client_id = cursor.lastrowid
         for prop in c_data.get("properties", []):
             cursor.execute(
-                "INSERT INTO properties (client_id, venda_id, identifier) VALUES (?,?,?)",
-                (client_id, prop.get("venda_id", ""), prop.get("identifier", "")),
+                "INSERT INTO properties (client_id, venda_id, identifier, empreendimento) VALUES (?,?,?,?)",
+                (client_id, prop.get("venda_id", ""), prop.get("identifier", ""), prop.get("empreendimento", "")),
             )
             property_id = cursor.lastrowid
             for parc in prop.get("parcels", []):
-                valor = float(parc.get("valor") or parc.get("valor_total") or parc.get("valor_parcela") or 0.0)
+                valor_atualizado = float(parc.get("valor") or parc.get("valor_total") or parc.get("valor_parcela") or 0.0)
+                valor_original = float(parc.get("valor_original", valor_atualizado))
+                valor_juros = float(parc.get("valor_juros", 0.0))
                 cursor.execute(
-                    "INSERT INTO parcels (property_id, parcela, vencimento, vencimento_full, valor, valor_centavos) "
-                    "VALUES (?,?,?,?,?,?)",
+                    "INSERT INTO parcels (property_id, parcela, vencimento, vencimento_full, valor, valor_centavos, valor_original_centavos, valor_juros_centavos) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
                     (property_id, parc.get("parcela", ""),
                      parc.get("vencimento", ""), _normalize_date(parc.get("vencimento_full", "")),
-                     valor, round(valor * 100)),
+                     valor_atualizado, round(valor_atualizado * 100), round(valor_original * 100), round(valor_juros * 100)),
                 )
 
 
@@ -553,10 +581,10 @@ def get_clients_for_report(report_id):
     """Retorna a árvore de clientes/imóveis/parcelas de um relatório como dict."""
     cursor = get_conn().cursor()
     rows = cursor.execute("""
-        SELECT c.name, c.cpf_cnpj, c.cel, c.email,
-               p.venda_id, p.identifier,
+        SELECT c.name, c.cpf_cnpj, c.cel, c.email, c.endereco, c.telefone_secundario,
+               p.venda_id, p.identifier, p.empreendimento,
                pa.parcela, pa.vencimento, pa.vencimento_full,
-               COALESCE(pa.valor, 0.0)
+               COALESCE(pa.valor, 0.0), pa.valor_original_centavos, pa.valor_juros_centavos
         FROM   clients c
         LEFT JOIN properties p  ON p.client_id   = c.id
         LEFT JOIN parcels    pa ON pa.property_id = p.id
@@ -566,20 +594,22 @@ def get_clients_for_report(report_id):
 
     result = {}
     for row in rows:
-        c_name, c_cpf, c_cel, c_email, p_vid, p_ident, pa_num, pa_venc, pa_venc_f, pa_val = row
+        c_name, c_cpf, c_cel, c_email, c_end, c_tel2, p_vid, p_ident, p_emp, pa_num, pa_venc, pa_venc_f, pa_val, pa_vo_cents, pa_vj_cents = row
         if not c_name:
             continue
         if c_name not in result:
             result[c_name] = {"name": c_name, "cpf_cnpj": c_cpf,
-                               "cel": c_cel, "email": c_email, "properties": []}
+                               "cel": c_cel, "email": c_email,
+                               "endereco": c_end, "telefone_secundario": c_tel2, "properties": []}
         props = result[c_name]["properties"]
         prop  = next((x for x in props if x["venda_id"] == p_vid), None) if p_vid else None
         if p_vid and not prop:
-            prop = {"venda_id": p_vid, "identifier": p_ident, "parcels": []}
+            prop = {"venda_id": p_vid, "identifier": p_ident, "empreendimento": p_emp, "parcels": []}
             props.append(prop)
         if prop and pa_num:
             prop["parcels"].append({
-                "parcela": pa_num, "vencimento": pa_venc, "vencimento_full": pa_venc_f, "valor": pa_val
+                "parcela": pa_num, "vencimento": pa_venc, "vencimento_full": pa_venc_f, 
+                "valor": pa_val, "valor_original": _cents_to_float(pa_vo_cents), "valor_juros": _cents_to_float(pa_vj_cents)
             })
     return result
 
@@ -1725,7 +1755,7 @@ def _log_access(conn, operator, client_name):
 # — qualquer outro caminho (incluindo run.py, *.db, .git/*, scripts/*, etc.,
 # que de outra forma o SimpleHTTPRequestHandler serviria sem restrição) recebe 404.
 _STATIC_ALLOWLIST = {
-    "/inad_template.html", "/inad_whatsapp.html", "/inad_analytics.html",
+    "/index.html", "/inad_analytics.html",
     "/analytics.css", "/analytics.js",
     "/libs/chart.umd.min.js", "/libs/pdf.min.js", "/libs/pdf.worker.min.js",
 }
@@ -1789,10 +1819,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         # Atalhos de navegação: acessar a raiz ou caminhos amigáveis sempre
         # cai na página certa, em vez de listagem de diretório ou 404.
         if path in ("/", ""):
-            target = "/inad_whatsapp.html" if os.path.exists(
-                os.path.join(DIRECTORY, "inad_whatsapp.html")
-            ) else "/inad_template.html"
-            self._redirect(target)
+            self._redirect("/index.html")
         elif path in ("/kpi", "/kpis"):
             self._redirect("/inad_whatsapp.html#kpi")
         elif path in ("/cobranca", "/painel"):
@@ -2693,6 +2720,71 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 print(f"[API] Desfecho registrado: '{outcome}' para o cliente '{client_name}'")
                 _json_response(self, {"status": "success", "id": cursor.lastrowid})
             except Exception as exc:
+                _error_response(self, exc, 500)
+
+        elif path == "/api/sync_uau":
+            try:
+                conn = get_conn()
+                cursor = conn.cursor()
+                
+                # TODO: Implementar a chamada real para a API UAU usando as credenciais abaixo:
+                uau_url = os.environ.get("UAU_BASE_URL")
+                uau_user = os.environ.get("UAU_USUARIO")
+                uau_pass = os.environ.get("UAU_SENHA")
+                uau_token = os.environ.get("UAU_X_INTEGRATION")
+                
+                if not all([uau_url, uau_user, uau_pass, uau_token]):
+                    _json_response(self, {"error": "Credenciais da UAU ausentes no arquivo .env"}, 500)
+                    return
+                
+                # Fake data para validar fluxo enquanto o endpoint não é confirmado
+                import datetime
+                report_name = f"UAU Sync {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                report_date = datetime.date.today().isoformat()
+                
+                cursor.execute(
+                    "INSERT INTO reports (report_name, report_date) VALUES (?, ?)",
+                    (report_name, report_date),
+                )
+                report_id = cursor.lastrowid
+                
+                # Client rico simulando o retorno estruturado do ERP ProUAU
+                import datetime
+                hoje = datetime.date.today()
+                d_aging = (hoje - datetime.timedelta(days=45)).isoformat()
+
+                clients = {
+                    "CARLOS EDUARDO PROUAU": {
+                        "cpf_cnpj": "123.456.789-00",
+                        "cel": "11988887777",
+                        "email": "carlos.uau@email.com",
+                        "endereco": "Av. Paulista, 1000 - Ap 42, São Paulo - SP",
+                        "properties": [
+                            {
+                                "empreendimento": "RESIDENCIAL SUNSET",
+                                "identifier": "QUADRA 05 LOTE 12",
+                                "venda_id": "887766",
+                                "parcels": [
+                                    {
+                                        "parcela": "08/60",
+                                        "vencimento": d_aging[8:10] + "/" + d_aging[5:7],
+                                        "vencimento_full": d_aging,
+                                        "valor_original": 1500.00,
+                                        "valor_juros": 150.00,
+                                        "valor": 1650.00
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                }
+                
+                _insert_clients(cursor, report_id, clients)
+                conn.commit()
+                print(f"[API] Sincronização UAU (Mock) concluída. Relatório ID: {report_id}")
+                _json_response(self, {"status": "success", "report_id": report_id, "mocked": True})
+            except Exception as exc:
+                conn.rollback()
                 _error_response(self, exc, 500)
 
         else:

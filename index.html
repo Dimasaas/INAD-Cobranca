@@ -1,0 +1,2936 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description"
+    content="INAD — Painel de Cobrança: gerencie inadimplência, importe relatórios em PDF, envie cobranças pelo WhatsApp e acompanhe KPIs de recuperação.">
+  <meta name="robots" content="noindex, nofollow">
+  <title>INAD — Painel de Cobrança</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+    rel="stylesheet">
+
+  <!-- PDF.js library for client-side PDF parsing -->
+  <script src="libs/pdf.min.js"
+    onerror="this.onerror=null; this.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js';"></script>
+
+  <style>
+    :root {
+      --bg: #090a0f;
+      --bg2: #10121a;
+      --bg3: #161a25;
+      --card: rgba(22, 26, 37, 0.65);
+      --border: rgba(255, 255, 255, 0.08);
+      --border2: rgba(255, 255, 255, 0.15);
+      --accent: #3b82f6;
+      --accent2: #8b5cf6;
+      --green: #10b981;
+      --green-bg: rgba(16, 185, 129, 0.15);
+      --red: #ef4444;
+      --red-bg: rgba(239, 68, 68, 0.15);
+      --amber: #f59e0b;
+      --amber-bg: rgba(245, 158, 11, 0.15);
+      --purple: #a855f7;
+      --purple-bg: rgba(168, 85, 247, 0.15);
+      --blue: #3b82f6;
+      --blue-bg: rgba(59, 130, 246, 0.15);
+      --text: #f8fafc;
+      --text2: #cbd5e1;
+      --text3: #64748b;
+      --r: 16px;
+      --r2: 10px;
+      --sh: 0 8px 30px rgba(0, 0, 0, 0.4);
+      --sh-hover: 0 16px 40px rgba(0, 0, 0, 0.5);
+      --glass: blur(12px);
+    }
+
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0
+    }
+
+    html {
+      scroll-behavior: smooth
+    }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      font-size: 14px;
+      line-height: 1.6
+    }
+
+    /* TOPBAR */
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(9, 10, 15, 0.85);
+      backdrop-filter: var(--glass);
+      -webkit-backdrop-filter: var(--glass);
+      border-bottom: 1px solid var(--border);
+      padding: 0 24px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      height: 70px
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-weight: 700;
+      font-size: 16px;
+      white-space: nowrap;
+      letter-spacing: 0.3px
+    }
+
+    .logo-icon {
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+      box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3)
+    }
+
+    .logo-sub {
+      font-size: 11px;
+      color: var(--text3);
+      font-weight: 400
+    }
+
+    .search-wrap {
+      position: relative;
+      flex: 1;
+      max-width: 380px
+    }
+
+    .search-wrap svg {
+      position: absolute;
+      left: 11px;
+      top: 50%;
+      transform: translateY(-50%);
+      color: var(--text3);
+      pointer-events: none
+    }
+
+    #search {
+      width: 100%;
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 9px 12px 9px 36px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13px;
+      outline: none;
+      transition: border-color .2s
+    }
+
+    #search:focus {
+      border-color: var(--accent)
+    }
+
+    #search::placeholder {
+      color: var(--text3)
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+    }
+
+    .btn-import {
+      background: var(--bg3);
+      color: var(--accent);
+      border: 1px solid var(--border);
+      padding: 6px 14px;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-weight: 600;
+    }
+
+    .btn-import:hover {
+      border-color: var(--accent);
+      background: rgba(79, 141, 255, .05);
+    }
+
+    .stats {
+      display: flex;
+      gap: 8px;
+    }
+
+    .stat {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 5px 14px;
+      border-radius: 8px;
+      background: var(--bg3);
+      border: 1px solid var(--border)
+    }
+
+    .stat-val {
+      font-size: 17px;
+      font-weight: 800;
+      line-height: 1.1
+    }
+
+    .stat-label {
+      font-size: 10px;
+      color: var(--text3);
+      font-weight: 500
+    }
+
+    .stat-blue .stat-val {
+      color: var(--accent)
+    }
+
+    .stat-green .stat-val {
+      color: var(--green)
+    }
+
+    .stat-purple .stat-val {
+      color: var(--purple)
+    }
+
+    /* FILTERS */
+    .filters {
+      padding: 12px 24px;
+      background: var(--bg2);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap
+    }
+
+    .fl {
+      font-size: 11px;
+      color: var(--text3);
+      font-weight: 600;
+      margin-right: 2px
+    }
+
+    .fb {
+      padding: 5px 13px;
+      border-radius: 20px;
+      border: 1px solid var(--border);
+      background: transparent;
+      color: var(--text2);
+      font-family: inherit;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all .15s
+    }
+
+    .fb:hover {
+      border-color: var(--accent);
+      color: var(--accent)
+    }
+
+    .fb.on {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff
+    }
+
+    .fsep {
+      width: 1px;
+      height: 18px;
+      background: var(--border);
+      margin: 0 2px
+    }
+
+    /* GRID */
+    .wrap {
+      padding: 22px 24px
+    }
+
+    .info {
+      font-size: 12px;
+      color: var(--text3);
+      margin-bottom: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .info strong {
+      color: var(--text2)
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(390px, 1fr));
+      gap: 14px
+    }
+
+    /* CARD */
+    .card {
+      background: var(--card);
+      backdrop-filter: var(--glass);
+      -webkit-backdrop-filter: var(--glass);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      transition: border-color .25s, transform .25s, box-shadow .25s
+    }
+
+    .card:hover {
+      border-color: var(--border2);
+      box-shadow: var(--sh-hover);
+      transform: translateY(-2px)
+    }
+
+    .card.sent {
+      opacity: .5;
+      filter: grayscale(30%)
+    }
+
+    /* CARD HEADER */
+    .ch {
+      padding: 16px 18px 14px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      position: relative
+    }
+
+    .av {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      font-size: 15px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2)
+    }
+
+    .av-f {
+      background: linear-gradient(135deg, #f472b6, #c084fc);
+      color: #fff
+    }
+
+    .av-m {
+      background: linear-gradient(135deg, #60a5fa, #34d399);
+      color: #fff
+    }
+
+    .av-e {
+      background: linear-gradient(135deg, #4ade80, #2dd4bf);
+      color: #fff
+    }
+
+    .ci {
+      flex: 1;
+      min-width: 0
+    }
+
+    .cn {
+      font-weight: 700;
+      font-size: 13px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis
+    }
+
+    .cm {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      margin-top: 3px;
+      flex-wrap: wrap
+    }
+
+    .mi {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 11.5px;
+      color: var(--text3)
+    }
+
+    .mi.err {
+      color: var(--red)
+    }
+
+    .pc {
+      font-size: 10.5px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      flex-shrink: 0;
+      letter-spacing: 0.3px
+    }
+
+    .pc.s {
+      background: var(--bg3);
+      color: var(--text2);
+      border: 1px solid var(--border)
+    }
+
+    .pc.m {
+      background: var(--purple-bg);
+      color: var(--purple);
+      border: 1px solid rgba(168, 85, 247, 0.3)
+    }
+
+    /* RISK BADGES */
+    .badge {
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      border: 1px solid transparent
+    }
+
+    .b-risk-high {
+      background: var(--red-bg);
+      color: var(--red);
+      border-color: rgba(239, 68, 68, 0.3)
+    }
+
+    .b-risk-med {
+      background: var(--amber-bg);
+      color: var(--amber);
+      border-color: rgba(245, 158, 11, 0.3)
+    }
+
+    .b-risk-low {
+      background: var(--green-bg);
+      color: var(--green);
+      border-color: rgba(16, 185, 129, 0.3)
+    }
+
+    .b-stage {
+      background: var(--blue-bg);
+      color: var(--blue);
+      border-color: rgba(59, 130, 246, 0.3)
+    }
+
+    /* PROPS */
+    .pl {
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 5px
+    }
+
+    .pr {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 9px;
+      border-radius: var(--r2);
+      background: var(--bg3);
+      border: 1px solid var(--border)
+    }
+
+    .pid {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent);
+      white-space: nowrap
+    }
+
+    .pp {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 3px;
+      flex: 1
+    }
+
+    .chip {
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(79, 141, 255, .1);
+      color: var(--accent);
+      border: 1px solid rgba(79, 141, 255, .2)
+    }
+
+    /* MESSAGE */
+    .ma {
+      padding: 10px 16px;
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 6px
+    }
+
+    .ml {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text3);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      display: flex;
+      justify-content: space-between
+    }
+
+    .ml span {
+      text-transform: none;
+      letter-spacing: 0;
+      font-weight: 400
+    }
+
+    .mb {
+      width: 100%;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: var(--r2);
+      padding: 9px 11px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 12.5px;
+      line-height: 1.6;
+      resize: vertical;
+      min-height: 128px;
+      outline: none;
+      transition: border-color .2s
+    }
+
+    .mb:focus {
+      border-color: var(--accent)
+    }
+
+    /* ACTIONS */
+    .ca {
+      padding: 12px 18px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 8px;
+      background: rgba(0, 0, 0, 0.15)
+    }
+
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      padding: 8px 14px;
+      border-radius: var(--r2);
+      border: none;
+      cursor: pointer;
+      font-family: inherit;
+      font-size: 12.5px;
+      font-weight: 600;
+      transition: all .2s;
+      text-decoration: none;
+      white-space: nowrap
+    }
+
+    .bcopy {
+      background: var(--bg3);
+      color: var(--text2);
+      border: 1px solid var(--border);
+      flex: 1
+    }
+
+    .bcopy:hover {
+      border-color: var(--text);
+      color: var(--text);
+      background: rgba(255, 255, 255, 0.05)
+    }
+
+    .bcopy.ok {
+      background: var(--green-bg);
+      color: var(--green);
+      border-color: var(--green)
+    }
+
+    .bwa {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff;
+      flex: 1.4;
+      box-shadow: 0 4px 14px rgba(16, 185, 129, .25)
+    }
+
+    .bwa:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(16, 185, 129, .4)
+    }
+
+    .bwa.noph {
+      background: var(--bg3);
+      color: var(--text3);
+      border: 1px solid var(--border);
+      box-shadow: none;
+      pointer-events: none;
+      opacity: .45
+    }
+
+    /* OUTCOME BUTTON */
+    .boutcome {
+      background: transparent;
+      color: var(--text2);
+      border: 1px solid var(--border);
+      padding: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .boutcome:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: var(--blue-bg)
+    }
+
+    /* OUTCOME SELECTOR */
+    .outcome-panel {
+      display: none;
+      padding: 12px 18px;
+      background: var(--bg2);
+      border-top: 1px solid var(--border);
+      gap: 8px;
+      flex-wrap: wrap;
+      animation: slideDown 0.2s ease
+    }
+
+    @keyframes slideDown {
+      from {
+        opacity: 0;
+        transform: translateY(-5px)
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0)
+      }
+    }
+
+    .outcome-panel.active {
+      display: flex
+    }
+
+    .oc-btn {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      color: var(--text2);
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s;
+      flex: 1;
+      text-align: center
+    }
+
+    .oc-btn:hover {
+      border-color: var(--accent);
+      color: var(--accent)
+    }
+
+    .oc-btn.pp {
+      border-color: rgba(16, 185, 129, 0.3);
+      color: var(--green)
+    }
+
+    .oc-btn.pp:hover {
+      background: var(--green-bg);
+      border-color: var(--green)
+    }
+
+    .oc-btn.ng {
+      border-color: rgba(245, 158, 11, 0.3);
+      color: var(--amber)
+    }
+
+    .oc-btn.ng:hover {
+      background: var(--amber-bg);
+      border-color: var(--amber)
+    }
+
+    /* HISTORY */
+    .hist {
+      font-size: 11px;
+      color: var(--text3);
+      padding: 8px 18px;
+      background: rgba(0, 0, 0, 0.2);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .hist strong {
+      color: var(--text2)
+    }
+
+    /* EMPTY */
+    .empty {
+      grid-column: 1/-1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 80px 20px;
+      gap: 10px;
+      color: var(--text3)
+    }
+
+    .empty svg {
+      opacity: .25
+    }
+
+    .empty h3 {
+      font-size: 16px;
+      color: var(--text2)
+    }
+
+    /* OVERLAYS */
+    #drop-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(13, 15, 20, 0.85);
+      backdrop-filter: blur(10px);
+      z-index: 1000;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+      border: 3px dashed var(--accent);
+    }
+
+    #loading-overlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(13, 15, 20, 0.92);
+      backdrop-filter: blur(10px);
+      z-index: 1001;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 4px solid var(--border);
+      border-top: 4px solid var(--accent);
+      border-radius: 50%;
+      animation: spin 1s linear infinite;
+    }
+
+    .spinner-sm {
+      width: 14px;
+      height: 14px;
+      border: 2px solid rgba(255, 255, 255, 0.4);
+      border-top: 2px solid #ffffff;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+      vertical-align: middle;
+    }
+
+    @keyframes spin {
+      0% {
+        transform: rotate(0deg);
+      }
+
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+
+    ::-webkit-scrollbar {
+      width: 5px
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--border);
+      border-radius: 3px
+    }
+
+    @media(max-width:600px) {
+      .grid {
+        grid-template-columns: 1fr
+      }
+
+      .topbar {
+        flex-wrap: wrap;
+        height: auto;
+        padding: 12px 16px;
+        gap: 10px;
+      }
+
+      .search-wrap {
+        order: 3;
+        max-width: 100%;
+        width: 100%
+      }
+
+      .top-actions {
+        width: 100%;
+        justify-content: space-between;
+        margin-left: 0;
+      }
+    }
+
+    /* TABS */
+    .tabs {
+      display: flex;
+      gap: 6px;
+      margin: 0 16px;
+      border: 1px solid var(--border);
+      padding: 3px;
+      border-radius: 10px;
+      background: var(--bg2);
+    }
+
+    .tab-btn {
+      padding: 6px 16px;
+      border-radius: 8px;
+      border: none;
+      background: transparent;
+      color: var(--text2);
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      transition: all .15s;
+    }
+
+    .tab-btn:hover {
+      color: var(--text);
+    }
+
+    .tab-btn.active {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--accent);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, .2);
+    }
+
+    /* REPORT SELECTOR */
+    .report-select {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 4px 12px;
+      color: var(--text2);
+      font-family: inherit;
+      font-size: 12px;
+      outline: none;
+      cursor: pointer;
+      font-weight: 500;
+    }
+
+    .report-select:focus {
+      border-color: var(--accent);
+    }
+
+    /* KPI DASHBOARD */
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    .kpi-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 18px 20px;
+      box-shadow: var(--sh);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .kpi-card::after {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 4px;
+      height: 100%;
+      background: linear-gradient(180deg, var(--accent), var(--accent2));
+    }
+
+    .kpi-card-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text3);
+      text-transform: uppercase;
+      letter-spacing: .5px;
+      margin-bottom: 6px;
+    }
+
+    .kpi-card-value {
+      font-size: 32px;
+      font-weight: 800;
+      color: var(--text);
+      line-height: 1.1;
+      margin-bottom: 6px;
+      background: linear-gradient(90deg, #fff, var(--text2));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .kpi-card-desc {
+      font-size: 11px;
+      color: var(--text3);
+      line-height: 1.4;
+    }
+
+    .kpi-charts-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+
+    @media (max-width: 900px) {
+      .kpi-charts-row {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .kpi-chart-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 20px;
+      box-shadow: var(--sh);
+    }
+
+    .kpi-chart-box h3 {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text2);
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .chart-container {
+      height: 260px;
+      position: relative;
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* KPI REPORTS TABLE */
+    .kpi-reports-section {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--r);
+      padding: 20px;
+      box-shadow: var(--sh);
+      margin-bottom: 40px;
+    }
+
+    .kpi-reports-section h3 {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text2);
+      margin-bottom: 16px;
+    }
+
+    .kpi-table {
+      width: 100%;
+      border-collapse: collapse;
+      text-align: left;
+      font-size: 13px;
+    }
+
+    .kpi-table th,
+    .kpi-table td {
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .kpi-table th {
+      font-weight: 600;
+      color: var(--text3);
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .5px;
+    }
+
+    .kpi-table td {
+      color: var(--text2);
+    }
+
+    .kpi-table tr:hover td {
+      background: rgba(255, 255, 255, .01);
+      color: var(--text);
+    }
+
+    .kpi-btn-action {
+      background: transparent;
+      border: 1px solid var(--border);
+      padding: 4px 10px;
+      border-radius: 6px;
+      color: var(--text2);
+      font-family: inherit;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all .15s;
+    }
+
+    .kpi-btn-action:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(79, 141, 255, .05);
+    }
+
+    .kpi-btn-del {
+      border-color: rgba(239, 68, 68, .3);
+      color: var(--red);
+    }
+
+    .kpi-btn-del:hover {
+      border-color: var(--red);
+      color: var(--red);
+      background: rgba(239, 68, 68, .05);
+    }
+
+    /* ESTILOS DE EXCLUSÃO DE CLIENTES DOS KPIS */
+    .btn-exclude-kpi {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border);
+      color: var(--text2);
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 20px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      transition: all .15s;
+      margin-left: 6px;
+    }
+
+    .btn-exclude-kpi:hover {
+      border-color: var(--red);
+      color: var(--red);
+      background: rgba(239, 68, 68, .05);
+    }
+
+    .btn-exclude-kpi.excluded {
+      background: var(--red-bg);
+      color: var(--red);
+      border-color: rgba(239, 68, 68, .2);
+    }
+
+    .btn-exclude-kpi.excluded:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+      background: rgba(79, 141, 255, .05);
+    }
+
+    .card.excluded-card {
+      border-color: rgba(239, 68, 68, .18);
+      box-shadow: none;
+    }
+
+    .card.excluded-card .av {
+      filter: grayscale(85%) opacity(70%);
+    }
+
+    .card.excluded-card .cn {
+      color: var(--text2);
+      text-decoration: line-through;
+    }
+  </style>
+</head>
+
+<body>
+  <div id="drop-overlay">
+    <span style="font-size:48px;">🔄</span>
+    <h2 style="font-weight:700; color:var(--text)">Sincronização via API ProUAU Ativa</h2>
+    <p style="color:var(--text3)">Solte um relatório PDF apenas para importação manual de fallback</p>
+  </div>
+
+  <div id="loading-overlay">
+    <div class="spinner"></div>
+    <h3 style="font-weight:700; color:var(--text); margin-bottom:4px;" id="loading-text">Processando PDF...</h3>
+    <div class="progress-wrap"
+      style="width:260px; height:6px; background:var(--border); border-radius:3px; overflow:hidden; margin:8px 0;">
+      <div id="progress-bar"
+        style="width:0%; height:100%; background:linear-gradient(90deg, var(--accent), var(--accent2)); transition:width 0.15s;">
+      </div>
+    </div>
+    <p style="color:var(--text3)" id="loading-sub">Carregando páginas e mapeando clientes</p>
+  </div>
+
+
+  <header class="topbar">
+    <div class="logo">
+      <div class="logo-icon">🏡</div>
+      <div>INAD · Cobrança</div>
+    </div>
+    <div class="search-wrap">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="11" cy="11" r="8" />
+        <path d="m21 21-4.35-4.35" />
+      </svg>
+      <input id="search" type="text" placeholder="Buscar cliente, quadra, lote…" autocomplete="off">
+    </div>
+
+    <div class="tabs">
+      <button class="tab-btn active" id="tab-cobranca" onclick="switchTab('cobranca')">💬 Cobrança</button>
+      <button class="tab-btn" id="tab-kpi" onclick="switchTab('kpi')">📈 Indicadores (KPIs)</button>
+      <a class="tab-btn" href="inad_analytics.html" style="text-decoration:none"
+        title="Análise avançada com segmentação e filtros por período">🔬 Analytics</a>
+    </div>
+
+    <div class="top-actions">
+      <button class="btn btn-sync-uau" id="btn-sync-uau" onclick="syncUAU()"
+        style="background: linear-gradient(135deg, var(--accent), var(--accent2)); color:#fff; border:none; padding:7px 16px; border-radius:8px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow: 0 4px 12px rgba(139,92,246,0.3); transition: all 0.2s;">
+        ⚡ Sincronizar com ProUAU
+      </button>
+      <button class="btn btn-import" onclick="document.getElementById('pdf-input').click()" style="opacity:0.8;"
+        title="Fallback: Importação manual via PDF">
+        📂 Importar PDF (Fallback)
+      </button>
+      <input type="file" id="pdf-input" accept=".pdf" style="display:none;" multiple onchange="handlePDFUpload(event)">
+
+      <div class="stats">
+        <div class="stat stat-blue"><span class="stat-val" id="st-total">—</span><span class="stat-label">Total</span>
+        </div>
+        <div class="stat stat-green"><span class="stat-val" id="st-sent">0</span><span
+            class="stat-label">Enviados</span></div>
+        <div class="stat stat-purple"><span class="stat-val" id="st-multi">—</span><span
+            class="stat-label">Multi-imóvel</span></div>
+      </div>
+    </div>
+  </header>
+
+  <div class="filters">
+    <span class="fl">Status:</span>
+    <button class="fb on" onclick="sf('all',this)">Todos</button>
+    <button class="fb" onclick="sf('pending',this)">Pendentes</button>
+    <button class="fb" onclick="sf('sent',this)">Enviados ✓</button>
+    <div class="fsep"></div>
+    <span class="fl">Risco:</span>
+    <button class="fb" onclick="sf('high',this)">Alto</button>
+    <button class="fb" onclick="sf('med',this)">Médio</button>
+    <button class="fb" onclick="sf('low',this)">Baixo</button>
+    <div class="fsep"></div>
+    <span class="fl">Outros:</span>
+    <button class="fb" onclick="sf('pre_juridico',this)">Pré-Jurídico</button>
+    <button class="fb" onclick="sf('single',this)">1 Imóvel</button>
+    <button class="fb" onclick="sf('multi',this)">Multi</button>
+    <button class="fb" onclick="sf('noph',this)">Sem Tel</button>
+    <div class="fsep" id="report-select-sep" style="display:none;"></div>
+    <select id="report-select" onchange="changeReport(this.value)" class="report-select" style="display:none;">
+      <option value="latest">Relatório Atual</option>
+    </select>
+  </div>
+
+  <div class="wrap" id="cobranca-screen">
+    <div class="info" id="info"></div>
+    <div class="grid" id="grid"></div>
+    <div
+      style="text-align: right; font-size: 10px; color: var(--text3); margin-top: 24px; opacity: 0.55; padding-right: 12px; padding-bottom: 12px; font-weight: 500;">
+      🔒 Dados locais em conformidade com a LGPD
+    </div>
+  </div>
+
+  <div class="kpi-screen" id="kpi-screen" style="display:none; padding: 22px 24px;">
+    <div class="kpi-grid">
+      <div class="kpi-card">
+        <div class="kpi-card-title">Taxa de Recuperação Média</div>
+        <div class="kpi-card-value" id="kpi-recovery-rate">—</div>
+        <div class="kpi-card-desc">Média de clientes que saíram da lista de inadimplência entre relatórios consecutivos
+          — sumir não significa necessariamente que pagou (pode ser jurídico, renegociação fora do sistema, etc.).</div>
+        <span class="chip" id="kpi-recovery-confirmed"
+          style="display:inline-block; margin-top:8px; background:var(--blue-bg); color:var(--blue); border:1px solid rgba(59,130,246,0.3); font-size:11px; font-weight:600;">—
+          confirmada (pagamento registrado)</span>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-card-title">Total Inadimplente (Atual)</div>
+        <div class="kpi-card-value" id="kpi-active-value">—</div>
+        <div class="kpi-card-desc">Soma do valor de todas as parcelas vencidas no último relatório selecionado.</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-card-title">Clientes em Atraso (Atual)</div>
+        <div class="kpi-card-value" id="kpi-active-clients">—</div>
+        <div class="kpi-card-desc">Total de clientes devedores ativos no último relatório selecionado.</div>
+      </div>
+      <div class="kpi-card">
+        <div class="kpi-card-title">Parcelas em Atraso (Atual)</div>
+        <div class="kpi-card-value" id="kpi-active-parcels">—</div>
+        <div class="kpi-card-desc">Total de parcelas vencidas no último relatório selecionado.</div>
+      </div>
+    </div>
+
+    <div class="kpi-charts-row">
+      <div class="kpi-chart-box">
+        <h3>📈 Evolução do Valor Inadimplente</h3>
+        <div id="chart-evolution" class="chart-container">
+          <p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar o gráfico. Importe mais de um
+            relatório.</p>
+        </div>
+      </div>
+      <div class="kpi-chart-box">
+        <h3>📊 Histórico de Recuperação por Período</h3>
+        <div style="display:flex; gap:14px; font-size:10px; color:var(--text3); margin-bottom:8px;">
+          <span><span
+              style="display:inline-block; width:8px; height:8px; border-radius:2px; background:var(--green); margin-right:4px;"></span>Saiu
+            da lista</span>
+          <span><span
+              style="display:inline-block; width:8px; height:8px; border-radius:2px; background:var(--blue); margin-right:4px;"></span>Confirmado
+            (pagou)</span>
+        </div>
+        <div id="chart-comparison" class="chart-container">
+          <p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar o gráfico. Importe mais de um
+            relatório.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="kpi-bottom-row" style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom: 24px;">
+      <div class="kpi-reports-section" style="flex: 2; min-width: 500px;">
+        <div
+          style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px; flex-wrap:wrap; gap:10px;">
+          <h3 style="margin:0;">Relatórios Históricos Salvos</h3>
+          <div style="display:flex; gap:8px;">
+            <button class="kpi-btn-action" onclick="selectAllReports(true)">Selecionar Todos</button>
+            <button class="kpi-btn-action" onclick="selectAllReports(false)">Desmarcar Todos</button>
+          </div>
+        </div>
+        <table class="kpi-table">
+          <thead>
+            <tr>
+              <th style="width: 45px; text-align: center;">
+                <input type="checkbox" id="kpi-select-all-checkbox" checked onchange="toggleSelectAllReports(this)"
+                  style="cursor:pointer; width:15px; height:15px;">
+              </th>
+              <th>ID</th>
+              <th>Identificação do Relatório</th>
+              <th>Importado em</th>
+              <th>Clientes Inadimplentes</th>
+              <th>Parcelas em Atraso</th>
+              <th>Total Inadimplente</th>
+              <th style="text-align: right; width: 100px;">Ações</th>
+            </tr>
+          </thead>
+          <tbody id="kpi-reports-tbody">
+            <tr>
+              <td colspan="8" style="text-align:center; padding: 20px 0; color:var(--text3);">Nenhum relatório
+                importado.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="kpi-exclusions-section"
+        style="flex: 1; min-width: 300px; background:var(--card); padding:20px; border-radius:12px; border:1px solid var(--border);">
+        <h3 style="margin-top:0; margin-bottom:16px; font-size:14px; font-weight:700; color:var(--text2);">Clientes
+          Ignorados nos KPIs</h3>
+
+        <div style="display:flex; gap:8px; margin-bottom:16px;">
+          <input type="text" id="kpi-exclude-input" list="kpi-clients-datalist" placeholder="Nome exato do cliente..."
+            style="flex:1; background:rgba(255,255,255,0.03); border:1px solid var(--border); padding:8px 12px; border-radius:6px; color:var(--text); font-family:inherit; font-size:13px;">
+          <datalist id="kpi-clients-datalist"></datalist>
+          <button class="kpi-btn-action" onclick="addClientExclusionFromInput()" style="padding:8px 14px;">🚫
+            Ignorar</button>
+        </div>
+
+        <div id="kpi-exclusions-list"
+          style="display:flex; flex-direction:column; gap:8px; max-height:300px; overflow-y:auto; padding-right:4px;">
+          <!-- List of excluded clients will be populated here -->
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ─── AUTENTICAÇÃO (só relevante se o servidor estiver exposto além de
+    // localhost — ver run.py, _authenticate()). Captura ?token= da URL uma
+    // única vez, guarda em sessionStorage e injeta como header X-INAD-Token em
+    // toda chamada fetch() da página daqui pra frente.
+    (function () {
+      const params = new URLSearchParams(location.search);
+      const urlToken = params.get('token');
+      if (urlToken) {
+        sessionStorage.setItem('inad_token', urlToken);
+        params.delete('token');
+        const qs = params.toString();
+        history.replaceState(null, '', location.pathname + (qs ? '?' + qs : '') + location.hash);
+      }
+      const _fetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        const token = sessionStorage.getItem('inad_token');
+        if (token) {
+          init = init || {};
+          const headers = new Headers(init.headers || {});
+          headers.set('X-INAD-Token', token);
+          init = Object.assign({}, init, { headers });
+        }
+        return _fetch(input, init);
+      };
+    })();
+
+    // ─── SANITIZAÇÃO (previne XSS armazenado a partir de dados do PDF/rede) ────
+    // Uso: escapeHtml() para qualquer valor inserido como texto/atributo via
+    // innerHTML ou template literal; jsAttr() para valores usados como argumento
+    // string dentro de handlers inline (onclick="fn('...')").
+    function escapeHtml(s) {
+      return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    }
+    function jsAttr(s) {
+      const js = String(s ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'")
+        .replace(/\n/g, '\\n')
+        .replace(/\r/g, '\\r');
+      return js.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+    }
+
+    // ─── DATA LOADING ────────────────────────────────────────────────────────
+    const EMBEDDED_DATA = CLIENTS_JSON_PLACEHOLDER;
+    let DATA = {};
+    let sent = new Set();
+    let isServerActive = false;
+
+    // Controle de seleção de relatórios nos KPIs
+    let selectedReportIds = new Set();
+    let isFirstKPILoad = true;
+    let excludedClients = new Set();
+
+    async function linkQueueInfo(clientsData, reportId = null) {
+      if (!clientsData) return;
+      try {
+        let url = '/api/queue';
+        if (reportId) {
+          url += `?report_id=${reportId}`;
+        }
+        const queueRes = await fetch(url);
+        const queueJson = await queueRes.json();
+        if (queueJson && queueJson.queue) {
+          for (const q of queueJson.queue) {
+            if (clientsData[q.name]) {
+              clientsData[q.name].queue_info = q;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn("Queue API indisponível ou falhou:", e);
+      }
+    }
+
+    async function initApp() {
+      if (window.location.protocol === 'http:' || window.location.protocol === 'https:') {
+        try {
+          const clientsRes = await fetch('/api/clients');
+          const clientsData = await clientsRes.json();
+
+          const sentRes = await fetch('/api/sent');
+          const sentList = await sentRes.json();
+
+          // Carrega a lista de exclusões do KPI do servidor
+          try {
+            const exclRes = await fetch('/api/kpis/exclusions');
+            const exclList = await exclRes.json();
+            if (Array.isArray(exclList)) {
+              excludedClients = new Set(exclList);
+            }
+          } catch (exErr) {
+            console.warn("Falha ao buscar exclusões de KPI:", exErr);
+          }
+
+          isServerActive = true;
+          await linkQueueInfo(clientsData);
+
+          if (clientsData && typeof clientsData === 'object') {
+            DATA = Object.keys(clientsData).length > 0 ? clientsData : EMBEDDED_DATA;
+            console.log("Banco de dados sincronizado com o servidor.");
+
+            // Show report selector elements
+            document.getElementById('report-select-sep').style.display = 'block';
+            document.getElementById('report-select').style.display = 'block';
+
+            await updateReportDropdown();
+            await loadKPIs();
+          } else {
+            DATA = EMBEDDED_DATA;
+          }
+
+          if (Array.isArray(sentList)) {
+            sent = new Set(sentList);
+          }
+        } catch (e) {
+          console.warn("Falha ao comunicar com a API do servidor, usando armazenamento local:", e);
+          loadLocalData();
+        }
+      } else {
+        loadLocalData();
+      }
+
+      normalizeData();
+      migrateSentData();
+      renderAll();
+
+      const initialTab = location.hash.replace('#', '');
+      if (initialTab === 'kpi') switchTab('kpi');
+    }
+
+    function loadLocalData() {
+      DATA = JSON.parse(localStorage.getItem('inad_clients_db')) || EMBEDDED_DATA;
+      sent = new Set(JSON.parse(localStorage.getItem('inad_sent') || '[]'));
+      excludedClients = new Set(JSON.parse(localStorage.getItem('inad_kpi_exclusions') || '[]'));
+      isServerActive = false;
+      document.getElementById('report-select-sep').style.display = 'none';
+      document.getElementById('report-select').style.display = 'none';
+    }
+
+    async function syncUAU() {
+      const btn = document.getElementById('btn-sync-uau');
+      const overlay = document.getElementById('loading-overlay');
+      const loadingText = document.getElementById('loading-text');
+      const progressBar = document.getElementById('progress-bar');
+
+      if (!btn) return;
+
+      const originalText = btn.innerHTML;
+      btn.disabled = true;
+      btn.style.opacity = '0.75';
+      btn.innerHTML = '<span class="spinner-sm"></span> Sincronizando...';
+
+      if (overlay) {
+        if (loadingText) loadingText.innerText = 'Sincronizando dados com a API ProUAU...';
+        if (progressBar) progressBar.style.width = '45%';
+        overlay.style.display = 'flex';
+      }
+
+      try {
+        if (progressBar) progressBar.style.width = '75%';
+        const res = await fetch('/api/sync_uau', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        const data = await res.json();
+
+        if (progressBar) progressBar.style.width = '100%';
+
+        if (res.ok && data.status === 'success') {
+          setTimeout(() => {
+            alert("✅ Sincronização com a API ProUAU concluída com sucesso!");
+            if (typeof updateReportDropdown === 'function') {
+              updateReportDropdown();
+            }
+            location.reload();
+          }, 200);
+        } else {
+          if (overlay) overlay.style.display = 'none';
+          alert("❌ Erro na sincronização ProUAU: " + (data.error || "Falha desconhecida."));
+        }
+      } catch (err) {
+        if (overlay) overlay.style.display = 'none';
+        alert("❌ Erro ao conectar com o servidor: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.style.opacity = '1';
+        btn.innerHTML = originalText;
+      }
+    }
+
+    function resetDatabase() {
+      if (confirm("Deseja restaurar a base de dados padrão? Todos os dados locais salvos no navegador serão apagados.")) {
+        localStorage.removeItem('inad_clients_db');
+        localStorage.removeItem('inad_sent');
+        localStorage.removeItem('inad_kpi_exclusions');
+        location.reload();
+      }
+    }
+
+    function normalizeData() {
+      if (!DATA) return;
+      for (const client of Object.values(DATA)) {
+        if (client.properties) {
+          client.properties.forEach(prop => {
+            if (prop.parcels) {
+              prop.parcels.forEach(parc => {
+                parc.valor = parseFloat(parc.valor || parc.valor_total || parc.valor_parcela || 0);
+              });
+            }
+          });
+        }
+      }
+    }
+
+    function switchTab(tab) {
+      const cobrancaScreen = document.getElementById('cobranca-screen');
+      const kpiScreen = document.getElementById('kpi-screen');
+      const filtersBar = document.querySelector('.filters');
+      const searchWrap = document.querySelector('.search-wrap');
+
+      document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+
+      if (tab === 'cobranca') {
+        document.getElementById('tab-cobranca').classList.add('active');
+        cobrancaScreen.style.display = 'block';
+        kpiScreen.style.display = 'none';
+        filtersBar.style.display = 'flex';
+        searchWrap.style.visibility = 'visible';
+        renderAll();
+      } else if (tab === 'kpi') {
+        document.getElementById('tab-kpi').classList.add('active');
+        cobrancaScreen.style.display = 'none';
+        kpiScreen.style.display = 'block';
+        filtersBar.style.display = 'none';
+        searchWrap.style.visibility = 'hidden';
+        loadKPIs();
+      }
+      if (location.hash.replace('#', '') !== tab) {
+        history.replaceState(null, '', `#${tab}`);
+      }
+    }
+
+    async function changeReport(reportId) {
+      if (reportId === 'latest') return;
+
+      const overlay = document.getElementById('loading-overlay');
+      const loadingText = document.getElementById('loading-text');
+      const pBar = document.getElementById('progress-bar');
+      const pSub = document.getElementById('loading-sub');
+
+      overlay.style.display = 'flex';
+      pBar.style.width = '30%';
+      loadingText.textContent = "Carregando relatório...";
+      pSub.textContent = "Buscando dados no servidor...";
+
+      try {
+        const res = await fetch(`/api/reports/${reportId}`);
+        const clientsData = await res.json();
+        pBar.style.width = '60%';
+
+        await linkQueueInfo(clientsData, reportId);
+        pBar.style.width = '85%';
+
+        if (clientsData && typeof clientsData === 'object') {
+          DATA = clientsData;
+        }
+
+        pBar.style.width = '100%';
+        await new Promise(resolve => setTimeout(resolve, 200));
+        overlay.style.display = 'none';
+        renderAll();
+      } catch (e) {
+        overlay.style.display = 'none';
+        alert("Erro ao carregar relatório selecionado: " + e.message);
+      }
+    }
+
+    let reportsListCache = null;
+    async function updateReportsCache() {
+      try {
+        const res = await fetch('/api/reports');
+        reportsListCache = await res.json();
+      } catch (e) { }
+    }
+
+    async function updateReportDropdown() {
+      try {
+        await updateReportsCache();
+        const reports = reportsListCache || [];
+        const select = document.getElementById('report-select');
+        select.innerHTML = "";
+
+        if (reports.length === 0) {
+          select.innerHTML = '<option value="latest">Sem relatórios</option>';
+          return;
+        }
+
+        reports.forEach((rep, idx) => {
+          const option = document.createElement('option');
+          option.value = rep.id;
+          // Usa a data real de emissão do PDF (report_date) como referência primária
+          let displayDate = rep.report_date || rep.imported_at;
+          try {
+            // report_date vem como YYYY-MM-DD — formata manualmente para evitar erro de fuso horário
+            if (rep.report_date && /^\d{4}-\d{2}-\d{2}$/.test(rep.report_date)) {
+              const [y, m, d] = rep.report_date.split('-');
+              displayDate = `${d}/${m}/${y}`;
+            } else {
+              const dateObj = new Date(rep.imported_at);
+              displayDate = dateObj.toLocaleDateString('pt-BR');
+            }
+          } catch (_) { }
+          option.textContent = `${rep.report_name} (${displayDate})`;
+          if (idx === 0) option.selected = true;
+          select.appendChild(option);
+        });
+      } catch (e) {
+        console.error("Erro ao carregar dropdown de relatórios:", e);
+      }
+    }
+
+    async function loadKPIs() {
+      if (!isServerActive) return;
+      try {
+        // 1. Garante que temos a lista completa em cache
+        await updateReportsCache();
+        const cachedList = reportsListCache || [];
+
+        // 2. Busca KPIs. Se for a primeira carga, buscamos todos para identificar duplicados.
+        const reportsParam = (!isFirstKPILoad && selectedReportIds.size > 0) ? Array.from(selectedReportIds).join(',') : '';
+        const res = await fetch(`/api/kpis?reports=${reportsParam}`);
+        const kpiData = await res.json();
+
+        const transitions = kpiData.transitions || [];
+        const evolution = kpiData.evolution || [];
+        const all_evolution = kpiData.all_evolution || [];
+
+        // Inicialização da seleção na primeira carga (desmarca duplicados automaticamente)
+        if (isFirstKPILoad && all_evolution.length > 0) {
+          selectedReportIds = new Set(
+            all_evolution
+              .filter(e => !e.is_duplicate)
+              .map(e => e.report_id)
+          );
+          isFirstKPILoad = false;
+
+          // Se houver algum duplicado desmarcado, recarrega para recalcular gráficos e médias
+          const hasDuplicates = all_evolution.some(e => e.is_duplicate);
+          if (hasDuplicates) {
+            return loadKPIs();
+          }
+        }
+
+        let totalRecoveryRate = "—";
+        let totalRecoveryConfirmed = "— confirmada (pagamento registrado)";
+
+        if (transitions.length > 0) {
+          const sumRecovery = transitions.reduce((acc, curr) => acc + curr.recovery_rate, 0);
+          totalRecoveryRate = (sumRecovery / transitions.length).toFixed(1) + "%";
+
+          const sumConfirmed = transitions.reduce((acc, curr) => acc + (curr.recovery_rate_confirmed || 0), 0);
+          const avgConfirmed = (sumConfirmed / transitions.length).toFixed(1);
+          totalRecoveryConfirmed = `${avgConfirmed}% confirmada (pagamento registrado)`;
+        } else if (evolution.length > 0) {
+          totalRecoveryRate = "Aguardando";
+        }
+
+        // Pega as estatísticas do relatório selecionado mais recente para mostrar como "Atual"
+        let latestClients = "—";
+        let latestParcels = "—";
+        let latestValue = "—";
+        if (evolution.length > 0) {
+          const latest = evolution[evolution.length - 1];
+          latestClients = latest.clients;
+          latestParcels = latest.parcels;
+          latestValue = formatCurrency(latest.total_value || 0);
+        }
+
+        document.getElementById('kpi-recovery-rate').textContent = totalRecoveryRate;
+        document.getElementById('kpi-recovery-confirmed').textContent = totalRecoveryConfirmed;
+        document.getElementById('kpi-active-value').textContent = latestValue;
+        document.getElementById('kpi-active-clients').textContent = latestClients;
+        document.getElementById('kpi-active-parcels').textContent = latestParcels;
+
+        const tbody = document.getElementById('kpi-reports-tbody');
+        tbody.innerHTML = "";
+
+        if (all_evolution.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="8" style="text-align:center; padding:20px; color:var(--text3);">Nenhum relatório importado.</td></tr>';
+        } else {
+          [...all_evolution].reverse().forEach(rep => {
+            const tr = document.createElement('tr');
+            const reportDetails = cachedList.find(r => r.id === rep.report_id);
+
+            // Prefere report_date (data real do PDF), fallback para imported_at
+            let formattedDate = '—';
+            const rDate = rep.report_date || (reportDetails && reportDetails.report_date);
+            const iDate = reportDetails ? reportDetails.imported_at : null;
+
+            if (rDate && /^\d{4}-\d{2}-\d{2}$/.test(rDate)) {
+              const [y, m, d] = rDate.split('-');
+              formattedDate = `${d}/${m}/${y}`;
+            } else if (iDate) {
+              formattedDate = new Date(iDate).toLocaleDateString('pt-BR');
+            }
+
+            const isChecked = selectedReportIds.has(rep.report_id);
+            const isDuplicate = rep.is_duplicate;
+
+            // Esmaece visualmente o texto se for duplicado para sinalizar
+            if (isDuplicate) {
+              tr.style.opacity = '0.65';
+            }
+
+            const duplicateBadge = isDuplicate
+              ? `<span class="chip" style="background:var(--purple-bg); color:var(--purple); border-color:rgba(168,85,247,.2); margin-left:8px;">Duplicado (Ignorado)</span>`
+              : '';
+
+            tr.innerHTML = `
+          <td style="text-align: center;">
+            <input type="checkbox" class="report-checkbox" data-id="${rep.report_id}" ${isChecked ? 'checked' : ''} onchange="toggleReportSelection(${rep.report_id}, this.checked)" style="cursor:pointer; width:15px; height:15px;">
+          </td>
+          <td><strong>#${rep.report_id}</strong></td>
+          <td>${escapeHtml(rep.report_name)} ${duplicateBadge}</td>
+          <td>${formattedDate}</td>
+          <td>${rep.clients} clientes</td>
+          <td><span class="chip" style="background:var(--red-bg); color:var(--red); border-color:rgba(239,68,68,.2);">${rep.parcels} parcelas</span></td>
+          <td><strong>${formatCurrency(rep.total_value || 0)}</strong></td>
+          <td style="text-align: right;">
+            <button class="kpi-btn-action kpi-btn-del" onclick="deleteReport(${rep.report_id}, '${jsAttr(rep.report_name)}')">🗑️ Excluir</button>
+          </td>
+        `;
+            tbody.appendChild(tr);
+          });
+
+          // Atualiza estado do checkbox mestre (Selecionar Todos)
+          const globalCheckbox = document.getElementById('kpi-select-all-checkbox');
+          if (globalCheckbox) {
+            const checkboxes = document.querySelectorAll('.report-checkbox');
+            const allChecked = Array.from(checkboxes).every(cb => cb.checked);
+            globalCheckbox.checked = allChecked && checkboxes.length > 0;
+          }
+        }
+
+        drawEvolutionChart(evolution);
+        drawComparisonChart(transitions);
+
+        // Atualiza a datalist de clientes
+        updateClientsDatalist();
+
+        // Renderiza a lista lateral de exclusões
+        const exclListContainer = document.getElementById('kpi-exclusions-list');
+        if (exclListContainer) {
+          exclListContainer.innerHTML = '';
+          if (excludedClients.size === 0) {
+            exclListContainer.innerHTML = '<p style="color:var(--text3); font-size:12px; margin:0; text-align:center; padding:10px 0;">Nenhum cliente ignorado.</p>';
+          } else {
+            Array.from(excludedClients).sort().forEach(name => {
+              const item = document.createElement('div');
+              item.style.cssText = 'display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.01); border:1px solid var(--border); padding:6px 10px; border-radius:6px; font-size:12px;';
+              item.innerHTML = `
+            <span style="color:var(--text2); font-weight:500;" title="${escapeHtml(name)}">${escapeHtml(tc(name))}</span>
+            <button class="kpi-btn-action kpi-btn-del" onclick="toggleClientExclusion('${jsAttr(name)}')" style="padding:2px 6px; font-size:10px;">Reativar</button>
+          `;
+              exclListContainer.appendChild(item);
+            });
+          }
+        }
+
+      } catch (e) {
+        console.error("Erro ao carregar dados do dashboard de KPIs:", e);
+      }
+    }
+
+    // ─── AUXILIARES DE COMPARAÇÃO & EXCLUSÃO ───────────────────────────────────
+
+    function toggleReportSelection(reportId, isChecked) {
+      if (isChecked) {
+        selectedReportIds.add(reportId);
+      } else {
+        selectedReportIds.delete(reportId);
+      }
+      loadKPIs();
+    }
+
+    function toggleSelectAllReports(globalCb) {
+      selectAllReports(globalCb.checked);
+    }
+
+    function selectAllReports(selectAll) {
+      const checkboxes = document.querySelectorAll('.report-checkbox');
+      checkboxes.forEach(cb => {
+        const rid = parseInt(cb.dataset.id);
+        if (selectAll) {
+          selectedReportIds.add(rid);
+        } else {
+          selectedReportIds.delete(rid);
+        }
+      });
+      loadKPIs();
+    }
+
+    async function deleteReport(reportId, reportName) {
+      if (!confirm(`Tem certeza que deseja excluir permanentemente o relatório "${reportName}"?\nEsta ação é irreversível e excluirá todos os clientes, parcelas e imóveis correspondentes.`)) {
+        return;
+      }
+
+      try {
+        const res = await fetch(`/api/reports/${reportId}`, { method: 'DELETE' });
+        const result = await res.json();
+
+        if (result.status === 'success') {
+          selectedReportIds.delete(reportId);
+
+          // Atualiza caches e dropdown
+          await updateReportDropdown();
+
+          // Se era o relatório ativo no select, recarrega para o "latest"
+          const select = document.getElementById('report-select');
+          if (select && select.value == reportId) {
+            select.value = 'latest';
+            await changeReport('latest');
+          }
+
+          await loadKPIs();
+          alert("Relatório excluído com sucesso!");
+        } else {
+          alert("Erro ao excluir relatório: " + result.error);
+        }
+      } catch (e) {
+        alert("Erro ao excluir relatório: " + e.message);
+      }
+    }
+
+    function drawEvolutionChart(evolution) {
+      const container = document.getElementById('chart-evolution');
+      if (evolution.length < 2) {
+        container.innerHTML = '<p style="color:var(--text3); font-size:12px;">Dados insuficientes para desenhar a linha do tempo. Importe pelo menos dois relatórios.</p>';
+        return;
+      }
+
+      const width = container.clientWidth > 0 ? container.clientWidth : 560;
+      const height = 220;
+      const padding = 55; // aumento de padding para caber os rótulos de moeda
+
+      const maxVal = Math.max(...evolution.map(d => d.total_value || 0), 1000);
+      const minVal = 0;
+
+      const points = evolution.map((d, i) => {
+        const x = padding + (i / (evolution.length - 1)) * (width - padding * 2);
+        const val = d.total_value || 0;
+        const y = height - padding - ((val - minVal) / (maxVal - minVal)) * (height - padding * 2);
+        let label = d.report_name;
+        if (d.report_date && /^\d{4}-\d{2}-\d{2}$/.test(d.report_date)) {
+          const [yr, mo, dy] = d.report_date.split('-');
+          label = `${dy}/${mo}/${yr.slice(2)}`;
+        }
+        return { x, y, name: escapeHtml(label), value: val };
+      });
+
+      let pathD = `M ${points[0].x} ${points[0].y}`;
+      for (let i = 1; i < points.length; i++) {
+        pathD += ` L ${points[i].x} ${points[i].y}`;
+      }
+
+      let gridLines = '';
+      const step = Math.max(Math.round(maxVal / 4), 1);
+      for (let val = 0; val <= maxVal; val += step) {
+        const y = height - padding - ((val - minVal) / (maxVal - minVal)) * (height - padding * 2);
+        gridLines += `<line x1="${padding}" y1="${y}" x2="${width - padding}" y2="${y}" stroke="var(--border)" stroke-width="1" stroke-dasharray="3,3" />`;
+        gridLines += `<text x="${padding - 10}" y="${y + 4}" fill="var(--text3)" font-size="10" text-anchor="end">${formatShortNumber(val)}</text>`;
+      }
+
+      let labels = '';
+      let circles = '';
+      points.forEach(p => {
+        labels += `<text x="${p.x}" y="${height - 15}" fill="var(--text2)" font-size="9" text-anchor="middle">${p.name}</text>`;
+        circles += `<circle cx="${p.x}" cy="${p.y}" r="5" fill="var(--accent)" stroke="var(--card)" stroke-width="2" />`;
+        circles += `<text x="${p.x}" y="${p.y - 10}" fill="var(--text)" font-size="10" font-weight="700" text-anchor="middle">${formatShortNumber(p.value)}</text>`;
+      });
+
+      const svg = `
+    <svg width="100%" height="${height}" viewBox="0 0 ${width} ${height}" style="overflow:visible;">
+      ${gridLines}
+      <path d="${pathD}" fill="none" stroke="url(#line-grad)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" />
+      ${circles}
+      ${labels}
+      <defs>
+        <linearGradient id="line-grad" x1="0%" y1="0%" x2="100%" y2="0%">
+          <stop offset="0%" stop-color="var(--accent)" />
+          <stop offset="100%" stop-color="var(--accent2)" />
+        </linearGradient>
+      </defs>
+    </svg>
+  `;
+      container.innerHTML = svg;
+    }
+
+    function drawComparisonChart(transitions) {
+      const container = document.getElementById('chart-comparison');
+      if (transitions.length === 0) {
+        container.innerHTML = '<p style="color:var(--text3); font-size:12px;">Aguardando transição de relatórios para cruzar conversões de cobrança.</p>';
+        return;
+      }
+
+      let barsHtml = '';
+      transitions.forEach(trans => {
+        const confirmedRate = trans.recovery_rate_confirmed || 0;
+        const confirmedClients = trans.recovered_confirmed_clients || 0;
+        barsHtml += `
+      <div style="margin-bottom: 18px;">
+        <div style="display:flex; justify-content:space-between; margin-bottom:4px; font-weight:600; font-size:12px;">
+          <span style="color:var(--text2)">${escapeHtml(trans.from_report)} ➔ ${escapeHtml(trans.to_report)}</span>
+          <span style="color:var(--green)">${trans.recovery_rate}% saíram da lista</span>
+        </div>
+        <div style="width:100%; height:12px; background:var(--border); border-radius:6px; overflow:hidden;">
+          <div style="width:${trans.recovery_rate}%; height:100%; background:linear-gradient(90deg, var(--green), #4ade80); border-radius:6px;"></div>
+        </div>
+        <div style="width:100%; height:6px; background:var(--border); border-radius:4px; overflow:hidden; margin-top:4px;" title="Subconjunto com pagamento confirmado (outcome 'pagou')">
+          <div style="width:${confirmedRate}%; height:100%; background:var(--blue); border-radius:4px;"></div>
+        </div>
+        <div style="font-size:10px; color:var(--text3); margin-top:4px; display:flex; justify-content:space-between; gap:8px;">
+          <span>${trans.recovered_clients} de ${trans.total_clients} saíram da lista de atrasos</span>
+          <span style="color:var(--blue); font-weight:600; white-space:nowrap;">${confirmedClients} confirmados (pagou) · ${confirmedRate}%</span>
+        </div>
+      </div>
+    `;
+      });
+
+      container.innerHTML = `
+    <div style="width:100%; display:flex; flex-direction:column; overflow-y:auto; max-height:220px; padding-right:6px;">
+      ${barsHtml}
+    </div>
+  `;
+    }
+
+    const FN = ['NAYUME', 'NAYARA', 'MARIA', 'TEREZA', 'SIRLENE', 'STEFANNY', 'ALESSANDRA',
+      'NATHALIA', 'ZELMA', 'RAIANE', 'LILIAN', 'SILVIA', 'SIRLEIDE', 'ELZA', 'ROSANGELA',
+      'JESSICA', 'ARLENE', 'SARA', 'MARCIA', 'GEOVANNA', 'CRISTIANA', 'KARLEANY', 'THAYANE'];
+    const MN = ['WILSON', 'CLEVERTON', 'DANIEL', 'UANDERSON', 'ROBERTO', 'RAIMUNDO', 'FRANCISCO',
+      'TITO', 'WELLINGTON', 'UELITON', 'THIAGO', 'MARIANO', 'JOSIMAR', 'SILVESTRE', 'FABIO',
+      'ROMARIO', 'LEANDRO', 'MARCUS', 'LUCIANO', 'EDILSON', 'RONDINELLY', 'NIVALDO', 'KENNEDY',
+      'MAYKON', 'MICHAELL', 'WELTON', 'ADRIANO', 'FERNANDO', 'LEOPOLDO', 'MICHAEL', 'WATSON',
+      'ALEXANDRE', 'VYCTOR', 'EDIVAM', 'RAFAEL', 'ERALDO', 'UEVERTON', 'VITOR', 'ERIVELTON',
+      'CARLOS', 'MARETHUR', 'MARCIO', 'MARCOS', 'RONALDO'];
+
+    function formatCurrency(value) {
+      return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
+    }
+
+    function formatShortNumber(num) {
+      if (num >= 1000000) return 'R$ ' + (num / 1000000).toFixed(1) + 'M';
+      if (num >= 1000) return 'R$ ' + (num / 1000).toFixed(0) + 'k';
+      return 'R$ ' + num.toFixed(0);
+    }
+
+    function gender(name) {
+      const f = name.split(' ')[0].toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (FN.includes(f)) return 'F';
+      if (MN.includes(f)) return 'M';
+      if (f.endsWith('A')) return 'F';
+      return 'M';
+    }
+    function greeting(name) {
+      const g = gender(name);
+      const fn = name.split(' ')[0];
+      const cap = fn[0].toUpperCase() + fn.slice(1).toLowerCase();
+      return g === 'F' ? `Prezada Sra. ${cap}` : `Prezado Sr. ${cap}`;
+    }
+    function tc(s) {
+      return s.split(' ').map(w => {
+        if (['DE', 'DA', 'DO', 'DOS', 'DAS', 'E'].includes(w)) return w.toLowerCase();
+        return w[0].toUpperCase() + w.slice(1).toLowerCase();
+      }).join(' ');
+    }
+    function cleanPhone(cel) {
+      if (!cel) return '';
+      const d = cel.replace(/\D/g, '');
+      return d.length >= 10 ? d : '';
+    }
+    function waLink(cel, msg) {
+      if (!cel) return null;
+      const d = cel.replace(/\D/g, '');
+      let cc = '';
+      if (cel.trim().startsWith('+')) {
+        cc = d;
+      } else {
+        const DDDs = new Set(['11', '12', '13', '14', '15', '16', '17', '18', '19',
+          '21', '22', '24', '27', '28', '31', '32', '33', '34', '35', '37', '38',
+          '41', '42', '43', '44', '45', '46', '47', '48', '49', '51', '53', '54', '55',
+          '61', '62', '63', '64', '65', '66', '67', '68', '69', '71', '73', '74', '75', '77', '79',
+          '81', '82', '83', '84', '85', '86', '87', '88', '89', '91', '92', '93', '94', '95', '96', '97', '98', '99']);
+        if (d.length >= 10 && DDDs.has(d.slice(0, 2)) && d[2] !== '0') {
+          cc = '55' + d;
+        } else {
+          return null; // Não é possível classificar com segurança como BR válido — não arriscar enviar a destinatário errado
+        }
+      }
+      return `https://wa.me/${cc}?text=${encodeURIComponent(msg)}`;
+    }
+    function buildMsg(c) {
+      const gr = greeting(c.name);
+      const multi = c.properties.length > 1;
+      let L = [];
+      L.push(`${gr}, boa tarde.`);
+      L.push('');
+      L.push(multi
+        ? 'Identificamos em nosso sistema faturas pendentes de pagamento referentes aos seus imóveis:'
+        : 'Identificamos em nosso sistema faturas pendentes de pagamento referente ao seu imóvel:');
+      for (const p of c.properties) {
+        const id = tc(p.identifier);
+        for (const pc of p.parcels) {
+          L.push(`${id}: Parcela ${pc.parcela} de ${pc.vencimento}.`);
+        }
+      }
+      L.push('');
+      L.push('Informamos que o(a) senhor(a) pode utilizar os mesmos boletos que já possui em mãos para efetuar o pagamento. O sistema bancário atualizará os encargos de forma automática no momento da leitura do código de barras.');
+      L.push('');
+      L.push(multi
+        ? 'Caso precise que reenviemos os arquivos em PDF de ambos os contratos, por favor, nos avise por aqui.'
+        : 'Caso precise que reenviemos os arquivos em PDF do contrato, por favor, nos avise por aqui.');
+      return L.join('\n');
+    }
+
+    // sent is initialized in initApp()
+    let curF = 'all', curQ = '';
+
+    function sid(name) { return name.replace(/[^a-z0-9]/gi, '_') }
+
+    function renderAll() {
+      let list = Object.values(DATA);
+      if (curQ) {
+        const q = curQ.toLowerCase();
+        const qDigits = q.replace(/\D/g, '');
+        list = list.filter(c =>
+          c.name.toLowerCase().includes(q) ||
+          c.properties.some(p => p.identifier.toLowerCase().includes(q)) ||
+          (qDigits && c.cel.replace(/\D/g, '').includes(qDigits))
+        );
+      }
+      if (curF === 'sent') list = list.filter(c => sent.has(c.name));
+      if (curF === 'pending') list = list.filter(c => !sent.has(c.name));
+      if (curF === 'single') list = list.filter(c => c.properties.length === 1);
+      if (curF === 'multi') list = list.filter(c => c.properties.length > 1);
+      if (curF === 'noph') list = list.filter(c => !cleanPhone(c.cel));
+      if (curF === 'high') list = list.filter(c => c.queue_info && c.queue_info.risk_score >= 70);
+      if (curF === 'med') list = list.filter(c => c.queue_info && c.queue_info.risk_score >= 40 && c.queue_info.risk_score < 70);
+      if (curF === 'low') list = list.filter(c => c.queue_info && c.queue_info.risk_score < 40);
+      if (curF === 'pre_juridico') list = list.filter(c => c.queue_info && c.queue_info.stage === 'pre_juridico');
+
+      const all = Object.values(DATA);
+      document.getElementById('st-total').textContent = all.length;
+      document.getElementById('st-sent').textContent = sent.size;
+      document.getElementById('st-multi').textContent = all.filter(c => c.properties.length > 1).length;
+
+      // Show status
+      const hasImported = localStorage.getItem('inad_clients_db') !== null;
+      const statusLabel = hasImported
+        ? `<span style="color:var(--accent); font-weight:600;">📊 Relatório Importado</span> (<a href="#" onclick="resetDatabase()" style="color:var(--text3); text-decoration:underline;">Restaurar padrão</a>)`
+        : `<span style="color:var(--text3);">🏡 Base Padrão</span>`;
+
+      document.getElementById('info').innerHTML =
+        `<div>Exibindo <strong>${list.length}</strong> de <strong>${all.length}</strong> clientes</div><div>${statusLabel}</div>`;
+
+      const grid = document.getElementById('grid');
+      if (!list.length) {
+        grid.innerHTML = `<div class="empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><h3>Nenhum cliente encontrado</h3><p>Tente outro filtro ou busca.</p></div>`;
+        return;
+      }
+      grid.innerHTML = list.map(buildCard).join('');
+    }
+
+    function buildCard(c) {
+      const g = gender(c.name);
+      const multi = c.properties.length > 1;
+
+      let histHtml = '';
+      if (c.queue_info && c.queue_info.last_outcome) {
+        const outcomeName = escapeHtml(c.queue_info.last_outcome.replace(/_/g, ' '));
+        let dateStr = 'Desconhecido';
+
+        let rawDate = null;
+        if (c.queue_info.last_outcome === 'prometeu_pagar' && c.queue_info.promised_date) {
+          rawDate = c.queue_info.promised_date;
+        } else if (c.queue_info.last_outcome_date) {
+          rawDate = c.queue_info.last_outcome_date.split(' ')[0];
+        } else if (c.queue_info.last_contact) {
+          rawDate = c.queue_info.last_contact.split(' ')[0];
+        }
+
+        if (rawDate && /^\d{4}-\d{2}-\d{2}$/.test(rawDate)) {
+          const [y, m, d] = rawDate.split('-');
+          dateStr = `${d}/${m}/${y}`;
+        }
+
+        let extra = '';
+        if (c.queue_info.last_outcome === 'prometeu_pagar' && c.queue_info.promised_date) {
+          extra = ` para ${dateStr}`;
+        } else if (rawDate) {
+          extra = ` em ${dateStr}`;
+        }
+
+        histHtml = `<div class="hist"><strong>Último Desfecho:</strong> <span style="text-transform: capitalize;">${outcomeName}</span>${extra}</div>`;
+      }
+      const isSent = sent.has(c.name);
+      const isExcluded = excludedClients.has(c.name);
+      const phone = cleanPhone(c.cel);
+      const msg = buildMsg(c);
+      const wl = phone ? waLink(c.cel, msg) : null;
+      const id = sid(c.name);
+      const av = g === 'F' ? 'av-f' : (c.cpf_cnpj.includes('/')) ? 'av-e' : 'av-m';
+      const init = c.name.split(' ').slice(0, 2).map(w => w[0]).join('');
+
+      let riskBadge = '';
+      if (c.queue_info) {
+        const q = c.queue_info;
+        const score = q.risk_score;
+        let rClass = 'b-risk-low';
+        if (score >= 70) rClass = 'b-risk-high';
+        else if (score >= 40) rClass = 'b-risk-med';
+        let stageName = escapeHtml(q.stage.replace(/_/g, ' '));
+        riskBadge = `<div style="display:flex; gap:6px; margin-top:6px;">
+        <span class="badge ${rClass}">Risco: ${score}</span>
+        <span class="badge b-stage">${stageName}</span>
+      </div>`;
+      }
+
+      const props = c.properties.map(p => {
+        const empLabel = p.empreendimento ? `<span style="font-size:10px; color:var(--accent); font-weight:700; text-transform:uppercase; margin-right:6px;">[${escapeHtml(p.empreendimento)}]</span>` : '';
+        const chips = p.parcels.map(pc => {
+          const jurosText = pc.valor_juros > 0 ? ` (+${formatCurrency(pc.valor_juros)} juros)` : '';
+          return `<span class="chip" title="Valor: ${formatCurrency(pc.valor)}${jurosText}">${escapeHtml(pc.parcela)} · ${escapeHtml(pc.vencimento)} · ${formatCurrency(pc.valor)}</span>`;
+        }).join('');
+        return `<div class="pr"><span class="pid">${empLabel}${escapeHtml(tc(p.identifier))}</span><div class="pp">${chips}</div></div>`;
+      }).join('');
+
+      const cpfHtml = c.cpf_cnpj ? `<span class="mi" title="CPF/CNPJ"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>${escapeHtml(c.cpf_cnpj)}</span>` : '';
+      const phoneHtml = phone
+        ? `<span class="mi"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07A19.5 19.5 0 0 1 4.69 13.1a19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 3.6 2.18h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L7.91 9.91a16 16 0 0 0 6.18 6.18l.91-.91a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z"/></svg>${escapeHtml(c.cel)}</span>`
+        : `<span class="mi err"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Sem telefone</span>`;
+
+      const emailHtml = c.email && c.email.includes('@') ? `<span class="mi"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>${escapeHtml(c.email)}</span>` : '';
+      const addressHtml = c.endereco ? `<div class="mi" style="margin-top:2px; font-size:10.5px;" title="Endereço Cadastral"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>${escapeHtml(c.endereco)}</div>` : '';
+
+      const waBtn = wl
+        ? `<a href="${wl}" target="_blank" class="btn bwa" onclick="return handleWaClick(event,'${jsAttr(c.name)}','${id}')"><svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/><path d="M12 0C5.373 0 0 5.373 0 12c0 2.083.535 4.04 1.474 5.74L0 24l6.416-1.455A11.95 11.95 0 0 0 12 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.818a9.808 9.808 0 0 1-5.136-1.453l-.368-.219-3.806.866.887-3.706-.241-.381A9.793 9.793 0 0 1 2.182 12C2.182 6.566 6.566 2.182 12 2.182S21.818 6.566 21.818 12 17.434 21.818 12 21.818z"/></svg>Abrir WhatsApp</a>`
+        : phone
+          ? `<span class="btn bwa noph" title="Não foi possível identificar o DDD/país deste número com segurança — verifique manualmente"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Telefone a verificar</span>`
+          : `<span class="btn bwa noph"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>Sem telefone</span>`;
+
+      const excludeBtn = `
+    <button class="btn-exclude-kpi${isExcluded ? ' excluded' : ''}"
+            onclick="toggleClientExclusion('${jsAttr(c.name)}')"
+            title="${isExcluded ? 'Incluir este cliente nos KPIs' : 'Ignorar este cliente nos KPIs'}">
+      ${isExcluded ? '🚫 Ignorado' : '👁️ Ativo'}
+    </button>
+  `;
+
+      return `<div class="card${isSent ? ' sent' : ''}${isExcluded ? ' excluded-card' : ''}" id="card-${id}">
+  <div class="ch">
+    <div class="av ${av}">${init}</div>
+    <div class="ci">
+      <div class="cn" title="${escapeHtml(c.name)}">${escapeHtml(tc(c.name))}${isSent ? ' <span style="color:var(--green);font-size:11px;font-weight:700;margin-left:6px">✓</span>' : ''}</div>
+      <div class="cm">${cpfHtml}${phoneHtml}${emailHtml}</div>
+      ${addressHtml}
+      ${riskBadge}
+    </div>
+    <div style="display:flex; align-items:center; gap:6px;">
+      <span class="pc ${multi ? 'm' : 's'}">${multi ? c.properties.length + ' imóveis' : '1 imóvel'}</span>
+      ${excludeBtn}
+    </div>
+  </div>
+  <div class="pl">${props}</div>
+  <div class="ma">
+    <div class="ml">Mensagem de cobrança <span>✎ editável</span></div>
+    <textarea class="mb" id="msg-${id}">${escapeHtml(msg)}</textarea>
+  </div>
+  <div class="ca">
+    <button class="btn bcopy" id="cp-${id}" onclick="doCopy('${id}',this)"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copiar</button>
+    ${waBtn}
+    <button class="btn boutcome" title="Registrar Desfecho" onclick="toggleOutcomePanel('${id}')"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg></button>
+  </div>
+  <div class="outcome-panel" id="oc-panel-${id}">
+    <button class="oc-btn pp" onclick="registerOutcome('${jsAttr(c.name)}','${id}','prometeu_pagar')">Prometeu Pagar</button>
+    <button class="oc-btn ng" onclick="registerOutcome('${jsAttr(c.name)}','${id}','negociacao')">Negociação</button>
+    <button class="oc-btn" onclick="registerOutcome('${jsAttr(c.name)}','${id}','sem_resposta')">Sem Resposta</button>
+    <button class="oc-btn" onclick="registerOutcome('${jsAttr(c.name)}','${id}','recusou')">Recusou</button>
+  </div>
+  ${histHtml}
+</div>`;
+    }
+
+    function doCopy(id, btn) {
+      const ta = document.getElementById('msg-' + id);
+      navigator.clipboard.writeText(ta.value).then(() => {
+        btn.classList.add('ok');
+        btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>Copiado!';
+        setTimeout(() => { btn.classList.remove('ok'); btn.innerHTML = '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>Copiar'; }, 2200);
+      });
+    }
+
+    function toggleOutcomePanel(id) {
+      const p = document.getElementById('oc-panel-' + id);
+      if (p) p.classList.toggle('active');
+    }
+
+    // Registra o desfecho do contato com o devedor (Prometeu Pagar, Negociação, Sem Resposta, Recusou).
+    // Se for necessário agendar uma data (promessa ou recontato), o operador preenche no formato brasileiro (DD/MM/AAAA).
+    // O script valida o formato, converte para ISO (AAAA-MM-DD) e envia para a API REST do backend.
+    async function registerOutcome(name, id, outcome) {
+      if (!isServerActive) {
+        alert("Operação indisponível em modo offline.");
+        return;
+      }
+      let payload = { client_name: name, outcome: outcome };
+
+      if (outcome === 'prometeu_pagar') {
+        let dt = prompt("Para quando prometeu pagar? (Formato: DD/MM/AAAA - ex: 15/08/2026)");
+        if (!dt) return;
+        if (!/^\d{2}\/\d{2}\/\d{4}$/.test(dt)) {
+          alert("Formato de data inválido! Use DD/MM/AAAA (ex: 15/08/2026)");
+          return;
+        }
+        const [d, m, y] = dt.split('/');
+        payload.promised_date = `${y}-${m}-${d}`;
+      } else if (outcome === 'negociacao' || outcome === 'sem_resposta') {
+        let dt = prompt("Deseja agendar um recontato? (Deixe em branco se não quiser agendar) - Formato: DD/MM/AAAA");
+        if (dt) {
+          if (!/^\d{2}\/\d{2}\/\d{4}$/.test(dt)) {
+            alert("Formato de data inválido! Use DD/MM/AAAA (ex: 15/08/2026)");
+            return;
+          }
+          const [d, m, y] = dt.split('/');
+          payload.next_contact = `${y}-${m}-${d}`;
+        }
+      }
+
+      try {
+        const res = await fetch('/api/outcomes', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+        if (res.ok) {
+          alert("Desfecho salvo!");
+          toggleOutcomePanel(id);
+          await initApp();
+        } else {
+          const errData = await res.json().catch(() => ({}));
+          alert("Erro ao salvar desfecho: " + (errData.error || res.statusText));
+        }
+      } catch (e) {
+        alert("Erro ao salvar desfecho: " + e.message);
+      }
+    }
+
+    // Verifica se o contato está sendo feito dentro da janela legal permitida no Brasil (CDC Art. 42 e leis estaduais):
+    // - Segunda a Sexta: 08:00 às 20:00
+    // - Sábado: 08:00 às 13:00
+    // - Domingos e Feriados Nacionais Fixos: Proibido
+    function checkContactWindow() {
+      const now = new Date();
+      const day = now.getDay(); // 0 = Domingo, 1 = Segunda, ..., 6 = Sábado
+      const hour = now.getHours();
+      const min = now.getMinutes();
+      const timeVal = hour + min / 60.0;
+
+      // Lista de feriados nacionais fixos no Brasil (formato: "MM-DD")
+      const feriados = [
+        "01-01", // Confraternização Universal
+        "04-21", // Tiradentes
+        "05-01", // Dia do Trabalho
+        "09-07", // Independência do Brasil
+        "10-12", // Nossa Senhora Aparecida
+        "11-02", // Finados
+        "11-15", // Proclamação da República
+        "12-25"  // Natal
+      ];
+
+      const m = String(now.getMonth() + 1).padStart(2, '0');
+      const d = String(now.getDate()).padStart(2, '0');
+      const mmdd = `${m}-${d}`;
+
+      // Se for domingo ou feriado nacional fixo, é proibido
+      if (day === 0 || feriados.includes(mmdd)) {
+        return false;
+      }
+
+      // Sábado: permitido das 8h às 13h
+      if (day === 6) {
+        return timeVal >= 8.0 && timeVal < 13.0;
+      }
+
+      // Segunda a Sexta: permitido das 8h às 20h
+      return timeVal >= 8.0 && timeVal < 20.0;
+    }
+
+    // Intercepta o clique no link de abertura de WhatsApp para validar se está no horário comercial.
+    // Exibe um prompt de confirmação caso seja fora da janela legal de cobrança comercial do CDC.
+    function handleWaClick(event, name, id) {
+      if (!checkContactWindow()) {
+        const confirmProceed = confirm(
+          "[ALERTA DE CONFORMIDADE LEGAL (CDC Art. 42)]\n\n" +
+          "Você está tentando iniciar um contato de cobrança fora do horário comercial permitido por lei " +
+          "(Segunda a Sexta das 8h às 20h, Sábado das 8h às 13h, Domingos e Feriados não permitidos).\n\n" +
+          "Contatos fora desse horário podem ser interpretados como perturbação ou assédio comercial sob a lei brasileira.\n\n" +
+          "Deseja prosseguir mesmo assim sob sua responsabilidade?"
+        );
+        if (!confirmProceed) {
+          event.preventDefault();
+          return false;
+        }
+      }
+      markSent(name, id);
+      return true;
+    }
+
+    function markSent(name, id) {
+      sent.add(name);
+      save();
+      document.getElementById('card-' + id)?.classList.add('sent');
+      document.getElementById('dn-' + id)?.classList.add('on');
+      document.getElementById('st-sent').textContent = sent.size;
+
+      if (isServerActive) {
+        fetch('/api/actions/sent', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ venda_id: id, client_name: name })
+        }).catch(e => console.error("Erro ao registrar log de envio no servidor:", e));
+      }
+    }
+    function toggleSent(name, id) {
+      if (sent.has(name)) {
+        sent.delete(name);
+        document.getElementById('card-' + id)?.classList.remove('sent');
+        document.getElementById('dn-' + id)?.classList.remove('on');
+        save();
+      } else {
+        sent.add(name);
+        document.getElementById('card-' + id)?.classList.add('sent');
+        document.getElementById('dn-' + id)?.classList.add('on');
+        save();
+
+        if (isServerActive) {
+          fetch('/api/actions/sent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ venda_id: id, client_name: name })
+          }).catch(e => console.error("Erro ao registrar log de envio no servidor:", e));
+        }
+      }
+      document.getElementById('st-sent').textContent = sent.size;
+    }
+    function save() {
+      saveSent();
+    }
+
+    async function saveClients(parsedClients, reportName, reportDate) {
+      if (isServerActive) {
+        try {
+          const res = await fetch('/api/reports', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              report_name: reportName || "Relatório Avulso",
+              report_date: reportDate,
+              clients: parsedClients
+            })
+          });
+          const resJson = await res.json().catch(() => ({}));
+          if (!res.ok) throw new Error(resJson.error || res.statusText);
+          DATA = parsedClients;
+          const newReportId = resJson.report_id;
+
+          // Recarrega os dados do novo relatório vinculando as informações de risco calculadas
+          if (newReportId) {
+            try {
+              const freshRes = await fetch(`/api/reports/${newReportId}`);
+              const freshData = await freshRes.json();
+              await linkQueueInfo(freshData, newReportId);
+              DATA = freshData;
+            } catch (e) {
+              console.error("Falha ao recarregar dados do novo relatório:", e);
+            }
+          }
+
+          await updateReportDropdown();
+          await loadKPIs();
+        } catch (e) {
+          console.error("Erro ao salvar clientes no servidor:", e);
+          alert("Falha ao importar o relatório: " + e.message + "\n\nOs dados NÃO foram salvos — a tela não foi atualizada.");
+        }
+      } else {
+        DATA = parsedClients;
+        localStorage.setItem('inad_clients_db', JSON.stringify(parsedClients));
+      }
+    }
+
+    async function saveSent() {
+      const list = [...sent];
+      if (isServerActive) {
+        try {
+          const res = await fetch('/api/sent', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(list)
+          });
+          if (!res.ok) throw new Error(res.statusText);
+        } catch (e) {
+          console.error("Erro ao salvar status de envio no servidor:", e);
+        }
+      } else {
+        localStorage.setItem('inad_sent', JSON.stringify(list));
+      }
+    }
+    function sf(f, btn) { curF = f; document.querySelectorAll('.fb').forEach(b => b.classList.remove('on')); btn.classList.add('on'); renderAll(); }
+    let t; document.getElementById('search').addEventListener('input', e => { clearTimeout(t); t = setTimeout(() => { curQ = e.target.value.trim(); renderAll(); }, 200); });
+
+    // ─── SENT MARK MIGRATION ────────────────────────────────────────────────
+    function migrateSentData() {
+      const raw = localStorage.getItem('inad_sent');
+      if (!raw) return;
+      try {
+        const list = JSON.parse(raw);
+        let migrated = false;
+        const newList = [];
+
+        const vendaMap = {};
+        for (const [cName, cData] of Object.entries(DATA)) {
+          for (const prop of cData.properties) {
+            vendaMap[prop.venda_id] = cName;
+          }
+        }
+
+        for (const item of list) {
+          const match = item.trim().match(/^(\d+)\s+Data da Venda:/);
+          if (match) {
+            const vendaId = match[1];
+            const newName = vendaMap[vendaId];
+            if (newName) {
+              newList.push(newName);
+              migrated = true;
+            }
+          } else {
+            newList.push(item);
+          }
+        }
+
+        if (migrated) {
+          const uniqueList = [...new Set(newList)];
+          sent = new Set(uniqueList);
+          localStorage.setItem('inad_sent', JSON.stringify(uniqueList));
+        }
+      } catch (e) {
+        console.error("Migration error:", e);
+      }
+    }
+    // migrateSentData() is called inside initApp()
+
+    // ─── CLIENT-SIDE PDF PARSING & IMPORT ────────────────────────────────────
+    async function handlePDFUpload(event) {
+      const files = Array.from(event.target.files);
+      if (!files || files.length === 0) return;
+
+      const overlay = document.getElementById('loading-overlay');
+      const loadingText = document.getElementById('loading-text');
+      const pBar = document.getElementById('progress-bar');
+      const pSub = document.getElementById('loading-sub');
+
+      let autoName = false;
+      if (files.length > 1) {
+        autoName = confirm(`Você selecionou ${files.length} relatórios.\nDeseja nomeá-los automaticamente usando a data de emissão encontrada dentro de cada PDF? (Recomendado para lote)`);
+      }
+
+      let successCount = 0;
+      let totalClientsImported = 0;
+
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        const fileIndexText = files.length > 1 ? ` (${i + 1}/${files.length})` : '';
+
+        overlay.style.display = 'flex';
+        pBar.style.width = '0%';
+        loadingText.textContent = `Carregando PDF${fileIndexText}...`;
+        pSub.textContent = `Lendo arquivo "${file.name}"...`;
+
+        try {
+          const typedarray = await readFileAsArrayBuffer(file);
+
+          pBar.style.width = '10%';
+          loadingText.textContent = `Extraindo texto${fileIndexText}...`;
+          const text = await extractTextFromPDF(typedarray, loadingText, pBar, pSub, fileIndexText);
+
+          pBar.style.width = '80%';
+          loadingText.textContent = `Mapeando clientes${fileIndexText}...`;
+          pSub.textContent = "Agrupando imóveis e parcelas...";
+
+          await new Promise(resolve => setTimeout(resolve, 100));
+
+          const parsedClients = parseLayoutText(text);
+
+          pBar.style.width = '90%';
+          pSub.textContent = "Salvando dados...";
+
+          const extractedDate = extractReportDate(text);
+          let suggestedName = "Relatório " + new Date().toLocaleDateString('pt-BR');
+          if (extractedDate) {
+            const parts = extractedDate.split('-');
+            suggestedName = `Relatório de ${parts[2]}/${parts[1]}/${parts[0]}`;
+          }
+
+          let reportName = suggestedName;
+          if (isServerActive && !autoName) {
+            reportName = prompt(`Digite uma identificação para o relatório "${file.name}":`, suggestedName);
+            if (reportName === null) {
+              // Cancelou este relatório específico, pula para o próximo
+              continue;
+            }
+          }
+
+          await saveClients(parsedClients, reportName, extractedDate);
+          successCount++;
+          totalClientsImported += Object.keys(parsedClients).length;
+
+        } catch (err) {
+          console.error(err);
+          alert(`Erro ao processar o arquivo "${file.name}": ${err.message}`);
+        }
+      }
+
+      if (successCount > 0) {
+        // Limpa barra de busca e filtros
+        document.getElementById('search').value = "";
+        curQ = "";
+        curF = "all";
+        document.querySelectorAll('.fb').forEach(b => b.classList.remove('on'));
+        document.querySelector('.fb[onclick*="all"]').classList.add('on');
+
+        migrateSentData();
+        renderAll();
+
+        if (isServerActive) {
+          await updateReportDropdown();
+          await loadKPIs();
+        }
+
+        pBar.style.width = '100%';
+        await new Promise(resolve => setTimeout(resolve, 200));
+        overlay.style.display = 'none';
+
+        alert(`Sucesso! ${successCount} de ${files.length} relatórios importados (${totalClientsImported} clientes cadastrados).`);
+      } else {
+        overlay.style.display = 'none';
+      }
+
+      // Limpa o input para permitir re-upload do mesmo arquivo
+      event.target.value = "";
+    }
+
+    function readFileAsArrayBuffer(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(new Uint8Array(reader.result));
+        reader.onerror = () => reject(reader.error);
+        reader.readAsArrayBuffer(file);
+      });
+    }
+
+    async function extractTextFromPDF(pdfData, loadingText, pBar, pSub, fileIndexText = '') {
+      const pdfjsLib = window['pdfjs-dist/build/pdf'];
+
+      if (window.location.protocol === 'file:') {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+      } else {
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js';
+      }
+
+      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
+      const pdf = await loadingTask.promise;
+      let fullText = '';
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const pct = Math.round(10 + (i / pdf.numPages) * 70);
+        pBar.style.width = `${pct}%`;
+        loadingText.textContent = `Processando PDF${fileIndexText}...`;
+        pSub.textContent = `Lendo página ${i} de ${pdf.numPages}...`;
+
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const items = textContent.items;
+
+        const lines = {};
+        for (const item of items) {
+          if (!item.str.trim()) continue;
+          const y = Math.round(item.transform[5] / 4) * 4;
+          if (!lines[y]) lines[y] = [];
+          lines[y].push(item);
+        }
+
+        const sortedY = Object.keys(lines).map(Number).sort((a, b) => b - a);
+
+        let pageText = '';
+        for (const y of sortedY) {
+          const lineItems = lines[y].sort((a, b) => a.transform[4] - b.transform[4]);
+
+          let lineText = '';
+          let lastX = 0;
+          for (const item of lineItems) {
+            const x = item.transform[4];
+            if (lastX > 0 && x - lastX > 8) {
+              const spaces = Math.min(30, Math.floor((x - lastX) / 5));
+              lineText += ' '.repeat(spaces);
+            }
+            lineText += item.str;
+            lastX = x + item.width;
+          }
+          pageText += lineText + '\n';
+        }
+        fullText += `=== PAGE ${i} ===\n` + pageText + '\n';
+      }
+      return fullText;
+    }
+
+    function extractReportDate(text) {
+      const regex = /(segunda-feira|terça-feira|quarta-feira|quinta-feira|sexta-feira|sábado|domingo),\s+(\d{1,2})\s+de\s+(janeiro|fevereiro|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s+de\s+(\d{4})/i;
+      const match = text.match(regex);
+      if (match) {
+        const day = match[2].padStart(2, '0');
+        const monthName = match[3].toLowerCase();
+        const year = match[4];
+        const months = {
+          'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
+          'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
+          'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
+        };
+        const month = months[monthName] || '01';
+        return `${year}-${month}-${day}`;
+      }
+      return null;
+    }
+
+    function parseLayoutText(text) {
+      // Split by main Venda headers using negative lookbehinds
+      const parts = text.split(/(?<!Data da )(?<!Total da )Venda:\s+/);
+      const blocks = parts.slice(1);
+
+      const parsedClients = {};
+
+      for (const block of blocks) {
+        const lines = block.split('\n').filter(l => l.trim());
+        if (!lines.length) continue;
+
+        const firstLine = lines[0];
+        const vendaMatch = firstLine.match(/^\s*(\d+)/);
+        if (!vendaMatch) continue;
+        const vendaId = vendaMatch[1];
+
+        const identMatch = firstLine.match(/Identificador:\s*(.*?)(?:\s{2,}|Status|$)/);
+        const identifier = identMatch ? identMatch[1].trim() : "";
+
+        // Find the Cliente line index
+        let clienteIdx = -1;
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes("Cliente:")) {
+            clienteIdx = i;
+            break;
+          }
+        }
+        if (clienteIdx === -1) continue;
+
+        const clienteLine = lines[clienteIdx];
+
+        // Collect multiline lines before parcels table start
+        const clientSectionLines = [];
+        for (let i = clienteIdx; i < lines.length; i++) {
+          const line = lines[i];
+          if (line.includes("Parc.") || line.includes("Vencimento") || line.includes("Venda:")) {
+            break;
+          }
+          clientSectionLines.push(line);
+        }
+
+        // Get column indices in the header
+        const clientPos = clienteLine.indexOf("Cliente:");
+        const cpfPos = clienteLine.indexOf("CPF/CNPJ:");
+        const resPos = clienteLine.indexOf("Res.:");
+        const comPos = clienteLine.indexOf("Com.:");
+        const celPos = clienteLine.indexOf("Cel.:");
+        const emailPos = clienteLine.indexOf("E-mail:");
+
+        const colRanges = {
+          name: [clientPos, cpfPos !== -1 ? cpfPos : 100],
+          cpf: [cpfPos, resPos !== -1 ? resPos : 130],
+          res: [resPos, comPos !== -1 ? comPos : 160],
+          com: [comPos, celPos !== -1 ? celPos : 185],
+          cel: [celPos, emailPos !== -1 ? emailPos : 215],
+          email: [emailPos, clienteLine.length]
+        };
+
+        const colValues = { name: "", cpf: "", res: "", com: "", cel: "", email: "" };
+        for (const [colName, range] of Object.entries(colRanges)) {
+          const start = range[0];
+          const end = range[1];
+          if (start === -1) continue;
+
+          const segments = [];
+          for (const line of clientSectionLines) {
+            if (line.length > start) {
+              let segment = line.slice(start, end).trim();
+              if (colName === "name") segment = segment.replace(/^Cliente:\s*/, "");
+              else if (colName === "cpf") segment = segment.replace(/^CPF\/CNPJ:\s*/, "");
+              else if (colName === "res") segment = segment.replace(/^Res\.:\s*/, "");
+              else if (colName === "com") segment = segment.replace(/^Com\.:\s*/, "");
+              else if (colName === "cel") segment = segment.replace(/^Cel\.:\s*/, "");
+              else if (colName === "email") segment = segment.replace(/^E-mail:\s*/, "");
+              if (segment) segments.push(segment);
+            }
+          }
+          colValues[colName] = segments.join(" ").trim();
+        }
+
+        const clientName = colValues.name.replace(/\s+/g, " ").trim();
+        const cpfCnpj = colValues.cpf.trim();
+        let celDigits = colValues.cel.replace(/\D/g, "");
+        let resDigits = colValues.res.replace(/\D/g, "");
+        let comDigits = colValues.com.replace(/\D/g, "");
+        let email = colValues.email.trim();
+
+        if (!clientName) continue;
+
+        // Clean bad email fields
+        if (email.includes("E-mail:") || email.includes("Parc.")) {
+          email = "";
+        }
+
+        // Clean split DDD/phones
+        if (celDigits.length === 12 && celDigits.startsWith("3519")) {
+          celDigits = "35" + celDigits.slice(3);
+        }
+        if (resDigits.length === 12 && resDigits.startsWith("4473")) {
+          resDigits = "44973772012";
+        }
+
+        let bestPhone = "";
+        let source = "";
+        if (celDigits.length >= 8 && !colValues.cel.includes("gmail") && !colValues.cel.includes("@")) {
+          bestPhone = celDigits;
+          source = "Cel";
+        } else if (resDigits.length >= 8 && !colValues.res.includes("gmail") && !colValues.res.includes("@")) {
+          bestPhone = resDigits;
+          source = "Res";
+        } else if (comDigits.length >= 8 && !colValues.com.includes("gmail") && !colValues.com.includes("@")) {
+          bestPhone = comDigits;
+          source = "Com";
+        }
+
+        // Format DDD
+        let formattedPhone = "";
+        if (bestPhone) {
+          if (bestPhone.length === 11) {
+            formattedPhone = `${bestPhone.slice(0, 2)} ${bestPhone.slice(2, 7)}-${bestPhone.slice(7)}`;
+          } else if (bestPhone.length === 10) {
+            formattedPhone = `${bestPhone.slice(0, 2)} ${bestPhone.slice(2, 6)}-${bestPhone.slice(6)}`;
+          } else if (bestPhone.length === 9) {
+            formattedPhone = `${bestPhone[0]} ${bestPhone.slice(1, 5)}-${bestPhone.slice(5)}`;
+          } else if (bestPhone.length === 8) {
+            formattedPhone = `${bestPhone.slice(0, 4)}-${bestPhone.slice(4)}`;
+          } else {
+            formattedPhone = bestPhone;
+          }
+        }
+
+        // Extract parcels
+        const parcels = [];
+        for (const line of block.split("\n")) {
+          const dates = line.match(/\d\d\/\d\d\/\d{4}/g);
+          if (!dates) continue;
+          const lineNoDates = line.replace(/\d\d\/\d\d\/\d{4}/g, "");
+          const pMatch = lineNoDates.match(/(\d+\/\d+)/);
+          if (pMatch) {
+            const parcelNum = pMatch[1];
+            const vencShort = dates[0].slice(0, 5);
+
+            let valor = 0.0;
+            const tokens = line.trim().split(/\s+/);
+            const moneyTokens = tokens.filter(t => /^\d{1,3}(\.\d{3})*,\d{2}$/.test(t) || /^\d+,\d{2}$/.test(t));
+            if (moneyTokens.length >= 6) {
+              const valorTotalStr = moneyTokens[5];
+              valor = parseFloat(valorTotalStr.replace(/\./g, "").replace(",", "."));
+            } else if (moneyTokens.length >= 1) {
+              const valorParcelaStr = moneyTokens[0];
+              valor = parseFloat(valorParcelaStr.replace(/\./g, "").replace(",", "."));
+            }
+
+            parcels.push({
+              parcela: parcelNum,
+              vencimento: vencShort,
+              vencimento_full: dates[0],
+              valor: valor
+            });
+          }
+        }
+
+        if (!parsedClients[clientName]) {
+          parsedClients[clientName] = {
+            name: clientName,
+            cpf_cnpj: cpfCnpj,
+            cel: formattedPhone,
+            email: email,
+            properties: []
+          };
+        }
+
+        // Prevent duplicate properties
+        const hasProp = parsedClients[clientName].properties.some(p => p.venda_id === vendaId);
+        if (!hasProp) {
+          parsedClients[clientName].properties.push({
+            venda_id: vendaId,
+            identifier: identifier,
+            parcels: parcels
+          });
+        }
+      }
+
+      return parsedClients;
+    }
+
+    // ─── DRAG & DROP HANDLERS ────────────────────────────────────────────────
+    window.addEventListener('dragover', e => {
+      e.preventDefault();
+      document.getElementById('drop-overlay').style.display = 'flex';
+    });
+
+    document.getElementById('drop-overlay').addEventListener('dragleave', e => {
+      e.preventDefault();
+      document.getElementById('drop-overlay').style.display = 'none';
+    });
+
+    window.addEventListener('drop', async e => {
+      e.preventDefault();
+      document.getElementById('drop-overlay').style.display = 'none';
+
+      const files = Array.from(e.dataTransfer.files).filter(f => f.type === "application/pdf" || f.name.endsWith(".pdf"));
+      if (files.length > 0) {
+        const event = { target: { files: files } };
+        handlePDFUpload(event);
+      } else {
+        alert("Por favor, arraste apenas arquivos PDF do relatório de inadimplência.");
+      }
+    });
+
+    // ─── EXCLUSÃO DE CLIENTE DOS KPIS ──────────────────────────────────────────
+
+    async function updateClientsDatalist() {
+      if (!isServerActive) return;
+      try {
+        const res = await fetch('/api/clients/all');
+        if (!res.ok) return;
+        const names = await res.json();
+        const datalist = document.getElementById('kpi-clients-datalist');
+        if (datalist) {
+          datalist.innerHTML = names.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+        }
+      } catch (e) { }
+    }
+
+    async function addClientExclusionFromInput() {
+      const input = document.getElementById('kpi-exclude-input');
+      if (!input) return;
+      const clientName = input.value.trim().toUpperCase();
+      if (!clientName) {
+        alert('Digite ou selecione o nome do cliente.');
+        return;
+      }
+
+      if (excludedClients.has(clientName)) {
+        alert('Este cliente já está na lista de ignorados.');
+        input.value = '';
+        return;
+      }
+
+      // Call toggleClientExclusion, which automatically adds since it's not in the set
+      await toggleClientExclusion(clientName);
+      input.value = ''; // clear on success
+    }
+
+    async function toggleClientExclusion(clientName) {
+      const shouldExclude = !excludedClients.has(clientName);
+
+      if (isServerActive) {
+        try {
+          const res = await fetch('/api/kpis/exclusions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ client_name: clientName, exclude: shouldExclude })
+          });
+          const result = await res.json();
+          if (result.status !== 'success') {
+            alert("Erro ao salvar exclusão do KPI: " + result.error);
+            return;
+          }
+        } catch (e) {
+          alert("Erro de rede ao salvar exclusão do KPI: " + e.message);
+          return;
+        }
+      } else {
+        // Fallback localstorage
+        localStorage.setItem('inad_kpi_exclusions', JSON.stringify(Array.from(excludedClients)));
+      }
+
+      // Atualiza estado em memória
+      if (shouldExclude) {
+        excludedClients.add(clientName);
+      } else {
+        excludedClients.delete(clientName);
+      }
+
+      // Salva no localStorage local também como segurança
+      if (!isServerActive) {
+        localStorage.setItem('inad_kpi_exclusions', JSON.stringify(Array.from(excludedClients)));
+      }
+
+      // Re-renderiza a lista de clientes
+      renderAll();
+
+      // Recarrega KPIs em segundo plano se o servidor estiver ativo
+      if (isServerActive) {
+        loadKPIs();
+      }
+    }
+
+    // Render initially
+    initApp();
+  </script>
+</body>
+
+</html>

@@ -34,13 +34,11 @@ graph TD
 
 | Arquivo | Função |
 |---------|--------|
-| `inad_template.html` | **Fonte da UI principal** (HTML/JS/CSS). Editar **apenas este arquivo** para o painel de cobrança. |
-| `add_pdf_importer.py` | Compilador: injeta `CLIENTS_JSON_PLACEHOLDER` → gera `inad_whatsapp.html` |
-| `inad_whatsapp.html` | **Artefato gerado** — não editar manualmente |
-| `inad_analytics.html` + `analytics.css` + `analytics.js` | **Página de Analytics** — estática, fora do passo de compilação; consome a API ao vivo (não funciona via `file://`) |
+| `index.html` | **Interface do painel de cobrança** (HTML/JS/CSS). |
+| `inad_analytics.html` + `analytics.css` + `analytics.js` | **Página de Analytics** — estática; consome a API ao vivo |
 | `run.py` | Servidor HTTP + API REST + SQLite |
 | `inad_database.db` | Banco real (não versionado no Git) |
-| `libs/` | Bibliotecas vendorizadas: `pdf.min.js`, `pdf.worker.min.js`, `chart.umd.min.js` (Chart.js v4) — todas com fallback CDN |
+| `libs/` | Bibliotecas vendorizadas: `chart.umd.min.js` (Chart.js v4) |
 | `AI_CONTEXT.md` | Este documento |
 | `extension/` | Extensão Chrome (Gemini Copilot) — opcional, separada do painel |
 
@@ -427,7 +425,7 @@ Se o painel principal for aberto sem servidor (`file://`), o frontend usa `local
 
 ## 💡 Diretrizes para I.As
 
-1. **Painel principal:** edite apenas `inad_template.html` — regenere com `python3 add_pdf_importer.py`. **Analytics:** edite `inad_analytics.html`/`analytics.css`/`analytics.js` diretamente (sem compilação).
+1. **Painel principal:** edite `index.html`. **Analytics:** edite `inad_analytics.html`/`analytics.css`/`analytics.js` diretamente.
 2. **SQLite nativo** — sem ORMs, sem psycopg2/mysql-connector.
 3. **Privacidade** — nunca commitar `.db` (nem `-shm`/`-wal`), `.json` com dados reais ou PDFs. O `.gitignore` cobre tudo isso.
 4. **Retrocompatibilidade** — manter aliases `/api/sent` ↔ `/api/actions/sent` e a forma da resposta de `/api/kpis` (a aba KPI depende dela); features novas de análise vão em `/api/kpis/analytics`.

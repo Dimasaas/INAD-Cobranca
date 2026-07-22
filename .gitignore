@@ -34,3 +34,4 @@ inad_database.db
 *.db-journal
 *.log
 backups/
+scratch/
