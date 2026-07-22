@@ -2030,7 +2030,21 @@
 
       const grid = document.getElementById('grid');
       if (!list.length) {
-        grid.innerHTML = `<div class="empty"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><h3>Nenhum cliente encontrado</h3><p>Tente outro filtro ou busca.</p></div>`;
+        if (all.length === 0) {
+          grid.innerHTML = `
+            <div class="empty" style="padding: 48px 24px; text-align: center; background: var(--bg2); border: 1px dashed var(--border2); border-radius: var(--r); width: 100%;">
+              <div style="font-size: 48px; margin-bottom: 12px;">🏡</div>
+              <h3 style="font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 8px;">Base de Dados Limpa (0 Clientes)</h3>
+              <p style="color: var(--text2); max-width: 480px; margin: 0 auto 20px; font-size: 13px;">
+                A base de dados do INAD foi limpa com sucesso. Clique no botão abaixo para buscar a lista atualizada de inadimplentes direto da API ProUAU.
+              </p>
+              <button onclick="syncUAU()" class="btn btn-sync-uau" style="background: linear-gradient(135deg, var(--accent), var(--accent2)); color:#fff; border:none; padding:10px 24px; border-radius:10px; font-weight:700; font-size:14px; cursor:pointer; display:inline-flex; align-items:center; gap:8px; box-shadow: 0 4px 16px rgba(139,92,246,0.4); margin: 0 auto;">
+                ⚡ Sincronizar com ProUAU
+              </button>
+            </div>`;
+        } else {
+          grid.innerHTML = `<div class="empty" style="width: 100%;"><svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg><h3>Nenhum cliente encontrado</h3><p>Tente ajustar os filtros ou o termo digitado na busca.</p></div>`;
+        }
         return;
       }
       grid.innerHTML = list.map(buildCard).join('');
