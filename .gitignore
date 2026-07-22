@@ -35,3 +35,6 @@ inad_database.db
 *.log
 backups/
 scratch/
+documentacao.html
+*.zip
+

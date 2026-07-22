@@ -640,11 +640,23 @@ def _uau_first(d, keys):
 
 
 def _uau_as_list(v):
-    """Normaliza a resposta da UAU (que às vezes envolve a lista numa chave) para lista."""
+    """Normaliza a resposta da UAU (que às vezes envolve a lista numa chave ou aninhada numa lista) para lista."""
     if v is None:
         return []
     if isinstance(v, list):
-        return v
+        res = []
+        for item in v:
+            if isinstance(item, dict):
+                for k in ("Pessoas", "pessoas", "Result", "result", "Dados", "dados",
+                          "Items", "items", "Clientes", "clientes"):
+                    if isinstance(item.get(k), list):
+                        res.extend(item[k])
+                        break
+                else:
+                    res.append(item)
+            else:
+                res.append(item)
+        return res
     if isinstance(v, dict):
         for k in ("Pessoas", "pessoas", "Result", "result", "Dados", "dados",
                   "Items", "items", "Clientes", "clientes"):
@@ -739,10 +751,26 @@ def _uau_parse_recebiveis(receb):
     return props
 
 
-def _sync_from_uau(empresa=None, obra=None):
+def _uau_shape(v):
+    """Descreve a forma de uma resposta da UAU sem expor PII: tipo, tamanho e chaves."""
+    if isinstance(v, list):
+        first = v[0] if v else None
+        return {"tipo": "list", "tamanho": len(v),
+                "chaves_do_1o": sorted(first.keys()) if isinstance(first, dict) else None}
+    if isinstance(v, dict):
+        return {"tipo": "dict", "chaves": sorted(v.keys())}
+    if isinstance(v, str):
+        return {"tipo": "str", "tamanho": len(v), "amostra": v[:120]}
+    return {"tipo": type(v).__name__, "valor": v}
+
+
+def _sync_from_uau(empresa=None, obra=None, diag=None):
     """Consulta a API UAU (read-only) e devolve a árvore `clients` pronta para
     _insert_clients. Fluxo documentado: Autenticar → ConsultarPessoasComVenda
-    (filtro empresa/obra) → por CPF: ParcelasECobrancasDoCliente → inadimplência."""
+    (filtro empresa/obra) → por CPF: ParcelasECobrancasDoCliente → inadimplência.
+
+    Se `diag` (dict) for passado, popula diagnósticos por etapa (sem PII) para
+    depuração — usado pelo modo debug do endpoint /api/sync_uau."""
     base = os.environ["UAU_BASE_URL"]
     version = os.environ.get("UAU_API_VERSION", "1")
     integ = os.environ["UAU_X_INTEGRATION"]
@@ -757,6 +785,8 @@ def _sync_from_uau(empresa=None, obra=None):
     if not isinstance(token, str) or not token.strip():
         raise RuntimeError("Autenticação UAU não retornou um token válido")
     token = token.strip().strip('"')
+    if diag is not None:
+        diag["1_auth"] = {"token_ok": True, "token_len": len(token)}
 
     # 2. Enumerar titulares de venda (só campos válidos: empresa/obra).
     filtro = {}
@@ -764,34 +794,105 @@ def _sync_from_uau(empresa=None, obra=None):
         filtro["empresa"] = empresa
     if obra not in (None, ""):
         filtro["obra"] = obra
-    titulares = _uau_as_list(_uau_request(
+    raw_titulares = _uau_request(
         base, version, "/Pessoas/ConsultarPessoasComVenda", integ,
-        auth_token=token, payload=filtro))
+        auth_token=token, payload=filtro)
+    titulares = _uau_as_list(raw_titulares)
+    if diag is not None:
+        diag["2_comvenda"] = {"filtro_enviado": filtro,
+                              "resposta": _uau_shape(raw_titulares),
+                              "titulares_apos_normalizar": len(titulares)}
 
+    n_com_cpf = 0
+    n_recebiveis_ok = 0
     clients = {}
     for pessoa in titulares:
-        cpf = _uau_first(pessoa, ["cpf", "Cpf", "CPF", "cpf_cnpj", "CpfCnpj",
-                                  "CPFCNPJ", "CpfCnpj_pes"])
-        if not cpf:
+        if not isinstance(pessoa, dict):
+            continue
+        cod_pes = _uau_first(pessoa, ["Cod_pes", "cod_pes", "CodPessoa", "cod_pessoa", "Codigopessoa"])
+        if cod_pes and str(cod_pes).startswith("System."):
             continue
         nome = _uau_first(pessoa, ["nome", "Nome", "NomePessoa", "Nome_pes",
-                                   "razaoSocial", "RazaoSocial"]) or str(cpf)
+                                   "razaoSocial", "RazaoSocial"]) or ""
+        if str(nome).startswith("System."):
+            continue
+
+        cpf = _uau_first(pessoa, ["cpf", "Cpf", "CPF", "cpf_cnpj", "CpfCnpj",
+                                  "CPFCNPJ", "CpfCnpj_pes", "cpf_pes"])
+        email = _uau_first(pessoa, ["email", "Email", "Email_pes"]) or ""
+
+        # Se CPF não veio na lista de titulares, busca os dados da pessoa por chave
+        if not cpf and cod_pes:
+            try:
+                cod_num = int(cod_pes)
+                p_detail = _uau_request(
+                    base, version, "/Pessoas/ConsultarPessoaPorChave", integ,
+                    auth_token=token, payload={"codigo_pessoa": cod_num})
+                p_list = _uau_as_list(p_detail)
+                if p_list:
+                    for row in p_list:
+                        if isinstance(row, dict):
+                            mytable = row.get("MyTable")
+                            if isinstance(mytable, list):
+                                for r in mytable:
+                                    if isinstance(r, dict) and not str(r.get("cod_pes", "")).startswith("System."):
+                                        cpf = r.get("cpf_pes") or cpf
+                                        if not email:
+                                            email = r.get("Email_pes") or ""
+                                        if not nome or nome == str(cod_pes):
+                                            nome = r.get("nome_pes") or nome
+                                        break
+            except Exception as exc:
+                print(f"[UAU] Falha ao consultar pessoa por chave cod_pes={cod_pes}: {exc}")
+
+        if not cpf:
+            continue
+
         cpf_num = re.sub(r"\D", "", str(cpf))
+        if len(cpf_num) < 11:
+            continue
+
+        n_com_cpf += 1
+        if not nome:
+            nome = str(cpf_num)
+
         # 3. Parcelas/cobranças do cliente (ValorReajustado=True → valor atualizado).
         try:
             receb = _uau_request(
                 base, version, "/Recebiveis/ParcelasECobrancasDoCliente", integ,
                 auth_token=token, payload={"Cpf": cpf_num, "ValorReajustado": True})
         except Exception as exc:
-            print(f"[UAU] Falha ao consultar recebíveis de {cpf_num}: {exc}")
+            print(f"[UAU] Falha ao consultar recebíveis de ***{cpf_num[-3:]}: {exc}")
             continue
+
         props = _uau_parse_recebiveis(receb)
+        if props:
+            n_recebiveis_ok += 1
+
+        if diag is not None and "3_recebiveis_1o" not in diag:
+            vendas = receb.get("Vendas") if isinstance(receb, dict) else None
+            total_parc = sum(len(v.get("ParcelasVenda") or [])
+                             for v in (vendas or []) if isinstance(v, dict))
+            diag["3_recebiveis_1o"] = {
+                "cpf_mascarado": "***" + cpf_num[-3:],
+                "resposta": _uau_shape(receb),
+                "num_vendas": len(vendas) if isinstance(vendas, list) else None,
+                "total_parcelas": total_parc,
+                "parcelas_vencidas_apos_filtro": sum(len(p["parcels"]) for p in props),
+                "hoje": datetime.date.today().isoformat(),
+            }
+
         if not props:
             continue  # sem parcelas vencidas → não é inadimplente
+
         clients[nome] = {
-            "cpf_cnpj": str(cpf), "cel": "", "email": "",
+            "cpf_cnpj": str(cpf), "cel": "", "email": str(email),
             "endereco": "", "telefone_secundario": "", "properties": props,
         }
+    if diag is not None:
+        diag["4_resumo"] = {"titulares": len(titulares), "com_cpf": n_com_cpf,
+                            "com_parcelas_vencidas": n_recebiveis_ok,
+                            "clientes_montados": len(clients)}
     return clients
 
 
@@ -2913,6 +3014,15 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 # Filtro opcional empresa/obra vindo do corpo do POST (limita o volume).
                 empresa = payload.get("empresa") if isinstance(payload, dict) else None
                 obra    = payload.get("obra") if isinstance(payload, dict) else None
+                debug   = bool(payload.get("debug")) if isinstance(payload, dict) else False
+
+                # Modo debug: diagnostica cada etapa (sem PII) e NÃO grava nada.
+                if debug:
+                    diag = {}
+                    clients = _sync_from_uau(empresa, obra, diag=diag)
+                    _json_response(self, {"status": "debug",
+                                          "clientes_montados": len(clients), "diag": diag})
+                    return
 
                 # Consulta real à UAU (somente leitura). Retorna só inadimplentes.
                 clients = _sync_from_uau(empresa, obra)
@@ -3030,17 +3140,9 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
 
 # ─── SERVIDOR ─────────────────────────────────────────────────────────────────
 
-class _ReuseServer(socketserver.TCPServer):
-    """TCPServer com reutilização de porta compatível com Windows e UNIX.
-
-    Deliberadamente NÃO herda socketserver.ThreadingMixIn: o servidor atende
-    uma requisição HTTP por vez (modelo simples, adequado a um CRM local de
-    poucos operadores). O `threading.local`/`check_same_thread=False` na
-    conexão SQLite (get_conn(), acima) existe só porque a thread principal de
-    serve_forever() é distinta da thread de import/setup — não porque
-    múltiplas requisições HTTP rodem concorrentemente. Se algum dia migrar
-    para ThreadingHTTPServer, revisar todo cursor/conexão compartilhado antes
-    (acesso a SQLite não é thread-safe por padrão)."""
+class _ReuseServer(socketserver.ThreadingMixIn, socketserver.TCPServer):
+    """TCPServer multithreaded com reutilização de porta compatível com Windows e UNIX."""
+    daemon_threads = True
     allow_reuse_address = (platform.system() != "Windows")
 
     def server_bind(self):

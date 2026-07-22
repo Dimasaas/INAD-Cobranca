@@ -1288,7 +1288,7 @@
     }
 
     // ─── DATA LOADING ────────────────────────────────────────────────────────
-    const EMBEDDED_DATA = CLIENTS_JSON_PLACEHOLDER;
+    const EMBEDDED_DATA = typeof CLIENTS_JSON_PLACEHOLDER !== 'undefined' ? CLIENTS_JSON_PLACEHOLDER : {};
     let DATA = {};
     let sent = new Set();
     let isServerActive = false;
@@ -1509,6 +1509,7 @@
 
       try {
         const res = await fetch(`/api/reports/${reportId}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         const clientsData = await res.json();
         pBar.style.width = '60%';
 
@@ -1521,11 +1522,11 @@
 
         pBar.style.width = '100%';
         await new Promise(resolve => setTimeout(resolve, 200));
-        overlay.style.display = 'none';
         renderAll();
       } catch (e) {
-        overlay.style.display = 'none';
         alert("Erro ao carregar relatório selecionado: " + e.message);
+      } finally {
+        overlay.style.display = 'none';
       }
     }
 
