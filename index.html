@@ -5,17 +5,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description"
-    content="INAD — Painel de Cobrança: gerencie inadimplência, importe relatórios em PDF, envie cobranças pelo WhatsApp e acompanhe KPIs de recuperação.">
+    content="INAD — Painel de Cobrança: gerencie inadimplência, envie cobranças pelo WhatsApp e acompanhe KPIs de recuperação.">
   <meta name="robots" content="noindex, nofollow">
   <title>INAD — Painel de Cobrança</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
     rel="stylesheet">
-
-  <!-- PDF.js library for client-side PDF parsing -->
-  <script src="libs/pdf.min.js"
-    onerror="this.onerror=null; this.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js';"></script>
 
   <style>
     :root {
@@ -153,22 +149,6 @@
       align-items: center;
       gap: 8px;
       margin-left: auto;
-    }
-
-    .btn-import {
-      background: var(--bg3);
-      color: var(--accent);
-      border: 1px solid var(--border);
-      padding: 6px 14px;
-      display: inline-flex;
-      align-items: center;
-      gap: 6px;
-      font-weight: 600;
-    }
-
-    .btn-import:hover {
-      border-color: var(--accent);
-      background: rgba(79, 141, 255, .05);
     }
 
     .stats {
@@ -711,23 +691,6 @@
     }
 
     /* OVERLAYS */
-    #drop-overlay {
-      display: none;
-      position: fixed;
-      top: 0;
-      left: 0;
-      width: 100%;
-      height: 100%;
-      background: rgba(13, 15, 20, 0.85);
-      backdrop-filter: blur(10px);
-      z-index: 1000;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-      gap: 16px;
-      border: 3px dashed var(--accent);
-    }
-
     #loading-overlay {
       display: none;
       position: fixed;
@@ -1092,12 +1055,6 @@
 </head>
 
 <body>
-  <div id="drop-overlay">
-    <span style="font-size:48px;">🔄</span>
-    <h2 style="font-weight:700; color:var(--text)">Sincronização via API ProUAU Ativa</h2>
-    <p style="color:var(--text3)">Solte um relatório PDF apenas para importação manual de fallback</p>
-  </div>
-
   <div id="loading-overlay">
     <div class="spinner"></div>
     <h3 style="font-weight:700; color:var(--text); margin-bottom:4px;" id="loading-text">Processando PDF...</h3>
@@ -1136,12 +1093,6 @@
         style="background: linear-gradient(135deg, var(--accent), var(--accent2)); color:#fff; border:none; padding:7px 16px; border-radius:8px; font-weight:700; cursor:pointer; display:inline-flex; align-items:center; gap:6px; box-shadow: 0 4px 12px rgba(139,92,246,0.3); transition: all 0.2s;">
         ⚡ Sincronizar com ProUAU
       </button>
-      <button class="btn btn-import" onclick="document.getElementById('pdf-input').click()" style="opacity:0.8;"
-        title="Fallback: Importação manual via PDF">
-        📂 Importar PDF (Fallback)
-      </button>
-      <input type="file" id="pdf-input" accept=".pdf" style="display:none;" multiple onchange="handlePDFUpload(event)">
-
       <div class="stats">
         <div class="stat stat-blue"><span class="stat-val" id="st-total">—</span><span class="stat-label">Total</span>
         </div>
@@ -1458,7 +1409,8 @@
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
-          }
+          },
+          body: JSON.stringify({ empresa: null, obra: null })
         });
         const data = await res.json();
 
@@ -1466,12 +1418,16 @@
 
         if (res.ok && data.status === 'success') {
           setTimeout(() => {
-            alert("✅ Sincronização com a API ProUAU concluída com sucesso!");
+            alert("✅ Sincronização ProUAU concluída: " + (data.clients || 0) +
+                  " cliente(s) inadimplente(s) importado(s) da API.");
             if (typeof updateReportDropdown === 'function') {
               updateReportDropdown();
             }
             location.reload();
           }, 200);
+        } else if (res.ok && data.status === 'empty') {
+          if (overlay) overlay.style.display = 'none';
+          alert("ℹ️ Nenhum cliente inadimplente retornado pela UAU para o filtro informado.");
         } else {
           if (overlay) overlay.style.display = 'none';
           alert("❌ Erro na sincronização ProUAU: " + (data.error || "Falha desconhecida."));
@@ -2455,398 +2411,6 @@
       }
     }
     // migrateSentData() is called inside initApp()
-
-    // ─── CLIENT-SIDE PDF PARSING & IMPORT ────────────────────────────────────
-    async function handlePDFUpload(event) {
-      const files = Array.from(event.target.files);
-      if (!files || files.length === 0) return;
-
-      const overlay = document.getElementById('loading-overlay');
-      const loadingText = document.getElementById('loading-text');
-      const pBar = document.getElementById('progress-bar');
-      const pSub = document.getElementById('loading-sub');
-
-      let autoName = false;
-      if (files.length > 1) {
-        autoName = confirm(`Você selecionou ${files.length} relatórios.\nDeseja nomeá-los automaticamente usando a data de emissão encontrada dentro de cada PDF? (Recomendado para lote)`);
-      }
-
-      let successCount = 0;
-      let totalClientsImported = 0;
-
-      for (let i = 0; i < files.length; i++) {
-        const file = files[i];
-        const fileIndexText = files.length > 1 ? ` (${i + 1}/${files.length})` : '';
-
-        overlay.style.display = 'flex';
-        pBar.style.width = '0%';
-        loadingText.textContent = `Carregando PDF${fileIndexText}...`;
-        pSub.textContent = `Lendo arquivo "${file.name}"...`;
-
-        try {
-          const typedarray = await readFileAsArrayBuffer(file);
-
-          pBar.style.width = '10%';
-          loadingText.textContent = `Extraindo texto${fileIndexText}...`;
-          const text = await extractTextFromPDF(typedarray, loadingText, pBar, pSub, fileIndexText);
-
-          pBar.style.width = '80%';
-          loadingText.textContent = `Mapeando clientes${fileIndexText}...`;
-          pSub.textContent = "Agrupando imóveis e parcelas...";
-
-          await new Promise(resolve => setTimeout(resolve, 100));
-
-          const parsedClients = parseLayoutText(text);
-
-          pBar.style.width = '90%';
-          pSub.textContent = "Salvando dados...";
-
-          const extractedDate = extractReportDate(text);
-          let suggestedName = "Relatório " + new Date().toLocaleDateString('pt-BR');
-          if (extractedDate) {
-            const parts = extractedDate.split('-');
-            suggestedName = `Relatório de ${parts[2]}/${parts[1]}/${parts[0]}`;
-          }
-
-          let reportName = suggestedName;
-          if (isServerActive && !autoName) {
-            reportName = prompt(`Digite uma identificação para o relatório "${file.name}":`, suggestedName);
-            if (reportName === null) {
-              // Cancelou este relatório específico, pula para o próximo
-              continue;
-            }
-          }
-
-          await saveClients(parsedClients, reportName, extractedDate);
-          successCount++;
-          totalClientsImported += Object.keys(parsedClients).length;
-
-        } catch (err) {
-          console.error(err);
-          alert(`Erro ao processar o arquivo "${file.name}": ${err.message}`);
-        }
-      }
-
-      if (successCount > 0) {
-        // Limpa barra de busca e filtros
-        document.getElementById('search').value = "";
-        curQ = "";
-        curF = "all";
-        document.querySelectorAll('.fb').forEach(b => b.classList.remove('on'));
-        document.querySelector('.fb[onclick*="all"]').classList.add('on');
-
-        migrateSentData();
-        renderAll();
-
-        if (isServerActive) {
-          await updateReportDropdown();
-          await loadKPIs();
-        }
-
-        pBar.style.width = '100%';
-        await new Promise(resolve => setTimeout(resolve, 200));
-        overlay.style.display = 'none';
-
-        alert(`Sucesso! ${successCount} de ${files.length} relatórios importados (${totalClientsImported} clientes cadastrados).`);
-      } else {
-        overlay.style.display = 'none';
-      }
-
-      // Limpa o input para permitir re-upload do mesmo arquivo
-      event.target.value = "";
-    }
-
-    function readFileAsArrayBuffer(file) {
-      return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(new Uint8Array(reader.result));
-        reader.onerror = () => reject(reader.error);
-        reader.readAsArrayBuffer(file);
-      });
-    }
-
-    async function extractTextFromPDF(pdfData, loadingText, pBar, pSub, fileIndexText = '') {
-      const pdfjsLib = window['pdfjs-dist/build/pdf'];
-
-      if (window.location.protocol === 'file:') {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
-      } else {
-        pdfjsLib.GlobalWorkerOptions.workerSrc = 'libs/pdf.worker.min.js';
-      }
-
-      const loadingTask = pdfjsLib.getDocument({ data: pdfData });
-      const pdf = await loadingTask.promise;
-      let fullText = '';
-
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const pct = Math.round(10 + (i / pdf.numPages) * 70);
-        pBar.style.width = `${pct}%`;
-        loadingText.textContent = `Processando PDF${fileIndexText}...`;
-        pSub.textContent = `Lendo página ${i} de ${pdf.numPages}...`;
-
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        const items = textContent.items;
-
-        const lines = {};
-        for (const item of items) {
-          if (!item.str.trim()) continue;
-          const y = Math.round(item.transform[5] / 4) * 4;
-          if (!lines[y]) lines[y] = [];
-          lines[y].push(item);
-        }
-
-        const sortedY = Object.keys(lines).map(Number).sort((a, b) => b - a);
-
-        let pageText = '';
-        for (const y of sortedY) {
-          const lineItems = lines[y].sort((a, b) => a.transform[4] - b.transform[4]);
-
-          let lineText = '';
-          let lastX = 0;
-          for (const item of lineItems) {
-            const x = item.transform[4];
-            if (lastX > 0 && x - lastX > 8) {
-              const spaces = Math.min(30, Math.floor((x - lastX) / 5));
-              lineText += ' '.repeat(spaces);
-            }
-            lineText += item.str;
-            lastX = x + item.width;
-          }
-          pageText += lineText + '\n';
-        }
-        fullText += `=== PAGE ${i} ===\n` + pageText + '\n';
-      }
-      return fullText;
-    }
-
-    function extractReportDate(text) {
-      const regex = /(segunda-feira|terça-feira|quarta-feira|quinta-feira|sexta-feira|sábado|domingo),\s+(\d{1,2})\s+de\s+(janeiro|fevereiro|março|abril|maio|junho|julho|agosto|setembro|outubro|novembro|dezembro)\s+de\s+(\d{4})/i;
-      const match = text.match(regex);
-      if (match) {
-        const day = match[2].padStart(2, '0');
-        const monthName = match[3].toLowerCase();
-        const year = match[4];
-        const months = {
-          'janeiro': '01', 'fevereiro': '02', 'março': '03', 'abril': '04',
-          'maio': '05', 'junho': '06', 'julho': '07', 'agosto': '08',
-          'setembro': '09', 'outubro': '10', 'novembro': '11', 'dezembro': '12'
-        };
-        const month = months[monthName] || '01';
-        return `${year}-${month}-${day}`;
-      }
-      return null;
-    }
-
-    function parseLayoutText(text) {
-      // Split by main Venda headers using negative lookbehinds
-      const parts = text.split(/(?<!Data da )(?<!Total da )Venda:\s+/);
-      const blocks = parts.slice(1);
-
-      const parsedClients = {};
-
-      for (const block of blocks) {
-        const lines = block.split('\n').filter(l => l.trim());
-        if (!lines.length) continue;
-
-        const firstLine = lines[0];
-        const vendaMatch = firstLine.match(/^\s*(\d+)/);
-        if (!vendaMatch) continue;
-        const vendaId = vendaMatch[1];
-
-        const identMatch = firstLine.match(/Identificador:\s*(.*?)(?:\s{2,}|Status|$)/);
-        const identifier = identMatch ? identMatch[1].trim() : "";
-
-        // Find the Cliente line index
-        let clienteIdx = -1;
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes("Cliente:")) {
-            clienteIdx = i;
-            break;
-          }
-        }
-        if (clienteIdx === -1) continue;
-
-        const clienteLine = lines[clienteIdx];
-
-        // Collect multiline lines before parcels table start
-        const clientSectionLines = [];
-        for (let i = clienteIdx; i < lines.length; i++) {
-          const line = lines[i];
-          if (line.includes("Parc.") || line.includes("Vencimento") || line.includes("Venda:")) {
-            break;
-          }
-          clientSectionLines.push(line);
-        }
-
-        // Get column indices in the header
-        const clientPos = clienteLine.indexOf("Cliente:");
-        const cpfPos = clienteLine.indexOf("CPF/CNPJ:");
-        const resPos = clienteLine.indexOf("Res.:");
-        const comPos = clienteLine.indexOf("Com.:");
-        const celPos = clienteLine.indexOf("Cel.:");
-        const emailPos = clienteLine.indexOf("E-mail:");
-
-        const colRanges = {
-          name: [clientPos, cpfPos !== -1 ? cpfPos : 100],
-          cpf: [cpfPos, resPos !== -1 ? resPos : 130],
-          res: [resPos, comPos !== -1 ? comPos : 160],
-          com: [comPos, celPos !== -1 ? celPos : 185],
-          cel: [celPos, emailPos !== -1 ? emailPos : 215],
-          email: [emailPos, clienteLine.length]
-        };
-
-        const colValues = { name: "", cpf: "", res: "", com: "", cel: "", email: "" };
-        for (const [colName, range] of Object.entries(colRanges)) {
-          const start = range[0];
-          const end = range[1];
-          if (start === -1) continue;
-
-          const segments = [];
-          for (const line of clientSectionLines) {
-            if (line.length > start) {
-              let segment = line.slice(start, end).trim();
-              if (colName === "name") segment = segment.replace(/^Cliente:\s*/, "");
-              else if (colName === "cpf") segment = segment.replace(/^CPF\/CNPJ:\s*/, "");
-              else if (colName === "res") segment = segment.replace(/^Res\.:\s*/, "");
-              else if (colName === "com") segment = segment.replace(/^Com\.:\s*/, "");
-              else if (colName === "cel") segment = segment.replace(/^Cel\.:\s*/, "");
-              else if (colName === "email") segment = segment.replace(/^E-mail:\s*/, "");
-              if (segment) segments.push(segment);
-            }
-          }
-          colValues[colName] = segments.join(" ").trim();
-        }
-
-        const clientName = colValues.name.replace(/\s+/g, " ").trim();
-        const cpfCnpj = colValues.cpf.trim();
-        let celDigits = colValues.cel.replace(/\D/g, "");
-        let resDigits = colValues.res.replace(/\D/g, "");
-        let comDigits = colValues.com.replace(/\D/g, "");
-        let email = colValues.email.trim();
-
-        if (!clientName) continue;
-
-        // Clean bad email fields
-        if (email.includes("E-mail:") || email.includes("Parc.")) {
-          email = "";
-        }
-
-        // Clean split DDD/phones
-        if (celDigits.length === 12 && celDigits.startsWith("3519")) {
-          celDigits = "35" + celDigits.slice(3);
-        }
-        if (resDigits.length === 12 && resDigits.startsWith("4473")) {
-          resDigits = "44973772012";
-        }
-
-        let bestPhone = "";
-        let source = "";
-        if (celDigits.length >= 8 && !colValues.cel.includes("gmail") && !colValues.cel.includes("@")) {
-          bestPhone = celDigits;
-          source = "Cel";
-        } else if (resDigits.length >= 8 && !colValues.res.includes("gmail") && !colValues.res.includes("@")) {
-          bestPhone = resDigits;
-          source = "Res";
-        } else if (comDigits.length >= 8 && !colValues.com.includes("gmail") && !colValues.com.includes("@")) {
-          bestPhone = comDigits;
-          source = "Com";
-        }
-
-        // Format DDD
-        let formattedPhone = "";
-        if (bestPhone) {
-          if (bestPhone.length === 11) {
-            formattedPhone = `${bestPhone.slice(0, 2)} ${bestPhone.slice(2, 7)}-${bestPhone.slice(7)}`;
-          } else if (bestPhone.length === 10) {
-            formattedPhone = `${bestPhone.slice(0, 2)} ${bestPhone.slice(2, 6)}-${bestPhone.slice(6)}`;
-          } else if (bestPhone.length === 9) {
-            formattedPhone = `${bestPhone[0]} ${bestPhone.slice(1, 5)}-${bestPhone.slice(5)}`;
-          } else if (bestPhone.length === 8) {
-            formattedPhone = `${bestPhone.slice(0, 4)}-${bestPhone.slice(4)}`;
-          } else {
-            formattedPhone = bestPhone;
-          }
-        }
-
-        // Extract parcels
-        const parcels = [];
-        for (const line of block.split("\n")) {
-          const dates = line.match(/\d\d\/\d\d\/\d{4}/g);
-          if (!dates) continue;
-          const lineNoDates = line.replace(/\d\d\/\d\d\/\d{4}/g, "");
-          const pMatch = lineNoDates.match(/(\d+\/\d+)/);
-          if (pMatch) {
-            const parcelNum = pMatch[1];
-            const vencShort = dates[0].slice(0, 5);
-
-            let valor = 0.0;
-            const tokens = line.trim().split(/\s+/);
-            const moneyTokens = tokens.filter(t => /^\d{1,3}(\.\d{3})*,\d{2}$/.test(t) || /^\d+,\d{2}$/.test(t));
-            if (moneyTokens.length >= 6) {
-              const valorTotalStr = moneyTokens[5];
-              valor = parseFloat(valorTotalStr.replace(/\./g, "").replace(",", "."));
-            } else if (moneyTokens.length >= 1) {
-              const valorParcelaStr = moneyTokens[0];
-              valor = parseFloat(valorParcelaStr.replace(/\./g, "").replace(",", "."));
-            }
-
-            parcels.push({
-              parcela: parcelNum,
-              vencimento: vencShort,
-              vencimento_full: dates[0],
-              valor: valor
-            });
-          }
-        }
-
-        if (!parsedClients[clientName]) {
-          parsedClients[clientName] = {
-            name: clientName,
-            cpf_cnpj: cpfCnpj,
-            cel: formattedPhone,
-            email: email,
-            properties: []
-          };
-        }
-
-        // Prevent duplicate properties
-        const hasProp = parsedClients[clientName].properties.some(p => p.venda_id === vendaId);
-        if (!hasProp) {
-          parsedClients[clientName].properties.push({
-            venda_id: vendaId,
-            identifier: identifier,
-            parcels: parcels
-          });
-        }
-      }
-
-      return parsedClients;
-    }
-
-    // ─── DRAG & DROP HANDLERS ────────────────────────────────────────────────
-    window.addEventListener('dragover', e => {
-      e.preventDefault();
-      document.getElementById('drop-overlay').style.display = 'flex';
-    });
-
-    document.getElementById('drop-overlay').addEventListener('dragleave', e => {
-      e.preventDefault();
-      document.getElementById('drop-overlay').style.display = 'none';
-    });
-
-    window.addEventListener('drop', async e => {
-      e.preventDefault();
-      document.getElementById('drop-overlay').style.display = 'none';
-
-      const files = Array.from(e.dataTransfer.files).filter(f => f.type === "application/pdf" || f.name.endsWith(".pdf"));
-      if (files.length > 0) {
-        const event = { target: { files: files } };
-        handlePDFUpload(event);
-      } else {
-        alert("Por favor, arraste apenas arquivos PDF do relatório de inadimplência.");
-      }
-    });
 
     // ─── EXCLUSÃO DE CLIENTE DOS KPIS ──────────────────────────────────────────
 

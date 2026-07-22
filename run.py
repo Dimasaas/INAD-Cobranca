@@ -32,6 +32,10 @@ import hashlib
 import hmac
 import secrets
 import unicodedata
+import datetime
+import urllib.request
+import urllib.parse
+import urllib.error
 
 # Windows: garante UTF-8 no console/redirecionamento (evita crash do banner
 # com caracteres Unicode sob cp1252)
@@ -317,6 +321,11 @@ def init_db():
     # continua com acesso de escrita — nenhuma mudança de comportamento na
     # migração; o papel restrito só existe para operadores criados de
     # propósito com --add-operator ... --read-only.
+    existing_operator_cols = {row[1] for row in cursor.execute("PRAGMA table_info(operators)")}
+    if "can_write" not in existing_operator_cols:
+        cursor.execute("ALTER TABLE operators ADD COLUMN can_write INTEGER NOT NULL DEFAULT 1")
+        print("[MIGRAÇÃO] Coluna can_write adicionada à tabela operators (papel somente-leitura).")
+
     # Migração UAU API: Novas colunas de metadados ricos para bancos legados
     existing_clients_cols = {row[1] for row in cursor.execute("PRAGMA table_info(clients)")}
     if "endereco" not in existing_clients_cols:
@@ -609,9 +618,181 @@ def get_clients_for_report(report_id):
         if prop and pa_num:
             prop["parcels"].append({
                 "parcela": pa_num, "vencimento": pa_venc, "vencimento_full": pa_venc_f, 
-                "valor": pa_val, "valor_original": _cents_to_float(pa_vo_cents), "valor_juros": _cents_to_float(pa_vj_cents)
+                "valor": pa_val, "valor_original": _cents_to_reais(pa_vo_cents), "valor_juros": _cents_to_reais(pa_vj_cents)
             })
     return result
+
+
+# ─── Integração com a API do ERP UAU (SOMENTE LEITURA) ──────────────────────
+# Regras (ver memória uau-sync-implementation-rules): só endpoints de CONSULTA,
+# enumeração via ConsultarPessoasComVenda com filtro empresa/obra, sem fan-out
+# pesado de Pessoas/*. Nada de escrita (LGPD / operador read-only).
+UAU_HTTP_TIMEOUT = int(os.environ.get("UAU_HTTP_TIMEOUT", "30"))
+
+
+def _uau_first(d, keys):
+    """Primeiro valor não-vazio dentre `keys` num dict (tolerante a variações de caixa)."""
+    if isinstance(d, dict):
+        for k in keys:
+            if d.get(k) not in (None, ""):
+                return d[k]
+    return None
+
+
+def _uau_as_list(v):
+    """Normaliza a resposta da UAU (que às vezes envolve a lista numa chave) para lista."""
+    if v is None:
+        return []
+    if isinstance(v, list):
+        return v
+    if isinstance(v, dict):
+        for k in ("Pessoas", "pessoas", "Result", "result", "Dados", "dados",
+                  "Items", "items", "Clientes", "clientes"):
+            if isinstance(v.get(k), list):
+                return v[k]
+        return [v]
+    return []
+
+
+def _uau_parse_date(s):
+    """Converte data da UAU (ISO date-time ou dd/mm/yyyy) em datetime.date, ou None."""
+    if not s:
+        return None
+    s = str(s)
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", s)
+    if m:
+        try:
+            return datetime.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            return None
+    m = re.match(r"(\d{2})/(\d{2})/(\d{4})", s)
+    if m:
+        try:
+            return datetime.date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
+        except ValueError:
+            return None
+    return None
+
+
+def _uau_request(base, version, endpoint, integ_token, auth_token=None,
+                 payload=None, query=None):
+    """POST autenticado à API UAU. Retorna o corpo decodificado (dict/list) ou a
+    string crua. A UAU às vezes serializa JSON dentro de string — desembrulha uma vez."""
+    url = f"{base.rstrip('/')}/api/v{version}{endpoint}"
+    if query:
+        url += "?" + urllib.parse.urlencode(query)
+    data = json.dumps(payload if payload is not None else {}).encode("utf-8")
+    req = urllib.request.Request(url, data=data, method="POST")
+    req.add_header("Content-Type", "application/json")
+    req.add_header("X-INTEGRATION-Authorization", integ_token)
+    if auth_token:
+        req.add_header("Authorization", auth_token)
+    with urllib.request.urlopen(req, timeout=UAU_HTTP_TIMEOUT) as resp:
+        raw = resp.read().decode("utf-8").strip()
+    if not raw:
+        return None
+    try:
+        val = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(val, str):
+        try:
+            return json.loads(val)
+        except json.JSONDecodeError:
+            return val
+    return val
+
+
+def _uau_parse_recebiveis(receb):
+    """RecebiveisResponse (Vendas → ParcelasVenda) → árvore de imóveis/parcelas do
+    INAD, mantendo só parcelas VENCIDAS (inadimplência = vencimento < hoje)."""
+    hoje = datetime.date.today()
+    props = []
+    if not isinstance(receb, dict):
+        return props
+    for venda in receb.get("Vendas") or []:
+        empreend = venda.get("Obra") or ""
+        venda_id = str(venda.get("Venda", "") or "")
+        itens = venda.get("ItensVenda") or []
+        identifier = ""
+        if itens:
+            identifier = itens[0].get("Identificador") or itens[0].get("DescProduto") or ""
+        parcels = []
+        for pv in venda.get("ParcelasVenda") or []:
+            venc = _uau_parse_date(pv.get("DataVencimento"))
+            if venc is None or venc >= hoje:
+                continue  # só parcelas vencidas
+            valor = float(pv.get("ValorParcela") or 0.0)
+            parcels.append({
+                "parcela": str(pv.get("NumParcela", "") or ""),
+                "vencimento": venc.strftime("%d/%m"),
+                "vencimento_full": venc.isoformat(),
+                "valor": valor,
+                "valor_original": valor,
+                "valor_juros": 0.0,
+            })
+        if parcels:
+            props.append({
+                "venda_id": venda_id, "identifier": identifier,
+                "empreendimento": empreend, "parcels": parcels,
+            })
+    return props
+
+
+def _sync_from_uau(empresa=None, obra=None):
+    """Consulta a API UAU (read-only) e devolve a árvore `clients` pronta para
+    _insert_clients. Fluxo documentado: Autenticar → ConsultarPessoasComVenda
+    (filtro empresa/obra) → por CPF: ParcelasECobrancasDoCliente → inadimplência."""
+    base = os.environ["UAU_BASE_URL"]
+    version = os.environ.get("UAU_API_VERSION", "1")
+    integ = os.environ["UAU_X_INTEGRATION"]
+    login = os.environ["UAU_USUARIO"]
+    senha = os.environ["UAU_SENHA"]
+
+    # 1. Autenticar → token (string) usado como header Authorization.
+    token = _uau_request(base, version, "/Autenticador/AutenticarUsuario", integ,
+                         payload={"Login": login, "Senha": senha})
+    if isinstance(token, dict):
+        token = _uau_first(token, ["token", "Token", "Authorization", "authorization"])
+    if not isinstance(token, str) or not token.strip():
+        raise RuntimeError("Autenticação UAU não retornou um token válido")
+    token = token.strip().strip('"')
+
+    # 2. Enumerar titulares de venda (só campos válidos: empresa/obra).
+    filtro = {}
+    if empresa not in (None, ""):
+        filtro["empresa"] = empresa
+    if obra not in (None, ""):
+        filtro["obra"] = obra
+    titulares = _uau_as_list(_uau_request(
+        base, version, "/Pessoas/ConsultarPessoasComVenda", integ,
+        auth_token=token, payload=filtro))
+
+    clients = {}
+    for pessoa in titulares:
+        cpf = _uau_first(pessoa, ["cpf", "Cpf", "CPF", "cpf_cnpj", "CpfCnpj",
+                                  "CPFCNPJ", "CpfCnpj_pes"])
+        if not cpf:
+            continue
+        nome = _uau_first(pessoa, ["nome", "Nome", "NomePessoa", "Nome_pes",
+                                   "razaoSocial", "RazaoSocial"]) or str(cpf)
+        cpf_num = re.sub(r"\D", "", str(cpf))
+        # 3. Parcelas/cobranças do cliente (ValorReajustado=True → valor atualizado).
+        try:
+            receb = _uau_request(
+                base, version, "/Recebiveis/ParcelasECobrancasDoCliente", integ,
+                auth_token=token, payload={"Cpf": cpf_num, "ValorReajustado": True})
+        except Exception as exc:
+            print(f"[UAU] Falha ao consultar recebíveis de {cpf_num}: {exc}")
+            continue
+        props = _uau_parse_recebiveis(receb)
+        if not props:
+            continue  # sem parcelas vencidas → não é inadimplente
+        clients[nome] = {
+            "cpf_cnpj": str(cpf), "cel": "", "email": "",
+            "endereco": "", "telefone_secundario": "", "properties": props,
+        }
+    return clients
 
 
 def _backup_report_before_delete(cursor, rid):
@@ -1502,28 +1683,23 @@ def get_system_context():
         "project": {
             "name": "INAD — Painel de Cobrança",
             "purpose": (
-                "Painel local para importar PDFs de inadimplência, "
+                "Painel local para sincronizar inadimplência do ERP UAU (API-First), "
                 "gerar mensagens de cobrança via WhatsApp e acompanhar KPIs de recuperação."
             ),
             "documentation_file": "AI_CONTEXT.md",
             "entry_point": "run.py",
-            "frontend_template": "inad_template.html",
-            "frontend_compiled": "inad_whatsapp.html",
-            "compiler": "add_pdf_importer.py",
+            "frontend": "index.html",
             "database_file": DB_FILE,
         },
         "architecture": {
-            "pattern": "Servidor HTTP Python + SPA HTML/JS + SQLite local",
+            "pattern": "Servidor HTTP Python + SPA HTML/JS + SQLite local + API UAU (leitura)",
             "data_flow": [
-                "PDF importado no navegador → parsing client-side (pdf.js + regex)",
-                "Dados extraídos → POST /api/reports → SQLite",
+                "POST /api/sync_uau → API UAU (Autenticar → ConsultarPessoasComVenda → "
+                "ParcelasECobrancasDoCliente) → SQLite (somente leitura na UAU)",
                 "WhatsApp aberto → POST /api/actions/sent → action_logs",
                 "Desfecho de contato registrado → POST /api/outcomes → contact_outcomes",
                 "Fallback file:// → localStorage (sem servidor)",
             ],
-            "compile_step": (
-                "Após editar inad_template.html, executar: python3 add_pdf_importer.py"
-            ),
         },
         "database_schema": {
             "reports": "Relatórios históricos importados (report_name, report_date)",
@@ -1545,6 +1721,7 @@ def get_system_context():
             "GET /api/clients/all": "Lista única de nomes de clientes (todos os relatórios)",
             "POST /api/reports": "Importa novo relatório {report_name, report_date, clients}",
             "POST /api/clients": "Alias de POST /api/reports",
+            "POST /api/sync_uau": "Sincroniza inadimplência da API UAU (somente leitura) {empresa?, obra?}",
             "GET /api/sent": "Nomes de clientes que já receberam WhatsApp",
             "GET /api/actions/sent": "Alias de GET /api/sent",
             "POST /api/actions/sent": "Registra envio {venda_id, client_name} ou lista de nomes",
@@ -1603,7 +1780,7 @@ def get_system_context():
                 "(inad_clients_db, inad_sent, inad_kpi_exclusions)."
             ),
             "privacy": (
-                "Nunca commitar .db, .json com dados reais ou PDFs — ver .gitignore."
+                "Nunca commitar .db, .json com dados reais ou credenciais (.env) — ver .gitignore."
             ),
             "access_audit": (
                 "S6: GET /api/clients/profile registra em access_audit (operator, "
@@ -1615,7 +1792,7 @@ def get_system_context():
                 "BitLocker) em vez disso."
             ),
             "frontend_edit_rule": (
-                "Editar apenas inad_template.html; regenerar inad_whatsapp.html via add_pdf_importer.py."
+                "Frontend é um único arquivo: editar index.html diretamente."
             ),
         },
         "live_stats": {
@@ -1630,7 +1807,8 @@ def get_system_context():
         },
         "ai_guidelines": [
             "Leia AI_CONTEXT.md antes de alterações significativas.",
-            "Edite inad_template.html, nunca inad_whatsapp.html diretamente.",
+            "Frontend é um único arquivo — edite index.html diretamente.",
+            "Integração UAU é SOMENTE LEITURA — nunca usar endpoints de escrita do ERP.",
             "Use sqlite3 nativo — sem ORMs ou drivers externos de banco.",
             "Preserve fallback localStorage para protocolo file://.",
             "Mantenha endpoints REST retrocompatíveis (/api/sent ↔ /api/actions/sent).",
@@ -1757,7 +1935,7 @@ def _log_access(conn, operator, client_name):
 _STATIC_ALLOWLIST = {
     "/index.html", "/inad_analytics.html",
     "/analytics.css", "/analytics.js",
-    "/libs/chart.umd.min.js", "/libs/pdf.min.js", "/libs/pdf.worker.min.js",
+    "/libs/chart.umd.min.js",
 }
 
 
@@ -1778,7 +1956,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
     def _redirect(self, location):
         # Preserva ?token= no destino, senão o bootstrap da página seguinte
         # nunca recebe o token e o operador cai em 401. O token precisa entrar
-        # ANTES de um eventual #fragmento (ex.: /inad_whatsapp.html#kpi) —
+        # ANTES de um eventual #fragmento (ex.: /index.html#kpi) —
         # tudo depois de "#" é fragmento, não query string.
         token = _request_token(self)
         if token and "token=" not in location:
@@ -1821,9 +1999,9 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
         if path in ("/", ""):
             self._redirect("/index.html")
         elif path in ("/kpi", "/kpis"):
-            self._redirect("/inad_whatsapp.html#kpi")
+            self._redirect("/index.html#kpi")
         elif path in ("/cobranca", "/painel"):
-            self._redirect("/inad_whatsapp.html#cobranca")
+            self._redirect("/index.html#cobranca")
         elif path in ("/analytics", "/analitico"):
             self._redirect("/inad_analytics.html")
 
@@ -2723,68 +2901,54 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 _error_response(self, exc, 500)
 
         elif path == "/api/sync_uau":
+            conn = None
             try:
-                conn = get_conn()
-                cursor = conn.cursor()
-                
-                # TODO: Implementar a chamada real para a API UAU usando as credenciais abaixo:
-                uau_url = os.environ.get("UAU_BASE_URL")
-                uau_user = os.environ.get("UAU_USUARIO")
-                uau_pass = os.environ.get("UAU_SENHA")
-                uau_token = os.environ.get("UAU_X_INTEGRATION")
-                
-                if not all([uau_url, uau_user, uau_pass, uau_token]):
+                if not all([os.environ.get("UAU_BASE_URL"),
+                            os.environ.get("UAU_USUARIO"),
+                            os.environ.get("UAU_SENHA"),
+                            os.environ.get("UAU_X_INTEGRATION")]):
                     _json_response(self, {"error": "Credenciais da UAU ausentes no arquivo .env"}, 500)
                     return
-                
-                # Fake data para validar fluxo enquanto o endpoint não é confirmado
-                import datetime
-                report_name = f"UAU Sync {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+
+                # Filtro opcional empresa/obra vindo do corpo do POST (limita o volume).
+                empresa = payload.get("empresa") if isinstance(payload, dict) else None
+                obra    = payload.get("obra") if isinstance(payload, dict) else None
+
+                # Consulta real à UAU (somente leitura). Retorna só inadimplentes.
+                clients = _sync_from_uau(empresa, obra)
+                if not clients:
+                    _json_response(self, {
+                        "status": "empty",
+                        "message": "Nenhum cliente inadimplente retornado pela UAU "
+                                   "para o filtro informado."})
+                    return
+
+                conn   = get_conn()
+                cursor = conn.cursor()
+                report_name = f"UAU Sync {time.strftime('%d/%m/%Y %H:%M')}"
                 report_date = datetime.date.today().isoformat()
-                
                 cursor.execute(
                     "INSERT INTO reports (report_name, report_date) VALUES (?, ?)",
                     (report_name, report_date),
                 )
                 report_id = cursor.lastrowid
-                
-                # Client rico simulando o retorno estruturado do ERP ProUAU
-                import datetime
-                hoje = datetime.date.today()
-                d_aging = (hoje - datetime.timedelta(days=45)).isoformat()
-
-                clients = {
-                    "CARLOS EDUARDO PROUAU": {
-                        "cpf_cnpj": "123.456.789-00",
-                        "cel": "11988887777",
-                        "email": "carlos.uau@email.com",
-                        "endereco": "Av. Paulista, 1000 - Ap 42, São Paulo - SP",
-                        "properties": [
-                            {
-                                "empreendimento": "RESIDENCIAL SUNSET",
-                                "identifier": "QUADRA 05 LOTE 12",
-                                "venda_id": "887766",
-                                "parcels": [
-                                    {
-                                        "parcela": "08/60",
-                                        "vencimento": d_aging[8:10] + "/" + d_aging[5:7],
-                                        "vencimento_full": d_aging,
-                                        "valor_original": 1500.00,
-                                        "valor_juros": 150.00,
-                                        "valor": 1650.00
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                }
-                
                 _insert_clients(cursor, report_id, clients)
                 conn.commit()
-                print(f"[API] Sincronização UAU (Mock) concluída. Relatório ID: {report_id}")
-                _json_response(self, {"status": "success", "report_id": report_id, "mocked": True})
+                print(f"[API] Sincronização UAU concluída. Relatório ID: {report_id} "
+                      f"| {len(clients)} cliente(s) inadimplente(s)")
+                _json_response(self, {"status": "success", "report_id": report_id,
+                                      "clients": len(clients)})
+            except urllib.error.HTTPError as exc:
+                if conn is not None:
+                    conn.rollback()
+                _error_response(self, RuntimeError(f"UAU respondeu HTTP {exc.code}: {exc.reason}"), 502)
+            except urllib.error.URLError as exc:
+                if conn is not None:
+                    conn.rollback()
+                _error_response(self, RuntimeError(f"Falha ao conectar na API UAU: {exc.reason}"), 502)
             except Exception as exc:
-                conn.rollback()
+                if conn is not None:
+                    conn.rollback()
                 _error_response(self, exc, 500)
 
         else:
@@ -2990,7 +3154,7 @@ if __name__ == "__main__":
     server_thread.start()
     time.sleep(0.8)
 
-    url = f"http://localhost:{PORT}/inad_whatsapp.html"
+    url = f"http://localhost:{PORT}/index.html"
     print(f"\n  Servidor ativo em : http://localhost:{PORT}")
     print(f"  Painel de cobrança: {url}")
 

@@ -27,13 +27,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller
 
-      - name: Gerar HTML com base vazia (CI seguro)
-        run: python add_pdf_importer.py
-
       - name: Compilar executável com PyInstaller
         run: >
           pyinstaller --onefile
-          --add-data "inad_whatsapp.html;."
+          --add-data "index.html;."
           --add-data "libs;libs"
           --name INAD_Cobranca
           run.py
@@ -51,7 +48,7 @@ jobs:
         shell: pwsh
         run: >
           Compress-Archive
-          -Path dist/INAD_Cobranca.exe, README.md, TUTORIAL_INTRANET_WINDOWS.md, inad_whatsapp.html, inad_analytics.html, analytics.js, analytics.css, AI_CONTEXT.md, libs
+          -Path dist/INAD_Cobranca.exe, README.md, TUTORIAL_INTRANET_WINDOWS.md, index.html, inad_analytics.html, analytics.js, analytics.css, AI_CONTEXT.md, libs
           -DestinationPath INAD_Cobranca-Windows.zip
 
       - name: Publicar artefatos na Release do GitHub

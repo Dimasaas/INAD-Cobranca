@@ -158,13 +158,12 @@ cada tag `v*` (veja `.github/workflows/build.yml`). Para compilar
 manualmente (Windows, macOS ou Linux):
 ```bash
 pip install pyinstaller
-python add_pdf_importer.py   # gera inad_whatsapp.html
-pyinstaller --onefile --add-data "inad_whatsapp.html;." --add-data "libs;libs" --name INAD_Cobranca run.py
+pyinstaller --onefile --add-data "index.html;." --add-data "libs;libs" --name INAD_Cobranca run.py
 ```
 *(No macOS/Linux, troque o `;` do argumento `--add-data` por `:`).*
 
 O executável gerado (`dist/INAD_Cobranca`) deve ficar na mesma pasta que
-`inad_whatsapp.html`, `inad_analytics.html`, `analytics.js`, `analytics.css`
+`index.html`, `inad_analytics.html`, `analytics.js`, `analytics.css`
 e `libs/` — esses arquivos não ficam embutidos no `.exe`, são lidos do
 disco ao lado dele (é assim que o banco de dados e os logs também
 persistem entre execuções, mesmo empacotado com `--onefile`).

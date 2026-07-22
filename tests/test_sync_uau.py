@@ -124,6 +124,67 @@ class UAUSyncTests(unittest.TestCase):
         self.assertEqual(parcel["valor_original_centavos"], 150000)
         self.assertEqual(parcel["valor_juros_centavos"], 15000)
 
+    def test_uau_parse_recebiveis_keeps_only_overdue(self):
+        """Parser real da UAU: converte RecebiveisResponse e mantém só parcelas vencidas."""
+        import datetime
+        hoje = datetime.date.today()
+        passado = (hoje - datetime.timedelta(days=40)).isoformat() + "T00:00:00"
+        futuro = (hoje + datetime.timedelta(days=40)).isoformat() + "T00:00:00"
+        receb = {"Vendas": [{
+            "Obra": "RES SUNSET", "Venda": 887766,
+            "ItensVenda": [{"Identificador": "Q05 L12", "DescProduto": "Lote"}],
+            "ParcelasVenda": [
+                {"NumParcela": 8, "ValorParcela": 1650.0, "DataVencimento": passado},
+                {"NumParcela": 9, "ValorParcela": 1700.0, "DataVencimento": futuro},
+            ],
+        }]}
+        props = run._uau_parse_recebiveis(receb)
+        self.assertEqual(len(props), 1)
+        self.assertEqual(props[0]["empreendimento"], "RES SUNSET")
+        self.assertEqual(len(props[0]["parcels"]), 1, "só a parcela vencida deve entrar")
+        self.assertEqual(props[0]["parcels"][0]["valor"], 1650.0)
+
+    def test_uau_parse_date_formats(self):
+        """Datas ISO date-time e dd/mm/yyyy da UAU são convertidas corretamente."""
+        import datetime
+        self.assertEqual(run._uau_parse_date("2025-01-31T00:00:00"), datetime.date(2025, 1, 31))
+        self.assertEqual(run._uau_parse_date("31/01/2025"), datetime.date(2025, 1, 31))
+        self.assertIsNone(run._uau_parse_date(""))
+
+    def test_get_clients_for_report_roundtrip(self):
+        """Grava via _insert_clients e LÊ de volta via get_clients_for_report — exercita o
+        caminho de leitura (regressão do NameError _cents_to_float que quebrava o painel)."""
+        conn = run.get_conn()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO reports (report_name, report_date) VALUES (?, ?)",
+            ("Roundtrip", "2026-01-15"),
+        )
+        report_id = cursor.lastrowid
+        clients = {
+            "CLIENTE TESTE": {
+                "cpf_cnpj": "000", "cel": "", "email": "",
+                "endereco": "", "telefone_secundario": "",
+                "properties": [{
+                    "empreendimento": "EMP X", "identifier": "ID1", "venda_id": "V1",
+                    "parcels": [{
+                        "parcela": "01/10", "vencimento": "15/01",
+                        "vencimento_full": "2026-01-15",
+                        "valor": 1650.00, "valor_original": 1500.00, "valor_juros": 150.00,
+                    }],
+                }],
+            }
+        }
+        run._insert_clients(cursor, report_id, clients)
+        conn.commit()
+
+        # Não deve lançar NameError; deve devolver os valores convertidos de centavos.
+        tree = run.get_clients_for_report(report_id)
+        self.assertIn("CLIENTE TESTE", tree)
+        parc = tree["CLIENTE TESTE"]["properties"][0]["parcels"][0]
+        self.assertEqual(parc["valor_original"], 1500.00)
+        self.assertEqual(parc["valor_juros"], 150.00)
+
 
 if __name__ == "__main__":
     unittest.main()

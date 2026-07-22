@@ -47,7 +47,7 @@ Expand-Archive -Path "$env:USERPROFILE\Downloads\INAD_Cobranca-Windows.zip" -Des
 ```
 
 Verificação: `C:\INAD\INAD_Cobranca.exe` deve existir, junto com
-`inad_whatsapp.html`, `inad_analytics.html`, `analytics.js`, `analytics.css`,
+`index.html`, `inad_analytics.html`, `analytics.js`, `analytics.css`,
 `libs\`, `AI_CONTEXT.md`, `README.md`.
 
 ```powershell
@@ -178,10 +178,10 @@ Pegue o **Endereço IPv4** da interface ativa (ex.: `192.168.1.50`). Monte
 um link por pessoa, usando o token capturado na seção 3:
 
 ```
-http://<IP>:<PORTA>/inad_whatsapp.html?token=<TOKEN_DA_PESSOA>
+http://<IP>:<PORTA>/index.html?token=<TOKEN_DA_PESSOA>
 ```
 
-Exemplo: `http://192.168.1.50:8000/inad_whatsapp.html?token=abc123...`
+Exemplo: `http://192.168.1.50:8000/index.html?token=abc123...`
 
 Entregue a cada pessoa **o link completo com o token dela** (não o token
 sozinho) — pelo canal que o operador preferir (WhatsApp, e-mail). Informe
@@ -221,7 +221,7 @@ Confirme cada item antes de considerar a configuração concluída:
 - [ ] `Invoke-RestMethod http://127.0.0.1:<PORTA>/api/health` retorna
       `"status": "ok"` com o `.bat` rodando.
 - [ ] Testado a partir de **outro computador da mesma rede**:
-      `http://<IP>:<PORTA>/inad_whatsapp.html?token=<UM_DOS_TOKENS>` abre o
+      `http://<IP>:<PORTA>/index.html?token=<UM_DOS_TOKENS>` abre o
       painel (não erro 401/timeout).
 - [ ] Cada pessoa da lista recebeu seu próprio link com seu próprio token.
 

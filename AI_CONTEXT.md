@@ -8,24 +8,21 @@ Este documento descreve a arquitetura, regras de negócio, esquema de banco de d
 
 ## 📌 Visão Geral do Projeto (INAD — Painel de Cobrança)
 
-O projeto é um painel de cobrança para regularização de clientes inadimplentes, alimentado por relatórios do ERP de construtoras **ProUAU**. Ele permite importar relatórios em PDF de atrasos, extrair os dados cadastrais (clientes, imóveis e parcelas com valores em R$), gerar mensagens de cobrança pré-formatadas para o WhatsApp e monitorar os KPIs de recuperação de forma cronológica — incluindo uma página dedicada de **Analytics** com segmentação de clientes novos/antigos e filtros por período.
+O projeto é um painel de cobrança para regularização de clientes inadimplentes, alimentado pelo ERP de construtoras **ProUAU** (Senior Cloud). A arquitetura é **API-First**: o sistema sincroniza a inadimplência diretamente da API do UAU (somente leitura), grava os dados cadastrais (clientes, imóveis e parcelas com valores em R$) no SQLite local, gera mensagens de cobrança pré-formatadas para o WhatsApp e monitora os KPIs de recuperação de forma cronológica — incluindo uma página dedicada de **Analytics** com segmentação de clientes novos/antigos e filtros por período.
 
 ---
 
 ## 🏗️ Arquitetura do Software e Fluxo de Dados
 
-O sistema adota uma arquitetura híbrida de persistência e compilação:
+O sistema é API-First: sincroniza da API UAU (leitura) e persiste em SQLite local.
 
 ```mermaid
 graph TD
-    A[inad_template.html] -->|1. Compilação via add_pdf_importer.py| B[inad_whatsapp.html]
-    B -->|2. Execução pelo run.py| C[Navegador do Usuário]
-    C -->|3. Importação PDF| D[JS: Fallback Local pdf.js]
-    D -->|4. Heurísticas de Regex| E[Dados Extraídos]
-    E -->|5. POST /api/reports| F[Python Server run.py]
-    F -->|6. Salva no Disco| G[(SQLite: inad_database.db)]
-    C -->|7. Dispara WhatsApp| H[POST /api/actions/sent]
-    H -->|8. Loga Evento| G
+    U[(API UAU / ProUAU)] -->|POST /api/sync_uau: Autenticar → ComVenda → ParcelasECobrancas| F[Python Server run.py]
+    C[Navegador: index.html] -->|Aciona sincronização| F
+    F -->|Salva no Disco| G[(SQLite: inad_database.db)]
+    C -->|Dispara WhatsApp| H[POST /api/actions/sent]
+    H -->|Loga Evento| G
     N[inad_analytics.html] -->|GET /api/kpis/analytics| F
     I[I.A. / Extensão] -->|GET /api/context| F
 ```
@@ -42,14 +39,11 @@ graph TD
 | `AI_CONTEXT.md` | Este documento |
 | `extension/` | Extensão Chrome (Gemini Copilot) — opcional, separada do painel |
 
-### Fluxo de compilação do frontend
+### Frontend
 
-```bash
-# Após qualquer alteração em inad_template.html:
-python3 add_pdf_importer.py
-# inad_analytics.html / analytics.css / analytics.js NÃO passam pela compilação —
-# são servidos diretamente e podem ser editados livremente.
-```
+O frontend é um único arquivo (`index.html`, HTML/JS/CSS inline) editado e servido
+diretamente — não há etapa de compilação. `inad_analytics.html` / `analytics.css` /
+`analytics.js` também são servidos diretamente.
 
 ---
 
@@ -62,7 +56,7 @@ O banco é inicializado automaticamente pelo `run.py` (`inad_database.db`):
 CREATE TABLE reports (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     report_name TEXT    NOT NULL,
-    report_date TEXT,                  -- Data real do PDF (YYYY-MM-DD)
+    report_date TEXT,                  -- Data de emissão do relatório (YYYY-MM-DD)
     imported_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -170,9 +164,9 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 
 | Rota | Redireciona para |
 |------|-------------------|
-| `/` | `/inad_whatsapp.html` (ou `/inad_template.html` se ainda não compilado) |
-| `/kpi`, `/kpis` | `/inad_whatsapp.html#kpi` |
-| `/cobranca`, `/painel` | `/inad_whatsapp.html#cobranca` |
+| `/` | `/index.html` |
+| `/kpi`, `/kpis` | `/index.html#kpi` |
+| `/cobranca`, `/painel` | `/index.html#cobranca` |
 | `/analytics`, `/analitico` | `/inad_analytics.html` |
 
 ### Contexto e saúde
@@ -192,6 +186,7 @@ Servidor padrão: `http://localhost:8000` (porta configurável via `INAD_PORT`).
 | `DELETE` | `/api/reports/<id>` | Exclui relatório (CASCADE em clientes, imóveis, parcelas) |
 | `GET` | `/api/clients` | Clientes do relatório mais recente |
 | `POST` | `/api/clients` | Alias de `POST /api/reports` |
+| `POST` | `/api/sync_uau` | Sincroniza inadimplência da API UAU (somente leitura) `{empresa?, obra?}` |
 | `GET` | `/api/clients/all` | Lista única de nomes de clientes (todos os relatórios) |
 
 ### Ações de cobrança
@@ -398,14 +393,19 @@ Conforme o CDC art. 42, a cobrança não pode expor o cliente a ridículo, const
 
 ---
 
-## 🔍 Regras de Parsing de PDF (RegEx)
+## 🔍 Sincronização com a API UAU (`POST /api/sync_uau`)
 
-O frontend (`inad_template.html`) processa PDFs client-side:
+Integração **somente leitura** com o ERP UAU (credenciais em `.env`:
+`UAU_BASE_URL`, `UAU_USUARIO`, `UAU_SENHA`, `UAU_X_INTEGRATION`). Só a máquina Windows
+alcança o endpoint. Fluxo (em `run.py`, `_sync_from_uau`):
 
-1. **Data de emissão:** padrão `(segunda-feira|...|domingo), DD de MÊS de YYYY`
-2. **Bloco de cliente:** linha `Venda: (\d+)` seguida de `Cliente: (.+)`
-3. **Telefone:** prioridade Celular > Residencial > Comercial
-4. **Overrides cadastrais:** correções fixas no JS para clientes com dados incorretos no PDF legado
+1. **Autenticar** — `POST Autenticador/AutenticarUsuario` (`Login`/`Senha` + header `X-INTEGRATION-Authorization`) → token usado como header `Authorization`.
+2. **Enumerar titulares** — `POST Pessoas/ConsultarPessoasComVenda` com filtro `empresa`/`obra` (evita puxar tudo).
+3. **Parcelas por CPF** — `POST Recebiveis/ParcelasECobrancasDoCliente` (`ValorReajustado=true`) → `Vendas → ParcelasVenda`.
+4. **Inadimplência** — mantém só parcelas com `DataVencimento` < hoje; grava report/clients/properties/parcels.
+
+Regras: **nunca** usar endpoints de escrita do UAU (`GravarPessoa`, `ManterTelefone`, `Alterar*`);
+puxar enxuto (sem fan-out pesado de `Pessoas/*`); seguir a API como documentada.
 
 ---
 
@@ -427,7 +427,7 @@ Se o painel principal for aberto sem servidor (`file://`), o frontend usa `local
 
 1. **Painel principal:** edite `index.html`. **Analytics:** edite `inad_analytics.html`/`analytics.css`/`analytics.js` diretamente.
 2. **SQLite nativo** — sem ORMs, sem psycopg2/mysql-connector.
-3. **Privacidade** — nunca commitar `.db` (nem `-shm`/`-wal`), `.json` com dados reais ou PDFs. O `.gitignore` cobre tudo isso.
+3. **Privacidade** — nunca commitar `.db` (nem `-shm`/`-wal`), `.json` com dados reais ou o `.env` (credenciais UAU). O `.gitignore` cobre tudo isso.
 4. **Retrocompatibilidade** — manter aliases `/api/sent` ↔ `/api/actions/sent` e a forma da resposta de `/api/kpis` (a aba KPI depende dela); features novas de análise vão em `/api/kpis/analytics`.
 5. **Contexto ao vivo** — consulte `GET /api/context` antes de alterações que afetem API ou schema.
 6. **Escopo mínimo** — alterações focadas; não refatorar código não relacionado à tarefa.
@@ -444,5 +444,5 @@ INAD_HEADLESS=1 python3 run.py     # Sem abrir navegador (servidor)
 python3 run.py --headless          # Igual ao headless
 ```
 
-Painel: `http://localhost:8000/` (redireciona automaticamente para `inad_whatsapp.html`)
+Painel: `http://localhost:8000/` (redireciona automaticamente para `index.html`)
 Analytics: `http://localhost:8000/analytics` (ou diretamente `/inad_analytics.html`)
