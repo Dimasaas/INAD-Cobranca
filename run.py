@@ -987,22 +987,24 @@ def _client_financials(cursor, report_id, ref_date):
 
 def _bucketize(days):
     """Mapeia dias de atraso para o bucket correspondente."""
+    d = days if days is not None else 0
     for start, end, label in AGING_BUCKETS:
         if end is None:
-            if days >= start:
+            if d >= start:
                 return label
-        elif start <= days <= end:
+        elif start <= d <= end:
             return label
     return '0-30'
 
 
 def _stage_for_days(days):
     """Mapeia dias de atraso para o estágio de cobrança."""
-    if days <= 30:
+    d = days if days is not None else 0
+    if d <= 30:
         return 'lembrete'
-    elif days <= 90:
+    elif d <= 90:
         return 'firme'
-    elif days <= PREJURIDICO_DAYS:
+    elif d <= PREJURIDICO_DAYS:
         return 'serio'
     else:
         return 'pre_juridico'
@@ -2328,9 +2330,8 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 bucket = _bucketize(cf["max_days_overdue"])
                 stage = _stage_for_days(cf["max_days_overdue"])
                 
-                if stage_filter and stage != stage_filter:
-                    continue
-                if min_days_filter is not None and cf["max_days_overdue"] < min_days_filter:
+                days_overdue = cf["max_days_overdue"] if cf["max_days_overdue"] is not None else 0
+                if min_days_filter is not None and days_overdue < min_days_filter:
                     continue
 
                 last_c = latest_contacts.get(name)
