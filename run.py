@@ -33,6 +33,7 @@ import hmac
 import secrets
 import unicodedata
 import datetime
+from zoneinfo import ZoneInfo
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -299,6 +300,14 @@ def init_db():
     if "report_date" not in existing_cols:
         cursor.execute("ALTER TABLE reports ADD COLUMN report_date TEXT")
         print("[MIGRAÇÃO] Coluna report_date adicionada à tabela reports.")
+
+    # Migração: adiciona coluna closed (fechamento diário consolidado do sync
+    # UAU às 18:00 America/Sao_Paulo — ver /api/sync_uau). DEFAULT 0 preserva
+    # o comportamento de bancos legados (nenhum relatório existente vira
+    # "fechado" pela migração).
+    if "closed" not in existing_cols:
+        cursor.execute("ALTER TABLE reports ADD COLUMN closed INTEGER DEFAULT 0")
+        print("[MIGRAÇÃO] Coluna closed adicionada à tabela reports (fechamento diário às 18h).")
 
     # Migração: adiciona coluna valor se não existir (banco legado)
     existing_parcel_cols = {row[1] for row in cursor.execute("PRAGMA table_info(parcels)")}
@@ -584,6 +593,40 @@ def _insert_clients(cursor, report_id, clients):
                 )
 
 
+def _merge_clients(cursor, report_id, clients):
+    """Upsert (latest-wins, nunca remove) de clientes num relatório já
+    existente — usado pelo fechamento diário consolidado do sync UAU (ver
+    /api/sync_uau). Cada sync da UAU é lossy (nem todo cliente vem em toda
+    rodada), então em vez de um INSERT sempre-novo, mesclamos no relatório do
+    dia:
+
+    - Cliente já presente no relatório: apaga os dados antigos DELE (parcels/
+      properties/o próprio registro) e reinsere com os dados desta rodada.
+    - Cliente novo: insere direto.
+    - Cliente que já estava no relatório e NÃO veio nesta rodada: fica
+      intocado — ausência no sync é falha de busca, não quitação de dívida.
+
+    As tabelas properties/parcels têm ON DELETE CASCADE (e a conexão liga
+    PRAGMA foreign_keys=ON em get_conn()), mas apagamos os filhos explicitamente
+    aqui mesmo assim — não depender silenciosamente da cascata caso alguma
+    conexão específica rode sem a pragma."""
+    for c_name, c_data in clients.items():
+        existing = cursor.execute(
+            "SELECT id FROM clients WHERE report_id = ? AND name = ?",
+            (report_id, c_name),
+        ).fetchone()
+        if existing:
+            client_id = existing[0]
+            cursor.execute(
+                "DELETE FROM parcels WHERE property_id IN "
+                "(SELECT id FROM properties WHERE client_id = ?)",
+                (client_id,),
+            )
+            cursor.execute("DELETE FROM properties WHERE client_id = ?", (client_id,))
+            cursor.execute("DELETE FROM clients WHERE id = ?", (client_id,))
+        _insert_clients(cursor, report_id, {c_name: c_data})
+
+
 # ─── QUERIES DE DADOS ─────────────────────────────────────────────────────────
 
 def get_clients_for_report(report_id):
@@ -715,9 +758,38 @@ def _uau_request(base, version, endpoint, integ_token, auth_token=None,
     return val
 
 
-def _uau_parse_recebiveis(receb):
+def _uau_request_retry(base, version, endpoint, integ_token, auth_token=None,
+                       payload=None, query=None, attempts=3, backoff=0.5):
+    """Como _uau_request, mas com retry leve (backoff linear, 2-3 tentativas)
+    para reduzir perda de clientes por timeout/erro transitório de rede nas
+    chamadas por-cliente (ParcelasECobrancasDoCliente/ConsultarPessoaPorChave).
+    NÃO introduz chamadas novas — só reintenta a mesma chamada de leitura já
+    existente. Erros HTTP 4xx (ex.: payload inválido) não são reintentados,
+    só timeouts/erros de conexão e 5xx (transitórios do lado do servidor)."""
+    last_exc = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return _uau_request(base, version, endpoint, integ_token,
+                                auth_token=auth_token, payload=payload, query=query)
+        except urllib.error.HTTPError as exc:
+            last_exc = exc
+            if exc.code < 500 or attempt >= attempts:
+                raise
+        except (urllib.error.URLError, TimeoutError, socket.timeout) as exc:
+            last_exc = exc
+            if attempt >= attempts:
+                raise
+        time.sleep(backoff * attempt)
+    raise last_exc
+
+
+def _uau_parse_recebiveis(receb, empresa_filtro=None, obra_filtro=None):
     """RecebiveisResponse (Vendas → ParcelasVenda ou lista direta) → árvore de imóveis/parcelas do
-    INAD, mantendo só parcelas VENCIDAS (inadimplência = vencimento < hoje)."""
+    INAD, mantendo só parcelas VENCIDAS (inadimplência = vencimento < hoje).
+
+    empresa_filtro/obra_filtro: como ConsultarPessoasComVenda IGNORA o filtro de
+    empresa, o escopo real acontece AQUI — cada venda traz os campos Empresa/Obra e
+    só as vendas que batem com o filtro são mantidas. Sem filtro (None/'') = mantém tudo."""
     hoje = datetime.date.today()
     props = []
     vendas = []
@@ -728,6 +800,13 @@ def _uau_parse_recebiveis(receb):
 
     for venda in vendas:
         if not isinstance(venda, dict):
+            continue
+        # Escopo por empresa/obra na PRÓPRIA venda (ComVenda não filtra — ver nota abaixo).
+        if empresa_filtro not in (None, "") and \
+                str(venda.get("Empresa", venda.get("empresa", ""))).strip() != str(empresa_filtro).strip():
+            continue
+        if obra_filtro not in (None, "") and \
+                str(venda.get("Obra", venda.get("obra", ""))).strip() != str(obra_filtro).strip():
             continue
         empreend = venda.get("Obra") or venda.get("obra") or ""
         venda_id = str(venda.get("Venda", "") or venda.get("venda", "") or "")
@@ -760,7 +839,10 @@ def _uau_parse_recebiveis(receb):
 
 
 def _uau_shape(v):
-    """Descreve a forma de uma resposta da UAU sem expor PII: tipo, tamanho e chaves."""
+    """Descreve a forma de uma resposta da UAU sem expor PII: só tipo/tamanho/chaves,
+    nunca o conteúdo bruto (a resposta pode trazer nome/CPF/telefone dos clientes)."""
+    if v is None:
+        return {"tipo": "NoneType"}
     if isinstance(v, list):
         first = v[0] if v else None
         return {"tipo": "list", "tamanho": len(v),
@@ -768,14 +850,17 @@ def _uau_shape(v):
     if isinstance(v, dict):
         return {"tipo": "dict", "chaves": sorted(v.keys())}
     if isinstance(v, str):
-        return {"tipo": "str", "tamanho": len(v), "amostra": v[:120]}
-    return {"tipo": type(v).__name__, "valor": v}
+        return {"tipo": "str", "tamanho": len(v)}
+    return {"tipo": type(v).__name__}
 
 
 def _sync_from_uau(empresa=None, obra=None, diag=None):
-    """Consulta a API UAU (read-only) e devolve a árvore `clients` pronta para
-    _insert_clients. Fluxo documentado: Autenticar → ConsultarPessoasComVenda
-    (filtro empresa/obra) → por CPF: ParcelasECobrancasDoCliente → inadimplência.
+    """Consulta a API UAU (read-only) e devolve `(clients, erros)`: `clients` é a
+    árvore pronta para _insert_clients/_merge_clients; `erros` é a contagem de
+    titulares que falharam por erro (não por skip esperado, ex.: sem CPF) nesta
+    rodada — usado na resposta de /api/sync_uau (campo `falhados`). Fluxo
+    documentado: Autenticar → ConsultarPessoasComVenda (filtro empresa/obra) →
+    por CPF: ParcelasECobrancasDoCliente → inadimplência.
 
     Se `diag` (dict) for passado, popula diagnósticos por etapa (sem PII) para
     depuração — usado pelo modo debug do endpoint /api/sync_uau."""
@@ -786,43 +871,66 @@ def _sync_from_uau(empresa=None, obra=None, diag=None):
     senha = os.environ["UAU_SENHA"]
 
     # 1. Autenticar → token (string) usado como header Authorization.
-    token = _uau_request(base, version, "/Autenticador/AutenticarUsuario", integ,
-                         payload={"Login": login, "Senha": senha})
+    try:
+        raw_token = _uau_request(base, version, "/Autenticador/AutenticarUsuario", integ,
+                                 payload={"Login": login, "Senha": senha})
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        print("[UAU] ERRO na etapa de autenticação (Autenticador/AutenticarUsuario).")
+        raise
+    token = raw_token
     if isinstance(token, dict):
         token = _uau_first(token, ["token", "Token", "Authorization", "authorization"])
     if not isinstance(token, str) or not token.strip():
-        raise RuntimeError("Autenticação UAU não retornou um token válido")
+        raise RuntimeError(
+            "[UAU] Falha na autenticação: resposta não trouxe um token válido "
+            f"(tipo recebido: {type(raw_token).__name__})")
     token = token.strip().strip('"')
     if diag is not None:
         diag["1_auth"] = {"token_ok": True, "token_len": len(token)}
 
-    # 2. Enumerar titulares de venda (só campos válidos: empresa/obra).
+    # 2. Enumerar titulares de venda. NOTA IMPORTANTE: ConsultarPessoasComVenda
+    # IGNORA qualquer filtro de empresa/obra (comprovado: empresa 1/2/999 e payload
+    # vazio devolvem o MESMO total) — sempre retorna a base inteira. O escopo real
+    # por empresa é aplicado DEPOIS, em _uau_parse_recebiveis, pelo campo Empresa da venda.
     filtro = {}
     if empresa not in (None, ""):
-        filtro["empresa"] = empresa
+        filtro["empresa"] = empresa  # inócuo hoje; mantido caso a API passe a honrar
     if obra not in (None, ""):
         filtro["obra"] = obra
-    raw_titulares = _uau_request(
-        base, version, "/Pessoas/ConsultarPessoasComVenda", integ,
-        auth_token=token, payload=filtro)
+    if empresa in (None, ""):
+        print("[UAU] ATENÇÃO: UAU_EMPRESA não definido — sem escopo de empresa, "
+              "a importação inclui TODAS as empresas. Defina UAU_EMPRESA no .env.")
+    try:
+        raw_titulares = _uau_request(
+            base, version, "/Pessoas/ConsultarPessoasComVenda", integ,
+            auth_token=token, payload=filtro)
+    except (urllib.error.HTTPError, urllib.error.URLError):
+        print("[UAU] ERRO na etapa de enumeração (Pessoas/ConsultarPessoasComVenda).")
+        raise
     titulares = _uau_as_list(raw_titulares)
     if diag is not None:
         diag["2_comvenda"] = {"filtro_enviado": filtro,
                               "resposta": _uau_shape(raw_titulares),
                               "titulares_apos_normalizar": len(titulares)}
+    if not titulares:
+        print("[UAU] AVISO: ConsultarPessoasComVenda não retornou titulares "
+              f"(shape da resposta: {_uau_shape(raw_titulares)}).")
 
     import concurrent.futures
 
     def _process_single_pessoa(pessoa):
+        """Retorna (status, motivo, item). status é 'ok' (item = (nome, dados)) ou
+        'skip'/'erro' (item = None) — motivo é uma etiqueta curta sem PII, usada só
+        para contagem agregada no diagnóstico."""
         if not isinstance(pessoa, dict):
-            return None
+            return ("skip", "item_nao_e_dict", None)
         cod_pes = _uau_first(pessoa, ["Cod_pes", "cod_pes", "CodPessoa", "cod_pessoa", "Codigopessoa"])
         if cod_pes and str(cod_pes).startswith("System."):
-            return None
+            return ("skip", "cod_pes_invalido", None)
         nome = _uau_first(pessoa, ["nome", "Nome", "NomePessoa", "Nome_pes",
                                    "razaoSocial", "RazaoSocial"]) or ""
         if str(nome).startswith("System."):
-            return None
+            return ("skip", "nome_invalido", None)
 
         cpf = _uau_first(pessoa, ["cpf", "Cpf", "CPF", "cpf_cnpj", "CpfCnpj",
                                   "CPFCNPJ", "CpfCnpj_pes", "cpf_pes"])
@@ -831,7 +939,7 @@ def _sync_from_uau(empresa=None, obra=None, diag=None):
         if not cpf and cod_pes:
             try:
                 cod_num = int(cod_pes)
-                p_detail = _uau_request(
+                p_detail = _uau_request_retry(
                     base, version, "/Pessoas/ConsultarPessoaPorChave", integ,
                     auth_token=token, payload={"codigo_pessoa": cod_num})
                 p_list = _uau_as_list(p_detail)
@@ -848,55 +956,64 @@ def _sync_from_uau(empresa=None, obra=None, diag=None):
                                         if not nome or nome == str(cod_pes):
                                             nome = r.get("nome_pes") or nome
                                         break
-            except Exception as exc:
+            except Exception:
+                # Detalhe da pessoa indisponível: segue sem CPF (tratado abaixo).
                 pass
 
         if not cpf:
-            return None
+            return ("skip", "sem_cpf", None)
 
         cpf_num = re.sub(r"\D", "", str(cpf))
         if len(cpf_num) < 11:
-            return None
+            return ("skip", "cpf_invalido", None)
 
         if not nome:
             nome = str(cpf_num)
 
         try:
-            receb = _uau_request(
+            receb = _uau_request_retry(
                 base, version, "/Recebiveis/ParcelasECobrancasDoCliente", integ,
                 auth_token=token, payload={"Cpf": cpf_num, "ValorReajustado": True})
-        except Exception as exc:
-            return None
+        except (urllib.error.HTTPError, urllib.error.URLError):
+            return ("erro", "recebiveis_falhou", None)
+        except Exception:
+            return ("erro", "recebiveis_falhou", None)
 
-        props = _uau_parse_recebiveis(receb)
+        props = _uau_parse_recebiveis(receb, empresa, obra)
         if not props:
-            return None
+            return ("skip", "sem_parcela_vencida", None)
 
-        return (nome, {
+        return ("ok", None, (nome, {
             "cpf_cnpj": str(cpf), "cel": "", "email": str(email),
             "endereco": "", "telefone_secundario": "", "properties": props,
-        })
+        }))
 
-    n_com_cpf = 0
-    n_recebiveis_ok = 0
     clients = {}
+    motivos = {}
+    erros = 0  # subconjunto de motivos que é falha por erro (não skip esperado) — item E
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         futures = [executor.submit(_process_single_pessoa, p) for p in titulares]
         for future in concurrent.futures.as_completed(futures):
             try:
-                item = future.result()
-                if item:
-                    c_name, c_data = item
-                    clients[c_name] = c_data
-                    n_recebiveis_ok += 1
+                status, motivo, item = future.result()
             except Exception as exc:
                 print(f"[UAU] Erro no worker: {exc}")
+                status, motivo = "erro", "excecao_worker"
+            if status == "ok":
+                c_name, c_data = item
+                clients[c_name] = c_data
+            else:
+                motivos[motivo] = motivos.get(motivo, 0) + 1
+                if status == "erro":
+                    erros += 1
 
     if diag is not None:
+        diag["3_detalhe"] = {"titulares_processados": len(titulares),
+                             "sem_cliente_por_motivo": motivos}
         diag["4_resumo"] = {"titulares": len(titulares),
                             "clientes_montados": len(clients)}
-    return clients
+    return clients, erros
 
 
 def _backup_report_before_delete(cursor, rid):
@@ -2131,11 +2248,13 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                 _json_response(self, {"error": "ID inválido"}, 400)
 
         elif path == "/api/clients":
+            # Unificado com a fila: "mais recente" = maior report_date (não maior
+            # id) — reusa _dedup_latest_report_id, mesma função usada pela fila.
+            # Com a consolidação diária (item D/A do fechamento), isso passa a
+            # ser sempre o relatório do dia.
             cursor = get_conn().cursor()
-            row    = cursor.execute(
-                "SELECT id FROM reports ORDER BY id DESC LIMIT 1"
-            ).fetchone()
-            _json_response(self, get_clients_for_report(row[0]) if row else {})
+            report_id = _dedup_latest_report_id(cursor)
+            _json_response(self, get_clients_for_report(report_id) if report_id else {})
 
         elif path == "/api/clients/all":
             cursor = get_conn().cursor()
@@ -3015,21 +3134,52 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     _json_response(self, {"error": "Credenciais da UAU ausentes no arquivo .env"}, 500)
                     return
 
-                # Filtro opcional empresa/obra vindo do corpo do POST (limita o volume).
-                empresa = payload.get("empresa") if isinstance(payload, dict) else None
-                obra    = payload.get("obra") if isinstance(payload, dict) else None
+                # Filtro empresa/obra: prioriza o corpo do POST; se ausente/vazio, cai
+                # para o default fixo do .env (UAU_EMPRESA/UAU_OBRA) — evita puxar a
+                # carteira inteira por engano quando o payload não especifica escopo.
+                empresa = (payload.get("empresa") if isinstance(payload, dict) else None) \
+                    or os.environ.get("UAU_EMPRESA") or None
+                obra    = (payload.get("obra") if isinstance(payload, dict) else None) \
+                    or os.environ.get("UAU_OBRA") or None
                 debug   = bool(payload.get("debug")) if isinstance(payload, dict) else False
 
-                # Modo debug: diagnostica cada etapa (sem PII) e NÃO grava nada.
+                # Modo debug: diagnostica cada etapa (sem PII) e NÃO grava nada
+                # (não passa pelo corte das 18:00 — nunca escreve de qualquer forma).
                 if debug:
                     diag = {}
-                    clients = _sync_from_uau(empresa, obra, diag=diag)
+                    clients, _erros = _sync_from_uau(empresa, obra, diag=diag)
                     _json_response(self, {"status": "debug",
                                           "clientes_montados": len(clients), "diag": diag})
                     return
 
+                # ── Fechamento diário às 18:00 (America/Sao_Paulo, sem agendador) ──
+                # Verificado ANTES de chamar a API UAU para não gastar uma consulta à
+                # toa quando o dia já fechou. "Fechado" = agora >= 18:00 OU o
+                # relatório de hoje já está marcado closed=1 (ex.: fechado numa
+                # chamada anterior ainda hoje). Um relatório por dia (find-or-create
+                # por report_date) — mutável antes das 18h, imutável depois.
+                conn   = get_conn()
+                cursor = conn.cursor()
+                agora     = datetime.datetime.now(ZoneInfo("America/Sao_Paulo"))
+                hoje_str  = agora.date().isoformat()
+                apos_18h  = agora.hour >= 18
+                relatorio_hoje = cursor.execute(
+                    "SELECT id, closed FROM reports WHERE report_date = ? ORDER BY id DESC LIMIT 1",
+                    (hoje_str,),
+                ).fetchone()
+                if relatorio_hoje and apos_18h and not relatorio_hoje[1]:
+                    cursor.execute("UPDATE reports SET closed = 1 WHERE id = ?", (relatorio_hoje[0],))
+                    conn.commit()
+                    relatorio_hoje = (relatorio_hoje[0], 1)
+                dia_fechado = apos_18h or bool(relatorio_hoje and relatorio_hoje[1])
+                if dia_fechado:
+                    _json_response(self, {
+                        "status": "closed",
+                        "message": "As atualizações de hoje foram fechadas às 18:00. Volte amanhã."})
+                    return
+
                 # Consulta real à UAU (somente leitura). Retorna só inadimplentes.
-                clients = _sync_from_uau(empresa, obra)
+                clients, falhados_agora = _sync_from_uau(empresa, obra)
                 if not clients:
                     _json_response(self, {
                         "status": "empty",
@@ -3037,21 +3187,37 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                                    "para o filtro informado."})
                     return
 
-                conn   = get_conn()
-                cursor = conn.cursor()
-                report_name = f"UAU Sync {time.strftime('%d/%m/%Y %H:%M')}"
-                report_date = datetime.date.today().isoformat()
-                cursor.execute(
-                    "INSERT INTO reports (report_name, report_date) VALUES (?, ?)",
-                    (report_name, report_date),
-                )
-                report_id = cursor.lastrowid
-                _insert_clients(cursor, report_id, clients)
+                # Um relatório por dia: reusa o de hoje (aberto) se já existe,
+                # senão cria. Merge por cliente (latest-wins, nunca remove) —
+                # clientes que não vieram nesta rodada permanecem intactos.
+                if relatorio_hoje:
+                    report_id = relatorio_hoje[0]
+                else:
+                    report_name = f"UAU Sync {agora.strftime('%d/%m/%Y')}"
+                    cursor.execute(
+                        "INSERT INTO reports (report_name, report_date, closed) VALUES (?, ?, 0)",
+                        (report_name, hoje_str),
+                    )
+                    report_id = cursor.lastrowid
+                _merge_clients(cursor, report_id, clients)
                 conn.commit()
+
+                total_clients = cursor.execute(
+                    "SELECT COUNT(*) FROM clients WHERE report_id = ?", (report_id,)
+                ).fetchone()[0]
                 print(f"[API] Sincronização UAU concluída. Relatório ID: {report_id} "
-                      f"| {len(clients)} cliente(s) inadimplente(s)")
-                _json_response(self, {"status": "success", "report_id": report_id,
-                                      "clients": len(clients)})
+                      f"({hoje_str}) | {len(clients)} cliente(s) nesta rodada "
+                      f"| {total_clients} cliente(s) consolidado(s) no dia "
+                      f"| {falhados_agora} falha(s)")
+                _json_response(self, {
+                    "status": "success",
+                    "report_id": report_id,
+                    "report_date": hoje_str,
+                    "clients": total_clients,
+                    "importados_agora": len(clients),
+                    "falhados": falhados_agora,
+                    "closed": False,
+                })
             except urllib.error.HTTPError as exc:
                 if conn is not None:
                     conn.rollback()
