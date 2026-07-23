@@ -1563,8 +1563,6 @@
             if (searchInput) searchInput.value = curQ;
             renderAll();
           }, 150);
-        } else if (res.ok && data.status === 'closed') {
-          alert("🔒 " + (data.message || "As atualizações de hoje foram fechadas. Volte amanhã."));
         } else if (res.ok && data.status === 'empty') {
           alert("ℹ️ Nenhum cliente inadimplente retornado pela UAU para o filtro informado.");
         } else {
@@ -2115,10 +2113,7 @@
         for (const p of c.properties) {
           const id = tc(p.identifier);
           for (const pc of p.parcels) {
-            const temValor = typeof pc.valor === 'number' && !isNaN(pc.valor);
-            L.push(temValor
-              ? `${id}: Parcela ${pc.parcela} de ${pc.vencimento} — ${formatCurrency(pc.valor)}.`
-              : `${id}: Parcela ${pc.parcela} de ${pc.vencimento}.`);
+            L.push(`${id}: Parcela ${pc.parcela} de ${pc.vencimento}.`);
           }
         }
         L.push('');
@@ -2158,10 +2153,7 @@
       for (const p of c.properties) {
         const id = tc(p.identifier);
         for (const pc of p.parcels) {
-          const temValor = typeof pc.valor === 'number' && !isNaN(pc.valor);
-          L.push(temValor
-            ? `${id}: Parcela ${pc.parcela} de ${pc.vencimento} — ${formatCurrency(pc.valor)}.`
-            : `${id}: Parcela ${pc.parcela} de ${pc.vencimento}.`);
+          L.push(`${id}: Parcela ${pc.parcela} de ${pc.vencimento}.`);
         }
       }
       L.push('');
@@ -2198,7 +2190,7 @@
         list = list.filter(c =>
           c.name.toLowerCase().includes(q) ||
           c.properties.some(p => p.identifier.toLowerCase().includes(q)) ||
-          (qDigits && c.cel.replace(/\D/g, '').includes(qDigits))
+          (qDigits && (c.cel||'').replace(/\D/g, '').includes(qDigits))
         );
       }
       if (curF === 'sent') list = list.filter(c => sent.has(c.name));

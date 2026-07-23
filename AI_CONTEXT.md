@@ -4,13 +4,24 @@ Este documento descreve a arquitetura, regras de negócio, esquema de banco de d
 
 > **Endpoint em tempo real:** com o servidor ativo (`python3 run.py`), acesse `GET http://localhost:8000/api/context` para obter este contexto em JSON, incluindo estatísticas ao vivo do banco.
 
+## 🤖 Custom Agent Rules
+
+### Planning Mode Rules
+- Sempre ative o Modo de Planejamento (`implementation_plan.md`) antes de realizar análises de dados grandes, como testes em bancos `.db`, validações/testes de KPIs e testes de integração com APIs.
+- Monte o plano detalhado primeiro para permitir a revisão e a troca para modelos mais rápidos antes da execução dos testes.
+
+### Temporary Function Toggles & Modifications
+- Ao solicitar o desligamento ou modificação de uma função, verifique o histórico recente do Git e as alterações locais (`git diff`) para identificar exatamente onde e como a função está implementada antes de modificá-la.
+
 ---
 
 ## 📌 Visão Geral do Projeto (INAD — Painel de Cobrança)
 
 O projeto é um painel de cobrança para regularização de clientes inadimplentes, alimentado pelo ERP de construtoras **ProUAU** (Senior Cloud). A arquitetura é **API-First**: o sistema sincroniza a inadimplência diretamente da API do UAU (somente leitura), grava os dados cadastrais (clientes, imóveis e parcelas com valores em R$) no SQLite local, gera mensagens de cobrança pré-formatadas para o WhatsApp e monitora os KPIs de recuperação de forma cronológica — incluindo uma página dedicada de **Analytics** com segmentação de clientes novos/antigos e filtros por período.
 
----
+> ⚠️ **Nota de Desempenho & Testes:** A sincronização com a API do UAU (`POST /api/sync_uau`) é um processo intrinsecamente **lento** (pode levar alguns minutos dependendo do tamanho da base), pois realiza requisições iterativas para consultar as parcelas e cobranças por CPF/titular. Para fins de teste e validação, utilize chamadas leves/debug (como o parâmetro `{"debug": true}`) para apenas verificar o recebimento de resposta da API sem a necessidade de executar importações completas no banco.
+
+
 
 ## 🏗️ Arquitetura do Software e Fluxo de Dados
 
