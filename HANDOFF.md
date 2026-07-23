@@ -25,6 +25,26 @@ Todos os itens da auditoria foram implementados e validados pela suíte de teste
 
 ---
 
+## 🗓️ Fechamento diário do Sync UAU (branch `fix/empresa-apis-dashboard-mensagem`)
+
+Implementado o consolidado diário do `/api/sync_uau` (sem agendador externo):
+
+- **Um relatório por dia** (find-or-create por `report_date`). Mutável durante o
+  dia; imutável após as **18:00 America/Sao_Paulo** (nova coluna `reports.closed`,
+  `DEFAULT 0`, migração automática em `init_db`).
+- **Merge por cliente** (`_merge_clients`, latest-wins, nunca remove): cada rodada
+  do sync é lossy, então clientes que não vieram na rodada permanecem intactos —
+  ausência = falha de busca, não quitação.
+- **Escopo empresa/obra client-side** em `_uau_parse_recebiveis` (ComVenda ignora
+  o filtro; escopo real pelo campo `Empresa`/`Obra` da venda). Default cai para
+  `UAU_EMPRESA`/`UAU_OBRA` do `.env` quando o payload não especifica.
+- **Retry leve** (`_uau_request_retry`, backoff linear, só 5xx/timeout) nas chamadas
+  por-cliente; contagem de `falhados` retornada ao front (aviso de carteira incompleta).
+- `/api/clients` unificado com a fila via `_dedup_latest_report_id` (mais recente =
+  maior `report_date`).
+- UI: mensagens de "consolidado hoje / importados nesta rodada / falhados" e status
+  `closed` ("volte amanhã").
+
 ## 📌 Próximas Tarefas / Fila de Trabalho
 
 *(Adicione novos itens de roadmap ou solicitações pendentes nesta seção)*

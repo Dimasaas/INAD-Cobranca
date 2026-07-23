@@ -15,32 +15,39 @@
 
   <style>
     :root {
-      --bg: #090a0f;
-      --bg2: #10121a;
-      --bg3: #161a25;
-      --card: rgba(22, 26, 37, 0.65);
-      --border: rgba(255, 255, 255, 0.08);
-      --border2: rgba(255, 255, 255, 0.15);
+      /* superfícies — tinta profunda, sóbria, sem o brilho azulado genérico de dashboard */
+      --bg: #0a0c12;
+      --bg2: #0f121a;
+      --bg3: #151822;
+      --card: rgba(21, 25, 34, 0.7);
+      --border: rgba(255, 255, 255, 0.06);
+      --border2: rgba(255, 255, 255, 0.13);
+      /* marca — mantidos idênticos ao valor original: usados em rgba() literais
+         dentro do bloco de script (sombras, gradiente do botão de sincronização) —
+         alterar o tom aqui destoaria dessas sombras que não podem ser tocadas */
       --accent: #3b82f6;
       --accent2: #8b5cf6;
       --green: #10b981;
-      --green-bg: rgba(16, 185, 129, 0.15);
+      --green-bg: rgba(16, 185, 129, 0.14);
       --red: #ef4444;
-      --red-bg: rgba(239, 68, 68, 0.15);
+      --red-bg: rgba(239, 68, 68, 0.14);
       --amber: #f59e0b;
-      --amber-bg: rgba(245, 158, 11, 0.15);
+      --amber-bg: rgba(245, 158, 11, 0.14);
       --purple: #a855f7;
-      --purple-bg: rgba(168, 85, 247, 0.15);
+      --purple-bg: rgba(168, 85, 247, 0.14);
       --blue: #3b82f6;
-      --blue-bg: rgba(59, 130, 246, 0.15);
-      --text: #f8fafc;
-      --text2: #cbd5e1;
-      --text3: #64748b;
-      --r: 16px;
-      --r2: 10px;
-      --sh: 0 8px 30px rgba(0, 0, 0, 0.4);
-      --sh-hover: 0 16px 40px rgba(0, 0, 0, 0.5);
-      --glass: blur(12px);
+      --blue-bg: rgba(59, 130, 246, 0.14);
+      --text: #eef0f5;
+      --text2: #b3bccf;
+      --text3: #6b7390;
+      --r: 14px;
+      --r2: 9px;
+      --sh: 0 10px 28px rgba(2, 3, 8, 0.4);
+      --sh-hover: 0 18px 40px rgba(2, 3, 8, 0.5);
+      --glass: blur(14px);
+      /* face utilitária para dados: valores, parcelas, ids — alinhamento tabular,
+         leitura de "planilha/ficha" consistente com o domínio de cobrança */
+      --font-mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Consolas, 'Roboto Mono', monospace;
     }
 
     *,
@@ -56,12 +63,14 @@
     }
 
     body {
-      font-family: 'Inter', sans-serif;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
       min-height: 100vh;
       font-size: 14px;
-      line-height: 1.6
+      line-height: 1.6;
+      font-variant-numeric: tabular-nums;
+      -webkit-font-smoothing: antialiased;
     }
 
     /* TOPBAR */
@@ -69,7 +78,7 @@
       position: sticky;
       top: 0;
       z-index: 100;
-      background: rgba(9, 10, 15, 0.85);
+      background: rgba(8, 9, 14, 0.86);
       backdrop-filter: var(--glass);
       -webkit-backdrop-filter: var(--glass);
       border-bottom: 1px solid var(--border);
@@ -77,35 +86,50 @@
       display: flex;
       align-items: center;
       gap: 18px;
-      height: 70px
+      height: 68px
+    }
+
+    /* hairline de marca — um traço fino no topo, como o carimbo de um
+       documento oficial: único gradiente "visível" do produto além do logo */
+    .topbar::before {
+      content: '';
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: linear-gradient(90deg, var(--accent), var(--accent2));
+      opacity: .8;
     }
 
     .logo {
       display: flex;
       align-items: center;
       gap: 12px;
-      font-weight: 700;
-      font-size: 16px;
+      font-weight: 800;
+      font-size: 15px;
       white-space: nowrap;
-      letter-spacing: 0.3px
+      letter-spacing: 0.2px
     }
 
     .logo-icon {
-      width: 38px;
-      height: 38px;
-      border-radius: 12px;
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
       background: linear-gradient(135deg, var(--accent), var(--accent2));
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 18px;
+      font-size: 17px;
       box-shadow: 0 4px 12px rgba(139, 92, 246, 0.3)
     }
 
     .logo-sub {
-      font-size: 11px;
+      font-size: 10.5px;
       color: var(--text3);
-      font-weight: 400
+      font-weight: 500;
+      letter-spacing: .2px;
+      margin-top: 1px
     }
 
     .search-wrap {
@@ -127,17 +151,18 @@
       width: 100%;
       background: var(--bg3);
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 9px;
       padding: 9px 12px 9px 36px;
       color: var(--text);
       font-family: inherit;
       font-size: 13px;
       outline: none;
-      transition: border-color .2s
+      transition: border-color .2s, box-shadow .2s
     }
 
     #search:focus {
-      border-color: var(--accent)
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, .15)
     }
 
     #search::placeholder {
@@ -167,15 +192,18 @@
     }
 
     .stat-val {
-      font-size: 17px;
-      font-weight: 800;
+      font-family: var(--font-mono);
+      font-size: 16px;
+      font-weight: 700;
       line-height: 1.1
     }
 
     .stat-label {
-      font-size: 10px;
+      font-size: 9.5px;
       color: var(--text3);
-      font-weight: 500
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: .4px
     }
 
     .stat-blue .stat-val {
@@ -192,7 +220,7 @@
 
     /* FILTERS */
     .filters {
-      padding: 12px 24px;
+      padding: 11px 24px;
       background: var(--bg2);
       border-bottom: 1px solid var(--border);
       display: flex;
@@ -202,9 +230,11 @@
     }
 
     .fl {
-      font-size: 11px;
+      font-size: 10.5px;
       color: var(--text3);
-      font-weight: 600;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .4px;
       margin-right: 2px
     }
 
@@ -216,7 +246,7 @@
       color: var(--text2);
       font-family: inherit;
       font-size: 12px;
-      font-weight: 500;
+      font-weight: 600;
       cursor: pointer;
       transition: all .15s
     }
@@ -263,28 +293,38 @@
       gap: 14px
     }
 
-    /* CARD */
+    /* CARD — tratada como uma ficha de cobrança: borda esquerda funciona como
+       a aba colorida de uma pasta de arquivo, assumindo a cor do risco do
+       cliente (ver .b-risk-* mais abaixo, via :has()) */
     .card {
       background: var(--card);
       backdrop-filter: var(--glass);
       -webkit-backdrop-filter: var(--glass);
       border: 1px solid var(--border);
+      border-left: 3px solid var(--border);
       border-radius: var(--r);
       overflow: hidden;
       display: flex;
       flex-direction: column;
-      transition: border-color .25s, transform .25s, box-shadow .25s
+      transition: border-color .2s, transform .2s, box-shadow .2s
     }
+
+    .card:has(.b-risk-high) { border-left-color: var(--red) }
+    .card:has(.b-risk-med) { border-left-color: var(--amber) }
+    .card:has(.b-risk-low) { border-left-color: var(--green) }
 
     .card:hover {
       border-color: var(--border2);
       box-shadow: var(--sh-hover);
       transform: translateY(-2px)
     }
+    .card:has(.b-risk-high):hover { border-left-color: var(--red) }
+    .card:has(.b-risk-med):hover { border-left-color: var(--amber) }
+    .card:has(.b-risk-low):hover { border-left-color: var(--green) }
 
     .card.sent {
-      opacity: .5;
-      filter: grayscale(30%)
+      opacity: .55;
+      filter: grayscale(35%)
     }
 
     /* CARD HEADER */
@@ -311,17 +351,17 @@
     }
 
     .av-f {
-      background: linear-gradient(135deg, #f472b6, #c084fc);
+      background: linear-gradient(135deg, #d88bab, #b490d9);
       color: #fff
     }
 
     .av-m {
-      background: linear-gradient(135deg, #60a5fa, #34d399);
+      background: linear-gradient(135deg, #5b93d6, #45b8a3);
       color: #fff
     }
 
     .av-e {
-      background: linear-gradient(135deg, #4ade80, #2dd4bf);
+      background: linear-gradient(135deg, #4fb37f, #3aa79e);
       color: #fff
     }
 
@@ -332,7 +372,8 @@
 
     .cn {
       font-weight: 700;
-      font-size: 13px;
+      font-size: 13.5px;
+      letter-spacing: .1px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis
@@ -359,12 +400,13 @@
     }
 
     .pc {
+      font-family: var(--font-mono);
       font-size: 10.5px;
       font-weight: 700;
       padding: 3px 8px;
       border-radius: 6px;
       flex-shrink: 0;
-      letter-spacing: 0.3px
+      letter-spacing: 0.2px
     }
 
     .pc.s {
@@ -379,8 +421,9 @@
       border: 1px solid rgba(168, 85, 247, 0.3)
     }
 
-    /* RISK BADGES */
+    /* RISK BADGES — lidas como um carimbo curto, por isso em mono */
     .badge {
+      font-family: var(--font-mono);
       font-size: 10px;
       font-weight: 700;
       padding: 3px 8px;
@@ -389,7 +432,7 @@
       align-items: center;
       gap: 4px;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.4px;
       border: 1px solid transparent
     }
 
@@ -417,6 +460,12 @@
       border-color: rgba(59, 130, 246, 0.3)
     }
 
+    .b-stage-unclassified {
+      background: var(--amber-bg);
+      color: var(--amber);
+      border-color: rgba(245, 158, 11, 0.3)
+    }
+
     /* PROPS */
     .pl {
       padding: 10px 16px;
@@ -437,6 +486,7 @@
     }
 
     .pid {
+      font-family: var(--font-mono);
       font-size: 11px;
       font-weight: 700;
       color: var(--accent);
@@ -451,6 +501,7 @@
     }
 
     .chip {
+      font-family: var(--font-mono);
       font-size: 10px;
       font-weight: 600;
       padding: 2px 6px;
@@ -471,7 +522,7 @@
 
     .ml {
       font-size: 10px;
-      font-weight: 600;
+      font-weight: 700;
       color: var(--text3);
       text-transform: uppercase;
       letter-spacing: .5px;
@@ -490,19 +541,20 @@
       background: var(--bg);
       border: 1px solid var(--border);
       border-radius: var(--r2);
-      padding: 9px 11px;
+      padding: 10px 12px;
       color: var(--text);
       font-family: inherit;
       font-size: 12.5px;
-      line-height: 1.6;
+      line-height: 1.65;
       resize: vertical;
       min-height: 128px;
       outline: none;
-      transition: border-color .2s
+      transition: border-color .2s, box-shadow .2s
     }
 
     .mb:focus {
-      border-color: var(--accent)
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(59, 130, 246, .12)
     }
 
     /* ACTIONS */
@@ -525,7 +577,7 @@
       cursor: pointer;
       font-family: inherit;
       font-size: 12.5px;
-      font-weight: 600;
+      font-weight: 700;
       transition: all .2s;
       text-decoration: none;
       white-space: nowrap
@@ -746,8 +798,27 @@
     }
 
     ::-webkit-scrollbar-thumb {
-      background: var(--border);
+      background: var(--border2);
       border-radius: 3px
+    }
+
+    /* ACESSIBILIDADE */
+    :focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+      border-radius: 4px;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+
+      *,
+      *::before,
+      *::after {
+        animation-duration: .001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important;
+        scroll-behavior: auto !important;
+      }
     }
 
     @media(max-width:600px) {
@@ -778,7 +849,7 @@
     /* TABS */
     .tabs {
       display: flex;
-      gap: 6px;
+      gap: 4px;
       margin: 0 16px;
       border: 1px solid var(--border);
       padding: 3px;
@@ -788,12 +859,12 @@
 
     .tab-btn {
       padding: 6px 16px;
-      border-radius: 8px;
+      border-radius: 7px;
       border: none;
       background: transparent;
       color: var(--text2);
       font-family: inherit;
-      font-size: 13px;
+      font-size: 12.5px;
       font-weight: 600;
       cursor: pointer;
       display: flex;
@@ -824,7 +895,7 @@
       font-size: 12px;
       outline: none;
       cursor: pointer;
-      font-weight: 500;
+      font-weight: 600;
     }
 
     .report-select:focus {
@@ -843,46 +914,51 @@
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: var(--r);
-      padding: 18px 20px;
+      padding: 18px 20px 18px 22px;
       box-shadow: var(--sh);
       position: relative;
       overflow: hidden;
     }
 
+    /* cada indicador carrega sua própria cor semântica na aba esquerda, na
+       mesma ordem em que aparecem no HTML — reforça o significado de cada
+       número em vez de decorar todos com o mesmo gradiente */
     .kpi-card::after {
       content: '';
       position: absolute;
       top: 0;
       left: 0;
-      width: 4px;
+      width: 3px;
       height: 100%;
-      background: linear-gradient(180deg, var(--accent), var(--accent2));
+      background: var(--accent);
     }
+    .kpi-grid .kpi-card:nth-of-type(1)::after { background: var(--green) }
+    .kpi-grid .kpi-card:nth-of-type(2)::after { background: var(--red) }
+    .kpi-grid .kpi-card:nth-of-type(3)::after { background: var(--accent) }
+    .kpi-grid .kpi-card:nth-of-type(4)::after { background: var(--purple) }
 
     .kpi-card-title {
-      font-size: 12px;
-      font-weight: 600;
+      font-size: 11.5px;
+      font-weight: 700;
       color: var(--text3);
       text-transform: uppercase;
       letter-spacing: .5px;
-      margin-bottom: 6px;
+      margin-bottom: 8px;
     }
 
     .kpi-card-value {
-      font-size: 32px;
-      font-weight: 800;
+      font-family: var(--font-mono);
+      font-size: 30px;
+      font-weight: 700;
       color: var(--text);
       line-height: 1.1;
-      margin-bottom: 6px;
-      background: linear-gradient(90deg, #fff, var(--text2));
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
+      margin-bottom: 8px;
     }
 
     .kpi-card-desc {
       font-size: 11px;
       color: var(--text3);
-      line-height: 1.4;
+      line-height: 1.45;
     }
 
     .kpi-charts-row {
@@ -907,10 +983,12 @@
     }
 
     .kpi-chart-box h3 {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 700;
       color: var(--text2);
       margin-bottom: 16px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
       display: flex;
       align-items: center;
       gap: 8px;
@@ -936,7 +1014,7 @@
     }
 
     .kpi-reports-section h3 {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 700;
       color: var(--text2);
       margin-bottom: 16px;
@@ -946,7 +1024,7 @@
       width: 100%;
       border-collapse: collapse;
       text-align: left;
-      font-size: 13px;
+      font-size: 12.5px;
     }
 
     .kpi-table th,
@@ -956,19 +1034,25 @@
     }
 
     .kpi-table th {
-      font-weight: 600;
+      font-weight: 700;
       color: var(--text3);
-      font-size: 11px;
+      font-size: 10.5px;
       text-transform: uppercase;
       letter-spacing: .5px;
     }
 
     .kpi-table td {
       color: var(--text2);
+      font-family: var(--font-mono);
+    }
+
+    .kpi-table td:nth-child(3) {
+      font-family: inherit;
+      color: var(--text);
     }
 
     .kpi-table tr:hover td {
-      background: rgba(255, 255, 255, .01);
+      background: rgba(255, 255, 255, .02);
       color: var(--text);
     }
 
@@ -1071,7 +1155,10 @@
   <header class="topbar">
     <div class="logo">
       <div class="logo-icon">🏡</div>
-      <div>INAD · Cobrança</div>
+      <div>
+        INAD <span style="color:var(--text3); font-weight:500;">· Cobrança</span>
+        <div class="logo-sub">Painel de gestão de inadimplência</div>
+      </div>
     </div>
     <div class="search-wrap">
       <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1136,6 +1223,9 @@
   </div>
 
   <div class="kpi-screen" id="kpi-screen" style="display:none; padding: 22px 24px;">
+    <div id="kpi-error-banner" style="display:none; background:var(--red-bg); color:var(--red); border:1px solid rgba(239,68,68,0.3); border-radius:8px; padding:10px 14px; margin-bottom:16px; font-size:13px; font-weight:600;">
+      ⚠️ Não foi possível carregar os dados de KPIs do servidor. Os valores podem estar desatualizados ou indisponíveis.
+    </div>
     <div class="kpi-grid">
       <div class="kpi-card">
         <div class="kpi-card-title">Taxa de Recuperação Média</div>
@@ -1383,6 +1473,7 @@
       isServerActive = false;
       document.getElementById('report-select-sep').style.display = 'none';
       document.getElementById('report-select').style.display = 'none';
+    }
     let loadingTimeout = null;
     function showLoading(title, subtitle, initialProgress = 30) {
       const overlay = document.getElementById('loading-overlay');
@@ -1430,7 +1521,7 @@
         const res = await fetch('/api/sync_uau', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ empresa: null, obra: null })
+          body: JSON.stringify({})
         });
         const data = await res.json();
         setProgress(100);
@@ -1438,13 +1529,42 @@
         hideLoading();
 
         if (res.ok && data.status === 'success') {
-          setTimeout(() => {
-            alert("✅ Sincronização ProUAU concluída: " + (data.clients || 0) + " cliente(s) inadimplente(s) importado(s) da API.");
-            if (typeof updateReportDropdown === 'function') {
-              updateReportDropdown();
+          // Preserva filtro e busca atuais para não zerar o estado da tela ao recarregar
+          const savedF = curF;
+          const savedQ = curQ;
+
+          setTimeout(async () => {
+            const total = (typeof data.clients === 'number') ? data.clients : 0;
+            const temCamposNovos = (data.importados_agora !== undefined) || (data.falhados !== undefined);
+
+            let msg;
+            if (temCamposNovos) {
+              const importadosAgora = data.importados_agora || 0;
+              const falhados = data.falhados || 0;
+              msg = `✅ Sincronização ProUAU concluída.\n\nTotal consolidado hoje: ${total} cliente(s) inadimplente(s).\nImportados nesta rodada: ${importadosAgora}.`;
+              if (falhados > 0) {
+                msg += `\n\n⚠️ ${falhados} cliente(s) falharam ao importar nesta rodada. A carteira pode estar incompleta — recomendamos sincronizar novamente.`;
+              }
+            } else {
+              // Fallback: backend antigo sem os campos novos
+              msg = "✅ Sincronização ProUAU concluída: " + total + " cliente(s) inadimplente(s) importado(s) da API.";
             }
-            location.reload();
+            alert(msg);
+
+            if (typeof updateReportDropdown === 'function') {
+              await updateReportDropdown();
+            }
+
+            // Recarrega os dados do servidor sem descartar o estado da tela (filtro/busca)
+            await initApp();
+            curF = savedF;
+            curQ = savedQ;
+            const searchInput = document.getElementById('search');
+            if (searchInput) searchInput.value = curQ;
+            renderAll();
           }, 150);
+        } else if (res.ok && data.status === 'closed') {
+          alert("🔒 " + (data.message || "As atualizações de hoje foram fechadas. Volte amanhã."));
         } else if (res.ok && data.status === 'empty') {
           alert("ℹ️ Nenhum cliente inadimplente retornado pela UAU para o filtro informado.");
         } else {
@@ -1587,7 +1707,9 @@
 
     async function loadKPIs() {
       if (!isServerActive) return;
+      const kpiErrBanner = document.getElementById('kpi-error-banner');
       try {
+        if (kpiErrBanner) kpiErrBanner.style.display = 'none';
         // 1. Garante que temos a lista completa em cache
         await updateReportsCache();
         const cachedList = reportsListCache || [];
@@ -1735,6 +1857,10 @@
 
       } catch (e) {
         console.error("Erro ao carregar dados do dashboard de KPIs:", e);
+        if (kpiErrBanner) {
+          kpiErrBanner.textContent = '⚠️ Falha ao carregar os dados de KPIs do servidor' + (e && e.message ? (': ' + e.message) : '') + '. Os valores exibidos podem estar desatualizados ou indisponíveis.';
+          kpiErrBanner.style.display = 'block';
+        }
       }
     }
 
@@ -1964,23 +2090,94 @@
       }
       return `https://wa.me/${cc}?text=${encodeURIComponent(msg)}`;
     }
+    // Estágios de cobrança espelhando o backend (ver run.py: _stage_for_days / STAGES):
+    // lembrete (0-30 dias), firme (31-90), serio (91-120), pre_juridico (121+).
+    // Nota de compliance (CDC art. 42): os textos devem ser factuais e respeitosos,
+    // sem expor o cliente a ridículo, constrangimento ou ameaça. O template pre_juridico
+    // pode informar que o caso "poderá ser encaminhado ao setor jurídico", mas NUNCA
+    // ameaçar processo, negativação ou perda do imóvel. lembrete/firme não mencionam
+    // consequências legais.
     function buildMsg(c) {
       const gr = greeting(c.name);
       const multi = c.properties.length > 1;
+      const stage = (c.queue_info && c.queue_info.stage) ? c.queue_info.stage : null;
       let L = [];
-      L.push(`${gr}, boa tarde.`);
+
+      if (stage === null) {
+        // Estágio não classificado: NÃO assumir "lembrete" (tom brando) nem qualquer
+        // menção a encaminhamento jurídico. Texto neutro/factual apenas (compliance CDC art. 42).
+        L.push(`${gr}.`);
+        L.push('');
+        L.push(multi
+          ? 'Identificamos em nosso sistema faturas pendentes de pagamento referentes aos seus imóveis:'
+          : 'Identificamos em nosso sistema faturas pendentes de pagamento referente ao seu imóvel:');
+
+        for (const p of c.properties) {
+          const id = tc(p.identifier);
+          for (const pc of p.parcels) {
+            const temValor = typeof pc.valor === 'number' && !isNaN(pc.valor);
+            L.push(temValor
+              ? `${id}: Parcela ${pc.parcela} de ${pc.vencimento} — ${formatCurrency(pc.valor)}.`
+              : `${id}: Parcela ${pc.parcela} de ${pc.vencimento}.`);
+          }
+        }
+        L.push('');
+        L.push('Informamos que o(a) senhor(a) pode utilizar os mesmos boletos que já possui em mãos para efetuar o pagamento. O sistema bancário atualizará os encargos de forma automática no momento da leitura do código de barras.');
+        L.push('');
+        L.push(multi
+          ? 'Caso precise que reenviemos os arquivos em PDF de ambos os contratos, por favor, nos avise por aqui.'
+          : 'Caso precise que reenviemos os arquivos em PDF do contrato, por favor, nos avise por aqui.');
+        return L.join('\n');
+      }
+
+      const saudacoes = {
+        lembrete: `${gr}, boa tarde.`,
+        firme: `${gr}, boa tarde.`,
+        serio: `${gr}, boa tarde.`,
+        pre_juridico: `${gr}.`
+      };
+      L.push(saudacoes[stage] || saudacoes.lembrete);
       L.push('');
-      L.push(multi
-        ? 'Identificamos em nosso sistema faturas pendentes de pagamento referentes aos seus imóveis:'
-        : 'Identificamos em nosso sistema faturas pendentes de pagamento referente ao seu imóvel:');
+
+      const aberturas = {
+        lembrete: multi
+          ? 'Identificamos em nosso sistema faturas pendentes de pagamento referentes aos seus imóveis:'
+          : 'Identificamos em nosso sistema faturas pendentes de pagamento referente ao seu imóvel:',
+        firme: multi
+          ? 'Reforçamos que ainda constam em aberto, em nosso sistema, as seguintes faturas referentes aos seus imóveis:'
+          : 'Reforçamos que ainda consta em aberto, em nosso sistema, a seguinte fatura referente ao seu imóvel:',
+        serio: multi
+          ? 'Apesar dos contatos anteriores, permanecem em aberto as seguintes faturas referentes aos seus imóveis:'
+          : 'Apesar dos contatos anteriores, permanece em aberto a seguinte fatura referente ao seu imóvel:',
+        pre_juridico: multi
+          ? 'Não localizamos, até o momento, a regularização das faturas abaixo, referentes aos seus imóveis:'
+          : 'Não localizamos, até o momento, a regularização da fatura abaixo, referente ao seu imóvel:'
+      };
+      L.push(aberturas[stage] || aberturas.lembrete);
+
       for (const p of c.properties) {
         const id = tc(p.identifier);
         for (const pc of p.parcels) {
-          L.push(`${id}: Parcela ${pc.parcela} de ${pc.vencimento}.`);
+          const temValor = typeof pc.valor === 'number' && !isNaN(pc.valor);
+          L.push(temValor
+            ? `${id}: Parcela ${pc.parcela} de ${pc.vencimento} — ${formatCurrency(pc.valor)}.`
+            : `${id}: Parcela ${pc.parcela} de ${pc.vencimento}.`);
         }
       }
       L.push('');
+
       L.push('Informamos que o(a) senhor(a) pode utilizar os mesmos boletos que já possui em mãos para efetuar o pagamento. O sistema bancário atualizará os encargos de forma automática no momento da leitura do código de barras.');
+
+      if (stage === 'serio' || stage === 'pre_juridico') {
+        L.push('');
+        L.push('Caso já exista alguma pendência em análise ou negociação em andamento, pedimos que nos avise para que possamos atualizar nosso sistema.');
+      }
+
+      if (stage === 'pre_juridico') {
+        L.push('');
+        L.push('Pela persistência do débito, informamos que o caso poderá ser encaminhado ao setor jurídico para as providências cabíveis, caso não haja regularização.');
+      }
+
       L.push('');
       L.push(multi
         ? 'Caso precise que reenviemos os arquivos em PDF de ambos os contratos, por favor, nos avise por aqui.'
@@ -2098,10 +2295,13 @@
         let rClass = 'b-risk-low';
         if (score >= 70) rClass = 'b-risk-high';
         else if (score >= 40) rClass = 'b-risk-med';
-        let stageName = escapeHtml(q.stage.replace(/_/g, ' '));
+        const hasStage = !!q.stage;
+        const stageName = hasStage ? escapeHtml(q.stage.replace(/_/g, ' ')) : 'não classificado';
+        const stageClass = hasStage ? 'b-stage' : 'b-stage b-stage-unclassified';
+        const stageTitle = hasStage ? '' : ' title="Estágio de cobrança não pôde ser classificado automaticamente"';
         riskBadge = `<div style="display:flex; gap:6px; margin-top:6px;">
         <span class="badge ${rClass}">Risco: ${score}</span>
-        <span class="badge b-stage">${stageName}</span>
+        <span class="badge ${stageClass}"${stageTitle}>${stageName}</span>
       </div>`;
       }
 
