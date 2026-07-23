@@ -184,6 +184,7 @@ def get_conn():
         conn.create_function("normalize_name", 1, _normalize_name)
         conn.execute("PRAGMA foreign_keys = ON")
         conn.execute("PRAGMA journal_mode = WAL")   # Leituras paralelas sem lock
+        conn.execute("PRAGMA busy_timeout = 5000")   # espera até 5s por lock em vez de falhar
         _local.conn = conn
     return _local.conn
 
@@ -301,13 +302,13 @@ def init_db():
         cursor.execute("ALTER TABLE reports ADD COLUMN report_date TEXT")
         print("[MIGRAÇÃO] Coluna report_date adicionada à tabela reports.")
 
-    # Migração: adiciona coluna closed (fechamento diário consolidado do sync
-    # UAU às 18:00 America/Sao_Paulo — ver /api/sync_uau). DEFAULT 0 preserva
-    # o comportamento de bancos legados (nenhum relatório existente vira
-    # "fechado" pela migração).
+    # Migração: coluna closed. LEGADO — foi criada para o fechamento diário às
+    # 18:00, mas essa trava foi REMOVIDA (o consolidado do dia é mutável o dia
+    # inteiro). A coluna é mantida por compatibilidade de schema mas hoje é
+    # apenas gravada como 0 e nunca lida/verificada em lugar nenhum.
     if "closed" not in existing_cols:
         cursor.execute("ALTER TABLE reports ADD COLUMN closed INTEGER DEFAULT 0")
-        print("[MIGRAÇÃO] Coluna closed adicionada à tabela reports (fechamento diário às 18h).")
+        print("[MIGRAÇÃO] Coluna closed adicionada à tabela reports (legado, sem uso ativo).")
 
     # Migração: adiciona coluna valor se não existir (banco legado)
     existing_parcel_cols = {row[1] for row in cursor.execute("PRAGMA table_info(parcels)")}
@@ -633,7 +634,8 @@ def get_clients_for_report(report_id):
     """Retorna a árvore de clientes/imóveis/parcelas de um relatório como dict."""
     cursor = get_conn().cursor()
     rows = cursor.execute("""
-        SELECT c.name, c.cpf_cnpj, c.cel, c.email, c.endereco, c.telefone_secundario,
+        SELECT c.name, c.cpf_cnpj, COALESCE(c.cel,''), COALESCE(c.email,''),
+               COALESCE(c.endereco,''), COALESCE(c.telefone_secundario,''),
                p.venda_id, p.identifier, p.empreendimento,
                pa.parcela, pa.vencimento, pa.vencimento_full,
                COALESCE(pa.valor, 0.0), pa.valor_original_centavos, pa.valor_juros_centavos
@@ -671,6 +673,17 @@ def get_clients_for_report(report_id):
 # enumeração via ConsultarPessoasComVenda com filtro empresa/obra, sem fan-out
 # pesado de Pessoas/*. Nada de escrita (LGPD / operador read-only).
 UAU_HTTP_TIMEOUT = int(os.environ.get("UAU_HTTP_TIMEOUT", "30"))
+
+# Valor mínimo (R$) de parcela vencida para entrar no painel. Descarta parcelas
+# irrisórias (impostos, taxas, micro-renegociações). Default 0 = não filtra.
+# ATENÇÃO: o corte é POR PARCELA, não pelo total da dívida — um cliente cujas
+# parcelas vencidas fiquem TODAS abaixo do mínimo some do painel mesmo que a
+# soma seja relevante. Só ative com um valor comprovadamente irrisório e ciente
+# de que alterá-lo no meio do histórico distorce recovery_rate (ver AI_CONTEXT).
+try:
+    UAU_VALOR_MINIMO = float(os.environ.get("UAU_VALOR_MINIMO", "0") or "0")
+except ValueError:
+    UAU_VALOR_MINIMO = 0.0
 
 
 def _uau_first(d, keys):
@@ -790,7 +803,7 @@ def _uau_parse_recebiveis(receb, empresa_filtro=None, obra_filtro=None):
     empresa_filtro/obra_filtro: como ConsultarPessoasComVenda IGNORA o filtro de
     empresa, o escopo real acontece AQUI — cada venda traz os campos Empresa/Obra e
     só as vendas que batem com o filtro são mantidas. Sem filtro (None/'') = mantém tudo."""
-    hoje = datetime.date.today()
+    hoje = datetime.datetime.now(ZoneInfo("America/Sao_Paulo")).date()
     props = []
     vendas = []
     if isinstance(receb, list):
@@ -822,6 +835,8 @@ def _uau_parse_recebiveis(receb, empresa_filtro=None, obra_filtro=None):
             if venc is None or venc >= hoje:
                 continue  # só parcelas vencidas
             valor = float(pv.get("ValorParcela") or pv.get("valorParcela") or 0.0)
+            if UAU_VALOR_MINIMO > 0 and valor < UAU_VALOR_MINIMO:
+                continue  # descarta parcelas abaixo do mínimo configurado (UAU_VALOR_MINIMO)
             parcels.append({
                 "parcela": str(pv.get("NumParcela", "") or pv.get("numParcela", "") or ""),
                 "vencimento": venc.strftime("%d/%m"),
@@ -872,8 +887,8 @@ def _sync_from_uau(empresa=None, obra=None, diag=None):
 
     # 1. Autenticar → token (string) usado como header Authorization.
     try:
-        raw_token = _uau_request(base, version, "/Autenticador/AutenticarUsuario", integ,
-                                 payload={"Login": login, "Senha": senha})
+        raw_token = _uau_request_retry(base, version, "/Autenticador/AutenticarUsuario", integ,
+                                       payload={"Login": login, "Senha": senha})
     except (urllib.error.HTTPError, urllib.error.URLError):
         print("[UAU] ERRO na etapa de autenticação (Autenticador/AutenticarUsuario).")
         raise
@@ -901,7 +916,7 @@ def _sync_from_uau(empresa=None, obra=None, diag=None):
         print("[UAU] ATENÇÃO: UAU_EMPRESA não definido — sem escopo de empresa, "
               "a importação inclui TODAS as empresas. Defina UAU_EMPRESA no .env.")
     try:
-        raw_titulares = _uau_request(
+        raw_titulares = _uau_request_retry(
             base, version, "/Pessoas/ConsultarPessoasComVenda", integ,
             auth_token=token, payload=filtro)
     except (urllib.error.HTTPError, urllib.error.URLError):
@@ -983,9 +998,37 @@ def _sync_from_uau(empresa=None, obra=None, diag=None):
         if not props:
             return ("skip", "sem_parcela_vencida", None)
 
+        # Extração de contatos telefônicos via endpoint /Pessoas/ConsultarTelefones
+        cel_val = ""
+        tel_val = ""
+        if cod_pes:
+            try:
+                cod_num = int(cod_pes)
+                phones_res = _uau_request_retry(
+                    base, version, "/Pessoas/ConsultarTelefones", integ,
+                    auth_token=token, payload={"Numero": cod_num})
+                phones_list = _uau_as_list(phones_res)
+                for ph in phones_list:
+                    if isinstance(ph, dict):
+                        ddd = str(ph.get("DDD") or "").strip()
+                        num = str(ph.get("Telefone") or "").strip()
+                        num_limpo = re.sub(r"\D", "", ddd + num)
+                        if len(num_limpo) >= 8:
+                            formatted_phone = f"{ddd}{num}" if ddd else num
+                            if not cel_val:
+                                cel_val = formatted_phone
+                            elif not tel_val:
+                                tel_val = formatted_phone
+            except Exception:
+                pass
+
+        # Telefone é enriquecimento opcional: se não houver contato válido,
+        # o cliente segue no painel com `cel` vazio (nunca é excluído por falta
+        # de telefone — ausência de contato não é quitação de dívida).
+
         return ("ok", None, (nome, {
-            "cpf_cnpj": str(cpf), "cel": "", "email": str(email),
-            "endereco": "", "telefone_secundario": "", "properties": props,
+            "cpf_cnpj": str(cpf), "cel": str(cel_val), "email": str(email),
+            "endereco": "", "telefone_secundario": str(tel_val), "properties": props,
         }))
 
     clients = {}
@@ -1014,6 +1057,221 @@ def _sync_from_uau(empresa=None, obra=None, diag=None):
         diag["4_resumo"] = {"titulares": len(titulares),
                             "clientes_montados": len(clients)}
     return clients, erros
+
+
+# ─── AUTO-SYNC UAU (Background Timer) ─────────────────────────────────────────
+# Thread background que executa _sync_from_uau periodicamente (default: 5 min)
+# e consolida (merge) no relatório do dia — mesma lógica do endpoint manual.
+# Começa DESLIGADO; o operador liga/desliga via POST /api/autosync/toggle.
+# Toda exceção é capturada — nunca derruba o servidor.
+
+_autosync_lock = threading.Lock()
+_autosync_status = {
+    "enabled": False,
+    "running": False,
+    "last_run": None,
+    "last_result": None,
+    "last_clients": 0,
+    "last_total": 0,
+    "last_error": None,
+    "interval_seconds": 300,
+    "runs_count": 0,
+}
+_autosync_timer = None
+# Contador de geração: incrementa a cada start/stop. Cada cadeia de Timer
+# carrega a geração em que nasceu; só reagenda se ainda for a atual. Isso evita
+# que um stop()+start() durante um tick lento (sync por-CPF leva minutos) deixe
+# duas cadeias de Timer se auto-reagendando em paralelo — um bug em que a cadeia
+# órfã continuava batendo na UAU e mesclando no relatório mesmo após o toggle.
+_autosync_generation = 0
+
+# Serializa o find-or-create + merge do relatório do dia. Como o servidor é
+# ThreadingMixIn e o auto-sync roda em thread própria, sem isso duas threads
+# (ex.: POST /api/sync_uau manual + tick) podem ver "nenhum relatório hoje" ao
+# mesmo tempo e criar DUAS linhas em reports para a mesma data — a dedup por
+# report_date (latest id) some com os clientes do relatório mais antigo.
+_report_day_lock = threading.Lock()
+
+
+def _autosync_tick(generation=None):
+    """Executa uma rodada de sync UAU em background e re-agenda o próximo tick.
+
+    `generation` identifica a cadeia de Timer que originou este tick; se não
+    for mais a geração atual (houve stop/start no meio), o tick aborta sem
+    trabalhar nem reagendar."""
+    global _autosync_timer
+    with _autosync_lock:
+        if not _autosync_status["enabled"]:
+            return
+        if generation is not None and generation != _autosync_generation:
+            return  # cadeia órfã de um start/stop anterior — não trabalha nem reagenda
+
+    with _autosync_lock:
+        _autosync_status["running"] = True
+
+    try:
+        empresa = os.environ.get("UAU_EMPRESA") or None
+        obra = os.environ.get("UAU_OBRA") or None
+
+        # Verifica credenciais mínimas
+        if not all([os.environ.get("UAU_BASE_URL"),
+                    os.environ.get("UAU_USUARIO"),
+                    os.environ.get("UAU_SENHA"),
+                    os.environ.get("UAU_X_INTEGRATION")]):
+            with _autosync_lock:
+                _autosync_status["running"] = False
+                _autosync_status["last_run"] = datetime.datetime.now(
+                    ZoneInfo("America/Sao_Paulo")).isoformat()
+                _autosync_status["last_result"] = "error"
+                _autosync_status["last_error"] = "Credenciais UAU ausentes no .env"
+            print("[AUTO-SYNC] Credenciais UAU ausentes — pulando rodada.")
+            _autosync_reschedule(generation)
+            return
+
+        clients, falhados = _sync_from_uau(empresa, obra)
+
+        if not clients:
+            with _autosync_lock:
+                _autosync_status["running"] = False
+                _autosync_status["last_run"] = datetime.datetime.now(
+                    ZoneInfo("America/Sao_Paulo")).isoformat()
+                _autosync_status["last_result"] = "empty"
+                _autosync_status["last_clients"] = 0
+                _autosync_status["last_error"] = None
+                _autosync_status["runs_count"] += 1
+            print("[AUTO-SYNC] Nenhum cliente inadimplente retornado nesta rodada.")
+            _autosync_reschedule(generation)
+            return
+
+        # Find-or-create relatório do dia + merge (mesma lógica do endpoint).
+        # Serializado por _report_day_lock: sem isso, tick + POST manual
+        # concorrentes podem criar dois relatórios para a mesma data.
+        conn = get_conn()
+        cursor = conn.cursor()
+        agora = datetime.datetime.now(ZoneInfo("America/Sao_Paulo"))
+        hoje_str = agora.date().isoformat()
+        with _report_day_lock:
+            relatorio_hoje = cursor.execute(
+                "SELECT id FROM reports WHERE report_date = ? ORDER BY id DESC LIMIT 1",
+                (hoje_str,),
+            ).fetchone()
+
+            if relatorio_hoje:
+                report_id = relatorio_hoje[0]
+            else:
+                report_name = f"UAU Sync {agora.strftime('%d/%m/%Y')}"
+                cursor.execute(
+                    "INSERT INTO reports (report_name, report_date, closed) VALUES (?, ?, 0)",
+                    (report_name, hoje_str),
+                )
+                report_id = cursor.lastrowid
+
+            _merge_clients(cursor, report_id, clients)
+            conn.commit()
+
+        total_clients = cursor.execute(
+            "SELECT COUNT(*) FROM clients WHERE report_id = ?", (report_id,)
+        ).fetchone()[0]
+
+        with _autosync_lock:
+            _autosync_status["running"] = False
+            _autosync_status["last_run"] = agora.isoformat()
+            _autosync_status["last_result"] = "success"
+            _autosync_status["last_clients"] = len(clients)
+            _autosync_status["last_total"] = total_clients
+            _autosync_status["last_error"] = None
+            _autosync_status["runs_count"] += 1
+
+        # FIX 7 (LGPD): rastro de auditoria da coleta automática de PII —
+        # reaproveita access_audit (ver _log_access()) com um operador
+        # sintético identificando a rodada como automática, sem operador
+        # humano. Mesma transação/conexão do merge (já commitado acima).
+        cursor.execute(
+            "INSERT INTO access_audit (operator, client_name) VALUES (?, ?)",
+            ("auto-sync", f"[AUTO-SYNC] {len(clients)} cliente(s) importado(s), "
+                          f"{total_clients} consolidado(s) no relatório {report_id}"),
+        )
+        conn.commit()
+
+        print(f"[AUTO-SYNC] ✅ Concluído — {len(clients)} importado(s) | "
+              f"{total_clients} consolidado(s) | {falhados} falha(s) | "
+              f"Relatório ID {report_id} ({hoje_str})")
+
+        _autosync_reschedule(generation)
+
+    except Exception as exc:
+        with _autosync_lock:
+            _autosync_status["running"] = False
+            _autosync_status["last_run"] = datetime.datetime.now(
+                ZoneInfo("America/Sao_Paulo")).isoformat()
+            _autosync_status["last_result"] = "error"
+            _autosync_status["last_error"] = str(exc)[:200]
+            _autosync_status["runs_count"] += 1
+        print(f"[AUTO-SYNC] ❌ Erro: {exc}")
+        logging.error(f"[AUTO-SYNC] Erro na sincronização automática: {exc}", exc_info=True)
+        _autosync_reschedule(generation)
+
+    finally:
+        # FIX 2: threading.Timer cria uma thread NOVA a cada tick; get_conn()
+        # é thread-local, então sem isso cada tick vazaria uma conexão SQLite
+        # aberta e nunca fechada. Fecha ao final de TODO caminho de saída
+        # (o reschedule acima já rodou e não depende da conexão).
+        try:
+            if hasattr(_local, "conn") and _local.conn is not None:
+                _local.conn.close()
+        except Exception:
+            pass
+        _local.conn = None
+
+
+def _autosync_reschedule(generation):
+    """Re-agenda o próximo tick se o auto-sync ainda estiver habilitado.
+
+    Chamado de dentro de _autosync_tick SEMPRE fora do `with _autosync_lock`,
+    então pode adquirir o lock aqui sem risco de re-entrância (threading.Lock
+    não é reentrante)."""
+    global _autosync_timer
+    # FIX 3: protege leitura de enabled/interval_seconds e a mutação do
+    # timer global — _autosync_tick lê/escreve esses mesmos campos sob o lock.
+    # Só reagenda se a geração desta cadeia ainda for a atual (senão é uma
+    # cadeia órfã de um start/stop anterior e deve morrer aqui).
+    with _autosync_lock:
+        if _autosync_status["enabled"] and generation == _autosync_generation:
+            interval = _autosync_status["interval_seconds"]
+            _autosync_timer = threading.Timer(interval, _autosync_tick, args=[generation])
+            _autosync_timer.daemon = True
+            _autosync_timer.start()
+
+
+def _autosync_start():
+    """Liga o auto-sync e dispara o primeiro tick imediatamente."""
+    global _autosync_timer, _autosync_generation
+    # FIX 3: protege enabled/_autosync_timer contra a mesma mutação
+    # concorrente feita por _autosync_tick/_autosync_reschedule.
+    with _autosync_lock:
+        if _autosync_status["enabled"]:
+            return  # já está ativo
+        _autosync_status["enabled"] = True
+        _autosync_generation += 1          # nova geração de cadeia de Timer
+        gen = _autosync_generation
+        # Primeiro tick imediato (em thread separada para não bloquear)
+        _autosync_timer = threading.Timer(0.5, _autosync_tick, args=[gen])
+        _autosync_timer.daemon = True
+        _autosync_timer.start()
+    print(f"[AUTO-SYNC] 🟢 Ativado — intervalo: {_autosync_status['interval_seconds']}s")
+
+
+def _autosync_stop():
+    """Desliga o auto-sync e cancela o timer pendente."""
+    global _autosync_timer, _autosync_generation
+    with _autosync_lock:
+        _autosync_status["enabled"] = False
+        _autosync_generation += 1          # invalida qualquer cadeia em andamento
+        if _autosync_timer is not None:
+            _autosync_timer.cancel()
+            _autosync_timer = None
+        _autosync_status["running"] = False
+    print("[AUTO-SYNC] 🔴 Desativado")
 
 
 def _backup_report_before_delete(cursor, rid):
@@ -1944,7 +2202,9 @@ def get_system_context():
             "GET /api/clients/all": "Lista única de nomes de clientes (todos os relatórios)",
             "POST /api/reports": "Importa novo relatório {report_name, report_date, clients}",
             "POST /api/clients": "Alias de POST /api/reports",
-            "POST /api/sync_uau": "Sincroniza inadimplência da API UAU (somente leitura) {empresa?, obra?}",
+            "POST /api/sync_uau": "Sincroniza inadimplência da API UAU (somente leitura, processo lento devido a consultas iterativas por CPF) {empresa?, obra?}",
+            "GET /api/autosync/status": "Status do auto-sync background (enabled, last_run, last_result)",
+            "POST /api/autosync/toggle": "Liga/desliga auto-sync {enabled: bool}",
             "GET /api/sent": "Nomes de clientes que já receberam WhatsApp",
             "GET /api/actions/sent": "Alias de GET /api/sent",
             "POST /api/actions/sent": "Registra envio {venda_id, client_name} ou lista de nomes",
@@ -2332,6 +2592,10 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             cursor = get_conn().cursor()
             rows = cursor.execute("SELECT client_name FROM kpi_exclusions").fetchall()
             _json_response(self, [r[0] for r in rows])
+
+        elif path == "/api/autosync/status":
+            with _autosync_lock:
+                _json_response(self, dict(_autosync_status))
 
         elif path == "/api/health":
             _json_response(self, {"status": "ok", "port": PORT,
@@ -3152,31 +3416,15 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                                           "clientes_montados": len(clients), "diag": diag})
                     return
 
-                # ── Fechamento diário às 18:00 (America/Sao_Paulo, sem agendador) ──
-                # Verificado ANTES de chamar a API UAU para não gastar uma consulta à
-                # toa quando o dia já fechou. "Fechado" = agora >= 18:00 OU o
-                # relatório de hoje já está marcado closed=1 (ex.: fechado numa
-                # chamada anterior ainda hoje). Um relatório por dia (find-or-create
-                # por report_date) — mutável antes das 18h, imutável depois.
+                # ── Um relatório por dia (sem trava de horário) ──
+                # Toda vez que o operador clica em "Atualizar", buscamos os dados
+                # novos na UAU e MESCLAMOS no relatório de HOJE (find-or-create por
+                # report_date). Sem fechamento às 18:00: o consolidado do dia fica
+                # mutável o dia inteiro.
                 conn   = get_conn()
                 cursor = conn.cursor()
                 agora     = datetime.datetime.now(ZoneInfo("America/Sao_Paulo"))
                 hoje_str  = agora.date().isoformat()
-                apos_18h  = agora.hour >= 18
-                relatorio_hoje = cursor.execute(
-                    "SELECT id, closed FROM reports WHERE report_date = ? ORDER BY id DESC LIMIT 1",
-                    (hoje_str,),
-                ).fetchone()
-                if relatorio_hoje and apos_18h and not relatorio_hoje[1]:
-                    cursor.execute("UPDATE reports SET closed = 1 WHERE id = ?", (relatorio_hoje[0],))
-                    conn.commit()
-                    relatorio_hoje = (relatorio_hoje[0], 1)
-                dia_fechado = apos_18h or bool(relatorio_hoje and relatorio_hoje[1])
-                if dia_fechado:
-                    _json_response(self, {
-                        "status": "closed",
-                        "message": "As atualizações de hoje foram fechadas às 18:00. Volte amanhã."})
-                    return
 
                 # Consulta real à UAU (somente leitura). Retorna só inadimplentes.
                 clients, falhados_agora = _sync_from_uau(empresa, obra)
@@ -3187,20 +3435,27 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                                    "para o filtro informado."})
                     return
 
-                # Um relatório por dia: reusa o de hoje (aberto) se já existe,
-                # senão cria. Merge por cliente (latest-wins, nunca remove) —
-                # clientes que não vieram nesta rodada permanecem intactos.
-                if relatorio_hoje:
-                    report_id = relatorio_hoje[0]
-                else:
-                    report_name = f"UAU Sync {agora.strftime('%d/%m/%Y')}"
-                    cursor.execute(
-                        "INSERT INTO reports (report_name, report_date, closed) VALUES (?, ?, 0)",
-                        (report_name, hoje_str),
-                    )
-                    report_id = cursor.lastrowid
-                _merge_clients(cursor, report_id, clients)
-                conn.commit()
+                # Um relatório por dia: reusa o de hoje se já existe, senão cria.
+                # Merge por cliente (latest-wins, nunca remove). O find-or-create
+                # + merge roda DEPOIS da rede e sob _report_day_lock para não
+                # criar dois relatórios da mesma data quando um tick do auto-sync
+                # (ou outro clique) roda concorrente.
+                with _report_day_lock:
+                    relatorio_hoje = cursor.execute(
+                        "SELECT id FROM reports WHERE report_date = ? ORDER BY id DESC LIMIT 1",
+                        (hoje_str,),
+                    ).fetchone()
+                    if relatorio_hoje:
+                        report_id = relatorio_hoje[0]
+                    else:
+                        report_name = f"UAU Sync {agora.strftime('%d/%m/%Y')}"
+                        cursor.execute(
+                            "INSERT INTO reports (report_name, report_date, closed) VALUES (?, ?, 0)",
+                            (report_name, hoje_str),
+                        )
+                        report_id = cursor.lastrowid
+                    _merge_clients(cursor, report_id, clients)
+                    conn.commit()
 
                 total_clients = cursor.execute(
                     "SELECT COUNT(*) FROM clients WHERE report_id = ?", (report_id,)
@@ -3229,6 +3484,18 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
             except Exception as exc:
                 if conn is not None:
                     conn.rollback()
+                _error_response(self, exc, 500)
+
+        elif path == "/api/autosync/toggle":
+            try:
+                enabled = payload.get("enabled", False) if isinstance(payload, dict) else False
+                if enabled:
+                    _autosync_start()
+                else:
+                    _autosync_stop()
+                with _autosync_lock:
+                    _json_response(self, dict(_autosync_status))
+            except Exception as exc:
                 _error_response(self, exc, 500)
 
         else:
@@ -3334,6 +3601,7 @@ _httpd = None
 def _shutdown_handler(sig, frame):
     """Encerramento gracioso via Ctrl+C ou SIGTERM (Docker / systemd / Render)."""
     print("\n[SERVIDOR] Sinal de encerramento recebido. Parando...")
+    _autosync_stop()
     if _httpd:
         threading.Thread(target=_httpd.shutdown, daemon=True).start()
     sys.exit(0)
