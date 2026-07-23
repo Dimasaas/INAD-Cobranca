@@ -410,6 +410,19 @@ Integração **somente leitura** com o ERP UAU (credenciais em `.env`:
 `UAU_BASE_URL`, `UAU_USUARIO`, `UAU_SENHA`, `UAU_X_INTEGRATION`). Só a máquina Windows
 alcança o endpoint. Fluxo (em `run.py`, `_sync_from_uau`):
 
+**`UAU_VALOR_MINIMO`** (opcional, `.env`): valor mínimo em R$ de parcela vencida para
+entrar no painel — descarta parcelas irrisórias (impostos, taxas, micro-renegociações).
+Default `0` = não filtra nada. O filtro é **por parcela individual**, não pelo total da
+dívida: um cliente cujas parcelas vencidas fiquem TODAS abaixo do mínimo some do painel
+mesmo que a soma seja relevante. **Cuidado:** alterar esse valor no meio do histórico de
+relatórios distorce `recovery_rate` e demais KPIs (um cliente pode "sumir" não porque
+pagou, mas porque a parcela caiu abaixo do novo mínimo).
+
+**Auto-sync (background):** os endpoints `GET /api/autosync/status` e `POST
+/api/autosync/toggle` ligam/desligam uma thread que roda o sync periodicamente. **Não há
+superfície de UI** para isso por decisão intencional (o operador padrão é somente-leitura);
+são operados apenas via API/infra.
+
 1. **Autenticar** — `POST Autenticador/AutenticarUsuario` (`Login`/`Senha` + header `X-INTEGRATION-Authorization`) → token usado como header `Authorization`.
 2. **Enumerar titulares** — `POST Pessoas/ConsultarPessoasComVenda` com filtro `empresa`/`obra` (evita puxar tudo).
 3. **Parcelas por CPF** — `POST Recebiveis/ParcelasECobrancasDoCliente` (`ValorReajustado=true`) → `Vendas → ParcelasVenda`.
