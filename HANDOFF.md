@@ -45,6 +45,21 @@ Implementado o consolidado diário do `/api/sync_uau` (sem agendador externo):
 - UI: mensagens de "consolidado hoje / importados nesta rodada / falhados" e status
   `closed` ("volte amanhã").
 
+## 🔌 Resiliência do Sync UAU + regras de autenticação
+
+- **Blindagem de socket** (`run.py`, `_json_response`/`_error_response`): quando o cliente
+  (navegador/curl) desconecta antes de a resposta ser escrita, o servidor trata como **desconexão do
+  cliente** (`ConnectionAbortedError`/`BrokenPipeError`/`ConnectionResetError`) — log INFO, **sem
+  traceback nem 500**. Um sync UAU longo completa o trabalho mesmo que o cliente desista; a desconexão
+  não é erro de servidor. Regressão em `tests/test_response_resilience.py`.
+- **Nota sobre lentidão do sync:** `ConsultarPessoasComVenda` **ignora** o filtro empresa/obra e
+  enumera a base inteira; o fan-out por-cliente roda sobre todos os titulares. Definir `UAU_OBRA` no
+  `.env` ajusta **quais dados são válidos** (escopo em `_uau_parse_recebiveis`), **não** a duração do
+  sync — a cura da desconexão é a blindagem acima, não o escopo.
+- **Regras de autenticação** documentadas em `AI_CONTEXT.md` (seção "🔑 Regras de autenticação"):
+  sempre autenticar antes; método por tamanho do login (≤8 = Uau / >8 = Cliente/Pessoa); `UsuarioUAUSite`
+  só p/ `GerarBoleto`; `UAU_API_VERSION=1.0`. **Sem credenciais versionadas** (LGPD).
+
 ## 📌 Próximas Tarefas / Fila de Trabalho
 
 *(Adicione novos itens de roadmap ou solicitações pendentes nesta seção)*

@@ -2042,24 +2042,48 @@ def get_system_context():
 
 # ─── HANDLER HTTP ─────────────────────────────────────────────────────────────
 
+# Desconexão do cliente (navegador/curl fecha o socket antes de a resposta ser
+# escrita) — NÃO é erro de servidor. Um sync UAU longo completa o trabalho, mas
+# ao escrever a resposta o cliente pode já ter desistido → estes erros de socket.
+# Tratados como desconexão (log INFO, sem traceback nem 500).
+_CLIENT_DISCONNECT = (ConnectionAbortedError, BrokenPipeError, ConnectionResetError)
+
+
 def _json_response(handler, data, status=200):
     """Envia resposta JSON. Sem CORS: o frontend é servido pelo mesmo
     servidor (same-origin), então requisições cross-origin não precisam
-    funcionar — e não devem (evita que outro site consulte/altere dados)."""
+    funcionar — e não devem (evita que outro site consulte/altere dados).
+
+    Se o cliente já desconectou (socket fechado), a escrita levanta um erro do
+    grupo _CLIENT_DISCONNECT — engolimos com log INFO e retornamos, sem
+    re-levantar: o trabalho já foi feito, a desconexão não é erro de servidor."""
     body = json.dumps(data, ensure_ascii=False).encode("utf-8")
-    handler.send_response(status)
-    handler.send_header("Content-Type",   "application/json; charset=utf-8")
-    handler.send_header("Content-Length", str(len(body)))
-    handler.send_header("X-Content-Type-Options", "nosniff")
-    handler.send_header("X-Frame-Options", "DENY")
-    handler.end_headers()
-    handler.wfile.write(body)
+    try:
+        handler.send_response(status)
+        handler.send_header("Content-Type",   "application/json; charset=utf-8")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("X-Content-Type-Options", "nosniff")
+        handler.send_header("X-Frame-Options", "DENY")
+        handler.end_headers()
+        handler.wfile.write(body)
+    except _CLIENT_DISCONNECT as exc:
+        logging.info(
+            f"Cliente desconectou antes da resposta em {handler.command} "
+            f"{handler.path} ({type(exc).__name__}) — trabalho concluído.")
 
 
 def _error_response(handler, exc, status=500):
     """Loga o erro completo (com traceback) em inad_errors.log e responde ao
     cliente com uma mensagem genérica — nunca vaza str(exc)/detalhes internos
-    na resposta HTTP."""
+    na resposta HTTP.
+
+    Exceção: se `exc` for desconexão do cliente (_CLIENT_DISCONNECT), o socket
+    já morreu — apenas loga INFO (sem traceback) e NÃO tenta escrever resposta."""
+    if isinstance(exc, _CLIENT_DISCONNECT):
+        logging.info(
+            f"Cliente desconectou em {handler.command} {handler.path} "
+            f"({type(exc).__name__}) — resposta não enviada.")
+        return
     import traceback
     logging.error(
         f"Erro em {handler.command} {handler.path}: {exc}\n{traceback.format_exc()}"

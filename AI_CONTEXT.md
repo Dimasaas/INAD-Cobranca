@@ -399,13 +399,25 @@ Integração **somente leitura** com o ERP UAU (credenciais em `.env`:
 `UAU_BASE_URL`, `UAU_USUARIO`, `UAU_SENHA`, `UAU_X_INTEGRATION`). Só a máquina Windows
 alcança o endpoint. Fluxo (em `run.py`, `_sync_from_uau`):
 
-1. **Autenticar** — `POST Autenticador/AutenticarUsuario` (`Login`/`Senha` + header `X-INTEGRATION-Authorization`) → token usado como header `Authorization`.
-2. **Enumerar titulares** — `POST Pessoas/ConsultarPessoasComVenda` com filtro `empresa`/`obra` (evita puxar tudo).
+1. **Autenticar** — `POST /api/v1.0/Autenticador/AutenticarUsuario` (`Login`/`Senha` + header `X-INTEGRATION-Authorization`) → token usado como header `Authorization`. Ver **Regras de autenticação** abaixo.
+2. **Enumerar titulares** — `POST Pessoas/ConsultarPessoasComVenda`. ⚠️ **ComVenda IGNORA o filtro `empresa`/`obra`** e sempre devolve a base inteira (comprovado: empresa 1/2/999 e payload vazio dão o mesmo total). O escopo real por empresa/obra é aplicado **depois**, em `_uau_parse_recebiveis`, pelos campos `Empresa`/`Obra` da própria venda — não reduz o fan-out por-cliente.
 3. **Parcelas por CPF** — `POST Recebiveis/ParcelasECobrancasDoCliente` (`ValorReajustado=true`) → `Vendas → ParcelasVenda`.
 4. **Inadimplência** — mantém só parcelas com `DataVencimento` < hoje; grava report/clients/properties/parcels.
 
 Regras: **nunca** usar endpoints de escrita do UAU (`GravarPessoa`, `ManterTelefone`, `Alterar*`);
 puxar enxuto (sem fan-out pesado de `Pessoas/*`); seguir a API como documentada.
+
+### 🔑 Regras de autenticação (`POST /api/v1.0/Autenticador/AutenticarUsuario`)
+
+- **Sempre autenticar antes de usar.** O sync **re-autentica a cada rodada** (token novo por rodada,
+  `run.py` em `_sync_from_uau`) — **não** reusa `UAU_TOKEN` do `.env`. Auth não é a causa de lentidão/erro.
+- **Método pelo tamanho do login:** login com **≤8 caracteres ⇒ modo "Uau"** (acesso pleno);
+  **>8 caracteres ⇒ modo Cliente/Pessoa**; login de Active Directory (AD) ⇒ Cliente/Pessoa.
+- **`UsuarioUAUSite`** só é exigido para `GerarBoleto` (endpoint de **escrita**, **não usado** — somos
+  read-only). Por isso a chamada atual envia apenas `{Login, Senha}`, e isso está **correto**.
+- **Versão da API:** `UAU_API_VERSION=1.0` (bate com a URL real `/api/v1.0/`); `UAU_BASE_URL` termina em `/uauAPI`.
+- **Nunca** versionar credenciais/valores (login, senha, token) — LGPD. O específico da máquina
+  (tamanho do login etc.) fica só na memória local do PC, não no repositório.
 
 ---
 
