@@ -4,6 +4,8 @@ Este documento descreve a arquitetura, regras de negócio, esquema de banco de d
 
 > **Endpoint em tempo real:** com o servidor ativo (`python3 run.py`), acesse `GET http://localhost:8000/api/context` para obter este contexto em JSON, incluindo estatísticas ao vivo do banco.
 
+> ⛔ **REGRA — PROIBIDO testar com escrita em registros existentes.** Nenhum teste pode alterar, sobrescrever ou apagar registros/dados reais já existentes (relatórios, clientes, parcelas, desfechos, envios). Testes só em bancos temporários/fixtures. Se uma escrita real for **imprescindível**, **pergunte três vezes** ao responsável antes — nunca por conta própria.
+
 ---
 
 ## 📌 Visão Geral do Projeto (INAD — Painel de Cobrança)

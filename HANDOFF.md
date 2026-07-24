@@ -2,6 +2,8 @@
 
 > **Status do Projeto:** Todas as revisões de segurança (S1–S9) e corretude de KPIs (K1–K10) foram concluídas, testadas e sincronizadas com a branch `main`.
 
+> ⛔ **REGRA — PROIBIDO testar com escrita em registros existentes.** Nenhum teste pode alterar, sobrescrever ou apagar registros/dados reais já existentes (relatórios, clientes, parcelas, desfechos, envios). Testes só em bancos temporários/fixtures. Se uma escrita real for **imprescindível**, **pergunte três vezes** ao responsável antes — nunca por conta própria.
+
 ---
 
 ## 🟢 Estado Atual (Tudo Concluído e Testado)
@@ -29,9 +31,12 @@ Todos os itens da auditoria foram implementados e validados pela suíte de teste
 
 Implementado o consolidado diário do `/api/sync_uau` (sem agendador externo):
 
-- **Um relatório por dia** (find-or-create por `report_date`). Mutável durante o
-  dia; imutável após as **18:00 America/Sao_Paulo** (nova coluna `reports.closed`,
-  `DEFAULT 0`, migração automática em `init_db`).
+- **Um relatório por dia** (find-or-create por `report_date`), **mutável o dia
+  inteiro**. A antiga **trava das 18:00 America/Sao_Paulo foi removida** — não há
+  mais fechamento por horário. A coluna `reports.closed` (`DEFAULT 0`, migração
+  automática em `init_db`) permanece apenas por compatibilidade de schema, sem
+  nenhuma lógica de trava (sempre `0`); a resposta do endpoint traz sempre
+  `"closed": false`.
 - **Merge por cliente** (`_merge_clients`, latest-wins, nunca remove): cada rodada
   do sync é lossy, então clientes que não vieram na rodada permanecem intactos —
   ausência = falha de busca, não quitação.
@@ -42,8 +47,8 @@ Implementado o consolidado diário do `/api/sync_uau` (sem agendador externo):
   por-cliente; contagem de `falhados` retornada ao front (aviso de carteira incompleta).
 - `/api/clients` unificado com a fila via `_dedup_latest_report_id` (mais recente =
   maior `report_date`).
-- UI: mensagens de "consolidado hoje / importados nesta rodada / falhados" e status
-  `closed` ("volte amanhã").
+- UI: mensagens de "consolidado hoje / importados nesta rodada / falhados". (O
+  antigo status `closed`/"volte amanhã" foi removido junto com a trava das 18h.)
 
 ## 📌 Próximas Tarefas / Fila de Trabalho
 

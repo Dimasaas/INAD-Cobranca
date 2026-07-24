@@ -11,3 +11,7 @@ O responsável pelo projeto desenvolve neste repo em duas máquinas (MacBook e W
 O responsavel trabalha com conteudo sensivel, então sempre lembre de respeitar a LGPD.
 
 Esse usuario meu não pode fazer edições no sistema, somente leitura, ele está PROIBIDO de editar coisas por API.
+
+## ⛔ PROIBIDO testar com escrita em registros existentes
+
+Nenhum teste pode alterar, sobrescrever ou apagar registros/dados reais já existentes (relatórios, clientes, parcelas, desfechos, envios). Testes só em bancos temporários/fixtures. Se uma escrita real for **imprescindível**, **pergunte três vezes** ao responsável antes — nunca por conta própria.
