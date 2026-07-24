@@ -1563,8 +1563,6 @@
             if (searchInput) searchInput.value = curQ;
             renderAll();
           }, 150);
-        } else if (res.ok && data.status === 'closed') {
-          alert("🔒 " + (data.message || "As atualizações de hoje foram fechadas. Volte amanhã."));
         } else if (res.ok && data.status === 'empty') {
           alert("ℹ️ Nenhum cliente inadimplente retornado pela UAU para o filtro informado.");
         } else {
