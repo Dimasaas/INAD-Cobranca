@@ -301,13 +301,14 @@ def init_db():
         cursor.execute("ALTER TABLE reports ADD COLUMN report_date TEXT")
         print("[MIGRAÇÃO] Coluna report_date adicionada à tabela reports.")
 
-    # Migração: adiciona coluna closed (fechamento diário consolidado do sync
-    # UAU às 18:00 America/Sao_Paulo — ver /api/sync_uau). DEFAULT 0 preserva
-    # o comportamento de bancos legados (nenhum relatório existente vira
-    # "fechado" pela migração).
+    # Migração: adiciona coluna closed (histórica do sync UAU consolidado — ver
+    # /api/sync_uau). A antiga trava de horário das 18:00 foi removida: o
+    # consolidado diário é mutável o dia inteiro e a coluna é mantida apenas por
+    # compatibilidade de schema (sempre 0, sem lógica de fechamento). DEFAULT 0
+    # preserva o comportamento de bancos legados.
     if "closed" not in existing_cols:
         cursor.execute("ALTER TABLE reports ADD COLUMN closed INTEGER DEFAULT 0")
-        print("[MIGRAÇÃO] Coluna closed adicionada à tabela reports (fechamento diário às 18h).")
+        print("[MIGRAÇÃO] Coluna closed adicionada à tabela reports (compatibilidade de schema).")
 
     # Migração: adiciona coluna valor se não existir (banco legado)
     existing_parcel_cols = {row[1] for row in cursor.execute("PRAGMA table_info(parcels)")}
@@ -3143,8 +3144,7 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                     or os.environ.get("UAU_OBRA") or None
                 debug   = bool(payload.get("debug")) if isinstance(payload, dict) else False
 
-                # Modo debug: diagnostica cada etapa (sem PII) e NÃO grava nada
-                # (não passa pelo corte das 18:00 — nunca escreve de qualquer forma).
+                # Modo debug: diagnostica cada etapa (sem PII) e NÃO grava nada.
                 if debug:
                     diag = {}
                     clients, _erros = _sync_from_uau(empresa, obra, diag=diag)
@@ -3152,31 +3152,18 @@ class INADHandler(http.server.SimpleHTTPRequestHandler):
                                           "clientes_montados": len(clients), "diag": diag})
                     return
 
-                # ── Fechamento diário às 18:00 (America/Sao_Paulo, sem agendador) ──
-                # Verificado ANTES de chamar a API UAU para não gastar uma consulta à
-                # toa quando o dia já fechou. "Fechado" = agora >= 18:00 OU o
-                # relatório de hoje já está marcado closed=1 (ex.: fechado numa
-                # chamada anterior ainda hoje). Um relatório por dia (find-or-create
-                # por report_date) — mutável antes das 18h, imutável depois.
+                # ── Consolidado diário do Sync UAU (sem trava de horário) ──
+                # Um relatório por dia (find-or-create por report_date), mutável o
+                # dia inteiro. Consulta o relatório de hoje ANTES da API UAU
+                # (reuso vs. criação abaixo).
                 conn   = get_conn()
                 cursor = conn.cursor()
                 agora     = datetime.datetime.now(ZoneInfo("America/Sao_Paulo"))
                 hoje_str  = agora.date().isoformat()
-                apos_18h  = agora.hour >= 18
                 relatorio_hoje = cursor.execute(
-                    "SELECT id, closed FROM reports WHERE report_date = ? ORDER BY id DESC LIMIT 1",
+                    "SELECT id FROM reports WHERE report_date = ? ORDER BY id DESC LIMIT 1",
                     (hoje_str,),
                 ).fetchone()
-                if relatorio_hoje and apos_18h and not relatorio_hoje[1]:
-                    cursor.execute("UPDATE reports SET closed = 1 WHERE id = ?", (relatorio_hoje[0],))
-                    conn.commit()
-                    relatorio_hoje = (relatorio_hoje[0], 1)
-                dia_fechado = apos_18h or bool(relatorio_hoje and relatorio_hoje[1])
-                if dia_fechado:
-                    _json_response(self, {
-                        "status": "closed",
-                        "message": "As atualizações de hoje foram fechadas às 18:00. Volte amanhã."})
-                    return
 
                 # Consulta real à UAU (somente leitura). Retorna só inadimplentes.
                 clients, falhados_agora = _sync_from_uau(empresa, obra)
